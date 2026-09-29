@@ -1,6 +1,174 @@
-# Every machine Ansible manages. Phase 2 adds the containers, written from the
-# real /etc/pve/lxc/*.conf. IPs live in group_vars/all/secrets.sops.yml.
+# Every machine Ansible manages. Container entries are generated from the real
+# /etc/pve/lxc/*.conf (2026-09-29); `pct` holds each config key exactly as Proxmox has it,
+# except `description` (free-form notes: not managed, never published).
+# Out of scope, never touched: VMs 107 (Home-Assistant), 401 (Windows10), CT 117 (Hermes-Agent).
 all:
+  vars:
+    ansible_user: root
+    ansible_port: 2278
   hosts:
-    proxmox: # the Proxmox host; same name as the ssh alias
-      ansible_host: "{{ proxmox_host_ip }}"
+    proxmox:
+      ansible_host: 192.168.9.152
+  children:
+    containers:
+      # Commands run inside each container through `pct exec` on the host, so a container
+      # needs no SSH server. The system nc carries the SSH connection because macOS
+      # Local Network privacy blocks Homebrew's Python from the LAN. `pct` is
+      # connection_plugins/pct.py: community.proxmox.proxmox_pct_remote plus a quoting fix.
+      vars:
+        ansible_connection: pct
+        ansible_host: 192.168.9.152
+        ansible_paramiko_proxy_command: /usr/bin/nc 192.168.9.152 2278
+        proxmox_vmid: '{{ vmid }}'
+      hosts:
+        fileserver:
+          vmid: 101
+          dataset: ZFS-DATA/proxmox-dataset/images/file-server
+          pct:
+            arch: amd64
+            cores: '2'
+            hostname: File-Server
+            memory: '1504'
+            mp0: /mnt/storage,mp=/mnt/proxmox-host,size=0T
+            mp2: /mnt/ext_WD_My_Passport,mp=/mnt/ext-HDD,size=0T
+            nameserver: 192.168.9.151
+            net0: name=eth0,bridge=vmbr0,firewall=1,gw=192.168.9.2,hwaddr=12:91:CA:F3:B7:84,ip=192.168.9.153/24,type=veth
+            onboot: '1'
+            ostype: ubuntu
+            rootfs: ZFS-DATA:101/vm-101-disk-1.raw,size=8G
+            swap: '1504'
+        proxy:
+          vmid: 104
+          dataset: ZFS-DATA/proxmox-dataset/images/proxy
+          pct:
+            arch: amd64
+            cores: '1'
+            features: fuse=1,keyctl=1,nesting=1
+            hostname: Proxy
+            memory: '1024'
+            mp0: /mnt/storage/appdata/ssl_cert/,mp=/opt/ssl_cert,size=0T
+            net0: name=eth0,bridge=vmbr0,firewall=1,gw=192.168.9.2,hwaddr=4E:E0:39:0B:B3:71,ip=192.168.9.155/24,type=veth
+            onboot: '1'
+            ostype: ubuntu
+            rootfs: ZFS-DATA:104/vm-104-disk-1.raw,size=20G
+            swap: '1024'
+            unprivileged: '1'
+            lxc.apparmor.profile: unconfined
+        media:
+          vmid: 110
+          dataset: ZFS-DATA/proxmox-dataset/images/mediaserver
+          pct:
+            arch: amd64
+            cmode: tty
+            console: '1'
+            cores: '6'
+            cpulimit: '0'
+            cpuunits: '1024'
+            features: nesting=1
+            hostname: Media-Server2
+            memory: '16384'
+            mp1: /mnt/storage/media,mp=/media,size=0T
+            mp2: /mnt/cache/jellyfin,mp=/raid0,size=0T
+            net0: name=eth0,bridge=vmbr0,gw=192.168.9.2,hwaddr=C2:C9:24:A1:03:2B,ip=192.168.9.154/24,type=veth
+            onboot: '1'
+            ostype: ubuntu
+            protection: '0'
+            rootfs: ZFS-DATA:110/vm-110-disk-1.raw,size=90G
+            swap: '0'
+            tty: '2'
+            lxc.cgroup2.devices.allow:
+            - c 226:0 rwm
+            - c 226:128 rwm
+            - c 10:200 rwm
+            lxc.mount.entry:
+            - /dev/dri dev/dri none bind,optional,create=dir
+            - /dev/net/tun dev/net/tun none bind,create=file
+            lxc.apparmor.profile: unconfined
+        apps:
+          vmid: 111
+          dataset: ZFS-DATA/proxmox-dataset/images/portainer
+          pct:
+            arch: amd64
+            cores: '6'
+            features: fuse=1,keyctl=1,nesting=1
+            hostname: Portainer
+            memory: '16000'
+            mp0: /mnt/storage/samba-share/All/Backup-misc/Mate-20/,mp=/mnt/syncthing/Mate-20/,size=0T
+            mp1: /sn580,mp=/mnt/ssd/,size=0T
+            mp2: /mnt/storage/appdata,mp=/mnt/appdata/,size=0T
+            mp3: /zfs-data/DATA/photoprism-wife,mp=/mnt/photoprism-wife,size=0T
+            mp4: /mnt/storage/samba-share/All/Photos_Videos/,mp=/mnt/photos,size=0T
+            mp5: /mnt/storage/media/Books,mp=/mnt/books,size=0T
+            mp6: /mnt/cache,mp=/mnt/cache,size=0T
+            net0: name=eth0,bridge=vmbr0,firewall=1,gw=192.168.9.2,hwaddr=5A:17:7A:4E:DA:5B,ip=192.168.9.151/24,type=veth
+            onboot: '1'
+            ostype: ubuntu
+            rootfs: ZFS-DATA:111/vm-111-disk-1.raw,size=90G
+            startup: order=1
+            swap: '8192'
+            unprivileged: '1'
+            lxc.cgroup2.devices.allow: c 10:200 rwm
+            lxc.mount.entry:
+            - /dev/net/tun dev/net/tun none bind,create=file
+            - /dev/null sys/module/apparmor/parameters/enabled none bind 0 0
+            lxc.apparmor.profile: unconfined
+        nextcloud:
+          vmid: 112
+          dataset: ZFS-DATA/proxmox-dataset/images/nextcloud
+          pct:
+            arch: amd64
+            cores: '4'
+            hostname: Nextcloud-C-Rieger
+            memory: '8190'
+            mp0: /mnt/cache/nextcloud/,mp=/mnt/nc_data,size=0T
+            mp1: /mnt/storage/downloads/,mp=/mnt/downloads,size=0T
+            mp2: /mnt/cache/,mp=/mnt/ssd/,size=0T
+            mp3: /zfs-data/DATA/photoprism-wife,mp=/mnt/photoprism-wife,size=0T
+            net0: name=eth0,bridge=vmbr0,firewall=1,gw=192.168.9.2,hwaddr=0E:B5:5C:83:6A:01,ip=192.168.9.157/24,type=veth
+            onboot: '1'
+            ostype: ubuntu
+            rootfs: ZFS-DATA:112/vm-112-disk-1.raw,size=25G
+            swap: '4096'
+            lxc.apparmor.profile: unconfined
+        vpn:
+          vmid: 114
+          dataset: ZFS-DATA/proxmox-dataset/images/privatevpn
+          pct:
+            arch: amd64
+            cores: '6'
+            features: fuse=1,keyctl=1,nesting=1
+            hostname: PrivateVPN
+            memory: '16000'
+            mp0: /mnt/storage/media,mp=/mnt/media,size=0T
+            mp1: /mnt/storage/downloads,mp=/mnt/downloads,size=0T
+            mp2: /mnt/storage/private-iso,mp=/mnt/whisparr,size=0T
+            net0: name=eth0,bridge=vmbr0,firewall=1,gw=192.168.9.2,hwaddr=86:6E:14:2C:BE:BD,ip=192.168.9.156/24,type=veth
+            onboot: '1'
+            ostype: ubuntu
+            rootfs: ZFS-DATA:114/vm-114-disk-1.raw,size=70G
+            searchdomain: 8.8.8.8
+            swap: '4096'
+            unprivileged: '1'
+        gitlab:
+          vmid: 116
+          dataset: ZFS-DATA/proxmox-dataset/images/gitlab
+          pct:
+            arch: amd64
+            cmode: tty
+            console: '1'
+            cores: '2'
+            cpulimit: '0'
+            cpuunits: '1024'
+            features: fuse=1,keyctl=1,nesting=1
+            hostname: Gitlab
+            memory: '4096'
+            mp1: /mnt/storage/appdata/gitlab,mp=/mnt/appdata,size=2G
+            net0: name=eth0,bridge=vmbr0,gw=192.168.9.2,hwaddr=92:8E:02:F2:3C:24,ip=192.168.9.159/24,type=veth
+            onboot: '1'
+            ostype: ubuntu
+            protection: '0'
+            rootfs: ZFS-DATA:116/vm-116-disk-0.raw,size=60G
+            swap: '0'
+            tty: '2'
+            unprivileged: '1'
+            lxc.apparmor.profile: unconfined
