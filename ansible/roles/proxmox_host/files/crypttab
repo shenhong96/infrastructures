@@ -1,0 +1,5 @@
+# <target name>	<source device>		<key file>	<options>
+predatorG7 /dev/disk/by-id/nvme-Predator_SSD_GM7000_2TB_PSBG53420200054_1 /etc/cryptkey luks,noearly,discard #(for SSDs)
+hc550-2CH9LLDN /dev/disk/by-id/ata-WUH721816ALE6L4_2CH9LLDN /etc/cryptkey luks,noearly
+hc550-2CGUY70P /dev/disk/by-id/ata-WUH721816ALE6L4_2CGUY70P /etc/cryptkey luks,noearly
+12TB-WD-WD140EDGZ-11B1PA0-SERIAL_Y6GUZM1C /dev/disk/by-id/ata-WDC_WD140EDGZ-11B1PA0_Y6GUZM1C /etc/cryptkey luks,noearly

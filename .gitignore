@@ -1,0 +1,30 @@
+# Decrypted secrets: only the *.sops.* files are ever committed
+secrets.env
+.env
+*.dec
+*.decrypted
+*.decrypted.*
+
+# Keys and credentials
+*.agekey
+keys.txt
+id_rsa*
+id_ed25519*
+*.pem
+*.key
+.vault_pass*
+vault_password*
+
+# Legacy artifacts that must never come back
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Ansible
+ansible/collections/
+*.retry
+
+# Editors and OS
+.DS_Store
+*.swp
+*~

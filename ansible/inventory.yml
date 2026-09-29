@@ -1,0 +1,6 @@
+# Every machine Ansible manages. Phase 2 adds the containers, written from the
+# real /etc/pve/lxc/*.conf. IPs live in group_vars/all/secrets.sops.yml.
+all:
+  hosts:
+    proxmox: # the Proxmox host; same name as the ssh alias
+      ansible_host: "{{ proxmox_host_ip }}"

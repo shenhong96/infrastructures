@@ -1,0 +1,6 @@
+# The only playbook; tags select one part of it. Its roles (proxmox_host, lxc,
+# base, komodo, gitlab, jellyfin, nextcloud) arrive in Phases 2 and 3.
+- name: Nothing to deploy yet
+  hosts: all
+  gather_facts: false
+  tasks: []

@@ -1,0 +1,6 @@
+# no-log-password is opt-in: it catches secret-handling tasks missing no_log.
+enable_list:
+  - no-log-password
+exclude_paths:
+  - collections/
+  - "**/*.sops.yml" # ciphertext: nothing to lint

@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Blocks any commit that could publish a secret; this repo is public.
+# Checks the staged copy of each file, not the working tree, and prints
+# paths and rule names only, never values. Turn on once per clone:
+#   git config core.hooksPath .githooks
+set -uo pipefail
+bad=0
+fail() { echo "pre-commit: $*" >&2; bad=1; }
+
+command -v gitleaks >/dev/null || { echo "pre-commit: gitleaks is not installed" >&2; exit 1; }
+gitleaks git --pre-commit --staged --redact --no-banner --log-level error ||
+  fail "gitleaks flagged a possible secret (see above)"
+
+# Every line of a *.sops.* file must be encrypted, empty, or structure.
+# Exits non-zero on any plaintext value or missing SOPS metadata.
+read -r -d '' ENCRYPTED_ONLY <<'AWK'
+fmt == "env" {
+  if ($0 ~ /^sops_mac=ENC\[/) mac = 1
+  if ($0 ~ /^sops_age__list_[0-9]+__map_recipient=age1/) rcp = 1
+  if ($0 == "" || $0 ~ /^#ENC\[/ || $0 ~ /^sops_[a-z0-9_]+=/) next
+  if ($0 ~ /^[A-Za-z_][A-Za-z0-9_.-]*=(ENC\[.*)?$/) next
+  plain++; next
+}
+fmt == "yaml" {
+  if ($0 ~ /^sops:[[:space:]]*$/) { meta = 1; next }
+  if (meta) {
+    if ($0 != "" && $0 !~ /^[[:space:]]/) plain++   # top-level key after metadata
+    if ($0 ~ /^[[:space:]]+mac: ENC\[/) mac = 1
+    if ($0 ~ /recipient: age1/) rcp = 1
+    next
+  }
+  s = $0; sub(/^[[:space:]]+/, "", s)
+  while (s ~ /^- /) { s = substr(s, 3); sub(/^[[:space:]]+/, "", s) }
+  if (s == "" || s ~ /^#?ENC\[/ || s ~ /^(""|'')$/) next
+  key = "(\"[^\"]*\"|'[^']*'|[^:#\"' -][^:]*)"
+  if (s ~ ("^" key ":[[:space:]]*$")) next
+  if (s ~ ("^" key ":[[:space:]]+(ENC\\[|(\"\"|''|\\[\\]|\\{\\}|null|~)[[:space:]]*$)")) next
+  plain++
+}
+END { exit !(mac && rcp && plain == 0) }
+AWK
+
+while IFS= read -r -d '' f; do
+  case "${f##*/}" in
+    .env | secrets.env | *.tfstate | *.tfstate.* | *.agekey | keys.txt | cryptkey | *vault_pass*)
+      fail "$f: this file must never be committed"; continue ;;
+  esac
+  git show ":$f" | grep -q '\$ANSIBLE_VAULT;[0-9]' && fail "$f: contains ansible-vault data"
+  [ "$f" = ".sops.yaml" ] && continue   # the SOPS config itself, plaintext by design
+  case "$f" in
+    *.sops.yaml | *.sops.yml) fmt=yaml ;;
+    *.sops.env) fmt=env ;;
+    *.sops.*) fail "$f: unsupported SOPS format (use .sops.yaml, .sops.yml or .sops.env)"; continue ;;
+    *) continue ;;
+  esac
+  git show ":$f" | awk -v fmt="$fmt" "$ENCRYPTED_ONLY" || fail "$f: not fully SOPS-encrypted"
+done < <(git diff --cached --name-only --diff-filter=ACMR -z)
+
+exit "$bad"
