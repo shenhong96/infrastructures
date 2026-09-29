@@ -23,6 +23,13 @@
     group: root
     mode: "0644"
 
+# The validate below (sshd -t) needs it; a new container's sshd hasn't run yet to make it.
+- name: The sshd runtime folder
+  ansible.builtin.file:
+    path: /run/sshd
+    state: directory
+    mode: "0755"
+
 - name: SSH port and root login
   ansible.builtin.lineinfile:
     path: /etc/ssh/sshd_config
@@ -49,6 +56,12 @@
 
 # A file holding a secret is kept whole, base64-encoded (so Jinja never parses it), in
 # the machine's secrets.sops.yml as secret_files_b64: {path: content}.
+- name: Folders of the files that hold a secret # noqa: risky-file-permissions
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory # no mode: a folder that exists stays as it is
+  loop: "{{ secret_files_b64 | default({}) | list | map('dirname') | unique | list }}"
+
 - name: Files that hold a secret # noqa: risky-file-permissions
   ansible.builtin.copy:
     content: "{{ item.value | b64decode }}"

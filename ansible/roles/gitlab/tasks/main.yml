@@ -1,0 +1,83 @@
+# GitLab CE adopted as found: the package at the version running now (held, so a plain
+# `apt upgrade` can't move it), gitlab.rb, and the secret files. Not managed: the data
+# (/var/opt/gitlab), the runner and promtail containers, backups.
+# Order matters on a fresh machine: the package's first reconfigure reads gitlab.rb and
+# the secrets, so they go in before it.
+
+- name: Apt source and keyring # noqa: risky-file-permissions
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: /{{ item }}
+  loop:
+    - etc/apt/sources.list.d/gitlab_gitlab-ce.list
+    - usr/share/keyrings/gitlab-ce-archive-keyring.gpg
+  register: gitlab_apt_source
+
+# ponytail: skipped in --check so it isn't one more "changed"; a new source only
+# happens on a fresh machine or a real apply.
+- name: Refresh the package lists for a new source # noqa: no-handler
+  ansible.builtin.apt:
+    update_cache: true
+  when: gitlab_apt_source is changed and not ansible_check_mode
+
+- name: /etc/gitlab
+  ansible.builtin.file:
+    path: /etc/gitlab
+    state: directory
+    owner: root
+    group: root
+    mode: "0775" # what the package makes
+
+# Holds only paths, no secret values.
+- name: The gitlab.rb file
+  ansible.builtin.copy:
+    src: etc/gitlab/gitlab.rb
+    dest: /etc/gitlab/gitlab.rb
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Reconfigure GitLab
+
+# base writes these from host_vars/gitlab/secrets.sops.yml (content only); this sets who
+# may read them.
+- name: Secret file owner and modes
+  ansible.builtin.file:
+    path: "{{ item.key }}"
+    owner: root
+    group: root
+    mode: "{{ item.value }}"
+  loop: "{{ gitlab_secret_modes | dict2items }}"
+  vars:
+    gitlab_secret_modes:
+      /etc/gitlab/gitlab-secrets.json: "0600"
+      /etc/gitlab/ssl/ahlooii.com.key: "0600"
+      /etc/gitlab/ssl/ca.key: "0600"
+      /etc/gitlab/ssl/gitlab.ahlooii.com.key: "0400"
+      /etc/gitlab/ssl/gitlab.ahlooii.com.key-staging: "0400"
+      /etc/gitlab/ssl/letsencrypt_account_private_key.pem: "0600"
+      /etc/gitlab/ssl/registry.ahlooii.com/certificate.key: "0600"
+      /etc/gitlab/ssl/registry.ahlooii.com/privkey2.pem: "0600"
+
+# ponytail: a first install prints ~500 KB of reconfigure output, which pct exec garbles
+# (the apt module's reply can't be parsed, though the install finished). So a new machine
+# installs with the output in a file; the task below then finds it installed.
+- name: GitLab package, first install # noqa: command-instead-of-module
+  ansible.builtin.shell: DEBIAN_FRONTEND=noninteractive apt-get install -y gitlab-ce=18.8.1-ce.0 >/var/log/gitlab-first-install.log 2>&1
+  args:
+    creates: /usr/bin/gitlab-ctl
+
+- name: GitLab package at the running version
+  ansible.builtin.apt:
+    name: gitlab-ce=18.8.1-ce.0
+    state: present
+
+- name: Hold GitLab
+  ansible.builtin.dpkg_selections:
+    name: gitlab-ce
+    selection: hold
+
+- name: GitLab running and enabled at boot
+  ansible.builtin.service:
+    name: gitlab-runsvdir
+    enabled: true
+    state: started

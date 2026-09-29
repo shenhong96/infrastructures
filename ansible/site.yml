@@ -1,5 +1,5 @@
 # The only playbook; tags select one part of it. Roles for the containers (lxc, base,
-# komodo, gitlab, jellyfin, nextcloud) are added as they reach zero changes.
+# gitlab, jellyfin, nextcloud, komodo) are added as they reach zero changes.
 - name: Proxmox host
   hosts: proxmox
   tags: host
@@ -21,3 +21,24 @@
   gather_facts: false # nothing uses facts
   roles:
     - base
+
+- name: GitLab
+  hosts: gitlab
+  tags: gitlab
+  gather_facts: false # nothing uses facts
+  roles:
+    - gitlab
+
+- name: Jellyfin
+  hosts: media
+  tags: jellyfin
+  gather_facts: false # nothing uses facts
+  roles:
+    - jellyfin
+
+- name: Nextcloud
+  hosts: nextcloud
+  tags: nextcloud
+  gather_facts: false # nothing uses facts
+  roles:
+    - nextcloud

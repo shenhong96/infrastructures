@@ -56,8 +56,9 @@
 
     - name: Changes pct can't make
       ansible.builtin.assert:
-        that: lxc_config.differs | default({}) | select('match', 'lxc\\.|rootfs$') | list == []
-        fail_msg: Edit /etc/pve/lxc/{{ vmid }}.conf by hand (raw lxc.* keys), or use `pct resize` (rootfs).
+        that: lxc_config.differs | default({}) | select('match', 'lxc\\.|rootfs$|unprivileged$') | list == []
+        fail_msg: Edit /etc/pve/lxc/{{ vmid }}.conf by hand (raw lxc.* keys), use `pct resize` (rootfs), or note that a
+          container's kind (unprivileged) can't be changed in place.
 
     - name: The container's own dataset
       ansible.builtin.command: zfs get -H -o value mountpoint {{ dataset }}

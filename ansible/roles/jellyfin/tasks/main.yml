@@ -1,0 +1,74 @@
+# Jellyfin adopted as found: packages at the running versions (held: 10.x to 12.x needed
+# migrations and a plugin backup, so upgrades are deliberate), the tmpfs for transcodes,
+# hardware-transcoding groups. Not managed: /etc/jellyfin/*.xml and /var/lib/jellyfin
+# (the app rewrites them and they hold secrets; only a CT dump restores them).
+
+- name: Apt source and keyring # noqa: risky-file-permissions
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: /{{ item }}
+  loop:
+    - etc/apt/sources.list.d/jellyfin.sources
+    - etc/apt/keyrings/jellyfin.gpg
+  register: jellyfin_apt_source
+
+# ponytail: skipped in --check so it isn't one more "changed"; a new source only
+# happens on a fresh machine or a real apply.
+- name: Refresh the package lists for a new source # noqa: no-handler
+  ansible.builtin.apt:
+    update_cache: true
+  when: jellyfin_apt_source is changed and not ansible_check_mode
+
+- name: Jellyfin packages at the running versions
+  ansible.builtin.apt:
+    name:
+      - jellyfin=12.1+ubu2204
+      - jellyfin-server=12.1+ubu2204
+      - jellyfin-web=12.1+ubu2204
+      - jellyfin-ffmpeg8=8.1.2-5-jammy
+    state: present
+
+- name: Hold Jellyfin packages
+  ansible.builtin.dpkg_selections:
+    name: "{{ item }}"
+    selection: hold
+  loop: [jellyfin, jellyfin-server, jellyfin-web, jellyfin-ffmpeg8]
+
+# Access to /dev/dri; a process only sees a new group after it restarts.
+- name: Jellyfin user in the video and render groups
+  ansible.builtin.user:
+    name: jellyfin
+    groups: video,render
+    append: true
+  notify: Restart Jellyfin
+
+# ponytail: uid/gid are the live jellyfin user's numbers; a fresh container can give the
+# user others. Check `id jellyfin` after a rebuild, or template them from getent.
+- name: Transcode tmpfs in fstab
+  ansible.builtin.lineinfile:
+    path: /etc/fstab
+    regexp: ^\S+\s+/var/tmp/transcode\s
+    line: none /var/tmp/transcode tmpfs size=16G,nr_inodes=10k,mode=1755,uid=110,gid=118 0 0
+
+- name: Transcode folder (the mount point) # noqa: risky-file-permissions
+  ansible.builtin.file:
+    path: /var/tmp/transcode
+    state: directory # no mode: the tmpfs sets it
+
+- name: Is the transcode tmpfs mounted
+  ansible.builtin.command: mountpoint -q /var/tmp/transcode
+  register: jellyfin_mounted
+  check_mode: false # read-only
+  changed_when: false
+  failed_when: false
+
+- name: Mount the transcode tmpfs # noqa: command-instead-of-module
+  ansible.builtin.command: mount /var/tmp/transcode
+  when: jellyfin_mounted.rc != 0
+  changed_when: true
+
+- name: Jellyfin running and enabled at boot
+  ansible.builtin.service:
+    name: jellyfin
+    enabled: true
+    state: started

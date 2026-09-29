@@ -13,6 +13,7 @@ binds = [v.split(",")[0] for k, v in want.items() if re.fullmatch(r"mp\d+", k) a
 
 if not os.path.exists(path):
     plain = {k: v for k, v in want.items() if not k.startswith("lxc.")}
+    plain.setdefault("unprivileged", "0")  # pct create would make it unprivileged; an absent key means privileged
     # A new root volume: "ZFS-DATA:101/vm-101-disk-1.raw,size=8G" becomes "ZFS-DATA:8".
     plain["rootfs"] = plain["rootfs"].split(":")[0] + ":" + re.search(r"size=(\d+)G", plain["rootfs"]).group(1)
     raw = [f"{k}: {v}" for k, vs in want.items() if k.startswith("lxc.") for v in (vs if isinstance(vs, list) else [vs])]
@@ -32,6 +33,8 @@ live = {k: v[0] if len(v) == 1 else v for k, v in live.items()}
 
 
 def norm(k, v):
+    if k == "unprivileged":  # absent and 0 are the same: a privileged container
+        return v or "0"
     # A container recreated empty gets vm-<id>-disk-0.raw; the old one may be disk-1.
     return re.sub(r"/vm-\d+-disk-\d+\.raw", "", v) if k == "rootfs" and v else v
 

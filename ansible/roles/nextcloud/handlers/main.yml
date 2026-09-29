@@ -1,0 +1,20 @@
+- name: Reload nginx
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
+
+- name: Reload PHP 8.2
+  ansible.builtin.service:
+    name: php8.2-fpm
+    state: reloaded
+
+# Redis has no reload.
+- name: Restart Redis
+  ansible.builtin.service:
+    name: redis-server
+    state: restarted
+
+- name: Reload fail2ban
+  ansible.builtin.service:
+    name: fail2ban
+    state: reloaded

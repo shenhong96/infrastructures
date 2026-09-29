@@ -1,0 +1,2 @@
+# The jellyfin role's packages and repo are built for 22.04 (jammy).
+lxc_template: ubuntu-22.04-standard_22.04-1_amd64.tar.zst

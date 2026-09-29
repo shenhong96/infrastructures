@@ -1,0 +1,2 @@
+# The nextcloud role's nginx, PHP PPA and packages are built for 22.04 (jammy).
+lxc_template: ubuntu-22.04-standard_22.04-1_amd64.tar.zst

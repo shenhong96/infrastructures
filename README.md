@@ -56,6 +56,13 @@ Two age keys, set in `.sops.yaml` (the first matching rule wins):
 3. Change the secret values themselves, then commit and push: the old values stay readable in the history.
 4. Put the new key where it lives: `admin` in `keys.txt`, Bitwarden and the offline copy; `lab` by re-running Ansible's `base` role (pending).
 
+## GitLab, Jellyfin and Nextcloud: what a rebuild gives back
+
+The `gitlab`, `jellyfin` and `nextcloud` roles put the software and its config files back; they don't restore data. Ansible on a fresh container gives you a working install with empty content.
+
+- **GitLab and Jellyfin:** GitLab's data (`/var/opt/gitlab`) and Jellyfin's library database and settings (`/var/lib/jellyfin`, `/etc/jellyfin`) live only on the container's root disk. Only a CT dump restores them. A fresh install gives empty apps.
+- **Nextcloud fallback:** the role installs the stack and, only if `/var/www/nextcloud/occ` is missing, the 30.0.4 code (sha256 checked). It never touches `config.php`, the data folder or `/var/lib/mysql`. Then restore a database dump if there is one; if not, run `occ maintenance:install` and `occ files:scan --all`. Shares, calendars and contacts are lost that way.
+
 ## Not working yet
 
 Deploying anything (the Ansible roles, Komodo), rebuilding from scratch, and backups and restores. Each section is added here once it has been shown to work.
