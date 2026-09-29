@@ -1,0 +1,2 @@
+*/5 * * * * php -f /var/www/nextcloud/cron.php > /dev/null 2>&1
+*/5 * * * * php -f /var/www/nextcloud/cron.php > /dev/null 2>&1

@@ -1,0 +1,2 @@
+# Plain settings for every machine. Secrets are in secrets.sops.yml next to this file.
+timezone: Asia/Kuala_Lumpur

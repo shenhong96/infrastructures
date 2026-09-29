@@ -1,0 +1,4 @@
+#Ansible: Allow media server to utilize Intel QuickSync
+@reboot chown root:render /dev/dri/renderD128
+#Ansible: cronjob managed by ansible
+@hourly bash /root/scripts/sysctl_status_recover.sh

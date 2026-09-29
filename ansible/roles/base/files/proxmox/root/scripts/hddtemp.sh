@@ -1,0 +1,291 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC1007
+
+# MIT license (c) 2022-2024 https://github.com/slowpeek
+# Homepage: https://github.com/slowpeek/hddtemp
+# About: smartctl-based alternative to hddtemp
+
+set -eu
+
+SCRIPT_VERSION=0.2.4+git
+SCRIPT_SELF=${BASH_SOURCE[0]##*/}
+
+if [[ -t 2 ]]; then
+    t_red=$'\e[31m'
+    t_yellow=$'\e[33m'
+    t_reset=$'\e(B\e[m'
+else
+    t_red=
+    t_yellow=
+    t_reset=
+fi
+
+verb=2
+
+_log() {
+    (( verb >= $1 )) || return 0
+    echo "$2" "${@:3}" >&2
+}
+
+log_warn() { _log 2 "${t_yellow}warning:${t_reset}" "$@"; }
+log_err() { _log 1 "${t_red}error:${t_reset}" "$@"; }
+
+bye() {
+    log_err "$@"
+    exit 1
+}
+
+in_path() {
+    type -P -- "$1" >/dev/null
+}
+
+version() {
+    echo "${SCRIPT_SELF} ${SCRIPT_VERSION}"
+    exit
+}
+
+usage() {
+    cat <<EOF
+Usage: ${SCRIPT_SELF} [options] [disk1 ..]
+
+Without any disk arguments, show temperature for all sd and nvme disks.
+
+Options:
+  -h, --help                 Show usage
+  -q                         Suppress warnings
+  -V, --version              Show version
+
+  --classic                  Replicate output format of the original hddtemp
+  --hint path                Provide a file containing 'smartctl --scan-open'
+                             output as a hint for device types (-d option value
+                             for smartctl)
+
+  -u, --units C|F            Use Celsius (default) or Fahrenheit scale
+
+Homepage https://github.com/slowpeek/hddtemp
+EOF
+
+    exit
+}
+
+temp_ata() {
+    local line u=(0 0 0)
+
+    # Here we use logic from the drivetemp linux driver
+    # https://github.com/torvalds/linux/blob/v6.7/drivers/hwmon/drivetemp.c#L89-L95
+    #
+    # - SCT probe is the primary source
+    # - otherwise, use SMART attr 194
+    # - otherwise, use SMART attr 190
+    #
+    # 194/190 outliers gonna outlie.
+
+    for line; do
+        case $line in
+            '190 '*)
+                # attr 190
+                read -r _ _ _ _ _ _ _ _ _ 'u[2]' <<< "$line" ;;
+
+            '194 '*)
+                # attr 194
+                read -r _ _ _ _ _ _ _ _ _ 'u[1]' <<< "$line" ;;
+
+            'Current Temperature:'*)
+                # sct
+                read -r _ _ 'u[0]' _ <<< "$line" ;;
+        esac
+    done
+
+    local t
+    for t in "${u[@]}"; do
+        if [[ $t == [1-9]* ]]; then
+            # https://github.com/smartmontools/smartmontools/blob/RELEASE_7_4/smartmontools/atacmds.cpp#L2096-L2109
+            # https://github.com/smartmontools/smartmontools/blob/RELEASE_7_4/smartmontools/atacmds.cpp#L2115
+            temp=${t%%[^0-9]*}
+
+            return
+        fi
+    done
+}
+
+temp_nvme() {
+    local line
+
+    for line; do
+        if [[ $line == 'Temperature:'* ]]; then
+            read -r _ temp _ <<< "$line"
+            break
+        fi
+    done
+}
+
+temp_scsi() {
+    local line
+
+    for line; do
+        if [[ $line == 'Current Drive Temperature:'* ]]; then
+            read -r _ _ _ temp _ <<< "$line"
+            break
+        fi
+    done
+}
+
+fah_temp() {
+    local r
+
+    (( temp = temp*18 + 320,
+       r = temp % 10,
+       temp /= 10,
+       r < 5 || temp++ ))
+}
+
+# Parse 'smartctl --scan-open' output
+parse_hint() {
+    local -n ref=$1
+    local dev opt type
+
+    ref=()
+
+    while read -r dev opt type _; do
+        [[ $dev == /dev/* && $opt == -d && -n $type ]] || continue
+        # shellcheck disable=SC2034
+        ref[$dev]=$type
+    done
+}
+
+main() {
+    local opts
+
+    # jetopt .classic .hint: hhelp q uunits: Vversion
+    opts=$(getopt -o hqu:V -l classic,hint:,help,units:,version -- "$@") || exit
+    eval set -- "$opts"
+
+    local units=C classic=n scale= hint=
+
+    while (( $# )); do
+        case $1 in
+            -h|--help)
+                usage ;;
+            -V|--version)
+                version ;;
+
+            --classic)
+                classic=y
+                shift ;;
+
+            --hint)
+                hint=$2
+                shift 2 ;;
+
+            -u|--units)
+                units=$2
+                shift 2 ;;
+
+            -q)
+                (( --verb )) || verb=1
+                shift ;;
+            --)
+                shift
+                break ;;
+        esac
+    done
+
+    in_path smartctl || bye 'smartctl is not available'
+    (( ! EUID )) || bye 'smartctl requires root permissions, run with sudo'
+
+    [[ $units == [CF] ]] ||
+        bye "The only allowed values for --units are 'C' and 'F'"
+
+    local -A hint_map=()
+    if [[ -n $hint ]]; then
+        [[ -e $hint ]] || bye "'${hint}' does not exist"
+        [[ -f $hint ]] || bye "'${hint}' is not a regular file"
+        [[ -r $hint ]] || bye "'${hint}' is not readable"
+
+        if in_path file; then
+            [[ $(file -bL "$hint") == *text* ]] ||
+                bye "'${hint}' is not a text file"
+        fi
+
+        parse_hint hint_map < "$hint"
+    fi
+
+    if [[ $classic == y ]]; then
+        # The degree symbol in the current locale.
+        scale=$(iconv -f utf-8 <<< $'\xc2\xb0')
+
+        # °C / °F
+        scale+=$units
+    fi
+
+    # Check smartctl version for NVMe support.
+    local ver
+    read -r _ ver _ < <(smartctl -V)
+
+    [[ ! $ver == @([0-5].*|6.[0-4]*) ]] ||
+        log_warn "startctl supports NVMe devices since v6.5 (yours is v${ver})"
+
+    # If no args supplied, assume all sd and nvme disks.
+    if (( ! $# )); then
+        shopt -s nullglob
+        set -- /dev/sd? /dev/sd?[a-z] /dev/nvme? /dev/nvme?[0-9]
+        shopt -u nullglob
+    fi
+
+    local items=() l_disk=0 l_name=1
+    local disk name temp lines line parser extra
+    for disk; do
+        [[ $disk == /dev/* ]] || continue
+
+        # Collect disk field's width
+        (( ${#disk} <= l_disk )) || l_disk=${#disk}
+
+        extra=()
+        test -z "${hint_map[$disk]:-}" || extra+=(-d "$_")
+        readarray -t lines < <(smartctl -i -A -l scttempsts "${extra[@]}" "$disk" 2>&1)
+
+        # There are three printers in smartctl overall: ataprint, nvmeprint,
+        # scsiprint. Leverage the output formats peculiarities.
+
+        name=
+        for line in "${lines[@]}"; do
+            case $line in
+                'Device Model:'*)
+                    read -r _ _ name <<< "$line"
+                    parser=ata
+                    break ;;
+                'Model Number:'*)
+                    read -r _ _ name <<< "$line"
+                    parser=nvme
+                    break ;;
+                'Product:'*)
+                    read -r _ name <<< "$line"
+                    parser=scsi
+                    break ;;
+            esac
+        done
+
+        temp=
+        if [[ -n $name ]]; then
+            # Collect name field's width
+            (( ${#name} <= l_name )) || l_name=${#name}
+
+            temp_"$parser" "${lines[@]}"
+
+            if [[ -n $temp ]]; then
+                # Convert to Fahrenheit if asked.
+                [[ $units == C ]] || fah_temp
+            fi
+        fi
+
+        items+=("${disk}:" "${name:-?}" "${temp:-?}" "${temp:+$scale}")
+    done
+
+    if [[ $classic = n ]]; then
+        printf "%-$((l_disk+1))s  %-${l_name}s  %s%s\n" "${items[@]}"
+    else
+        printf "%s %s: %s%s\n" "${items[@]}"
+    fi
+}
+
+[[ ! ${BASH_SOURCE[0]##*/} == "${0##*/}" ]] || main "$@"

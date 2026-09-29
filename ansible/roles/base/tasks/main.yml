@@ -1,0 +1,95 @@
+# OS basics on the host and inside each container Ansible can run in, adopted as found.
+# Not managed yet: users and SSH keys (which keys to trust is still open), and the files
+# that hold secrets until their values are in SOPS (see the Phase 2 plan).
+
+# ponytail: not the apt module; Ansible's Python on the 20.04 containers (3.9, deadsnakes)
+# has no apt bindings. Only a new container lacks these.
+- name: Tools the tasks below use # noqa: command-instead-of-module
+  ansible.builtin.shell: apt-get update && apt-get install -y curl git vim
+  args:
+    creates: /usr/bin/git
+
+- name: Timezone
+  ansible.builtin.file:
+    src: /usr/share/zoneinfo/{{ timezone }}
+    dest: /etc/localtime
+    state: link
+
+- name: Timezone name
+  ansible.builtin.copy:
+    content: "{{ timezone }}\n"
+    dest: /etc/timezone
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: SSH port and root login
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: ^{{ item.split()[0] }}\s
+    line: "{{ item }}"
+    validate: /usr/sbin/sshd -t -f %s
+  loop:
+    - Port 2278
+    - PermitRootLogin prohibit-password
+  notify: Restart sshd
+
+# Scripts are mirrored under files/common/ (every machine) and files/<machine>/, by
+# their path from /. Content only: existing files keep their modes (0600 or 0644).
+- name: Scripts every machine has # noqa: risky-file-permissions
+  ansible.builtin.copy:
+    src: common/
+    dest: /
+
+- name: Scripts only this machine has # noqa: risky-file-permissions
+  ansible.builtin.copy:
+    src: "{{ inventory_hostname }}/"
+    dest: /
+  when: (role_path ~ '/files/' ~ inventory_hostname) is directory
+
+# Whole crontabs, one file per user in files/crontabs/<machine>/. The cron module can't
+# adopt a job that lacks its "#Ansible:" marker; it would add a second copy of it.
+- name: Crontabs match the repo
+  ansible.builtin.command: crontab -l -u {{ item | basename }}
+  loop: "{{ query('fileglob', role_path ~ '/files/crontabs/' ~ inventory_hostname ~ '/*') }}"
+  loop_control:
+    label: "{{ item | basename }}"
+  register: base_crontabs
+  check_mode: false # read-only
+  changed_when: base_crontabs.stdout | trim != lookup('file', item) | trim
+  failed_when: base_crontabs.rc != 0 and 'no crontab' not in base_crontabs.stderr
+
+- name: Install the crontabs that differ
+  ansible.builtin.command: crontab -u {{ item.item | basename }} -
+  args:
+    stdin: "{{ lookup('file', item.item) }}"
+  loop: "{{ base_crontabs.results | select('changed') }}"
+  loop_control:
+    label: "{{ item.item | basename }}"
+  when: not ansible_check_mode
+  changed_when: true
+
+# Installed once; after that its version is left alone (apt upgrades it).
+- name: Docker
+  ansible.builtin.shell: set -o pipefail && curl -fsSL https://get.docker.com | sh
+  args:
+    creates: /usr/bin/docker
+    executable: /bin/bash
+
+- name: Vim settings (containers; the host has none)
+  when: inventory_hostname in groups.containers
+  block:
+    - name: Vimrc
+      ansible.builtin.copy:
+        src: vimrc
+        dest: /root/.vimrc
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Dracula theme
+      ansible.builtin.git:
+        repo: https://github.com/dracula/vim.git
+        dest: /root/.vim/pack/themes/start/dracula
+        version: master
+        update: false

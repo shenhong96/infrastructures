@@ -1,0 +1,5 @@
+#Ansible: cronjob managed by ansible
+@hourly bash /root/scripts/sysctl_status_recover.sh
+#Ansible: Nextcloud OCC to generate preview thumbnail for image
+* 0 * * * su www-data -s /bin/bash -c "php /var/www/nextcloud/occ preview:pre-generate"
+*/5 * * * * sudo -u www-data php -f /var/www/nextcloud/cron.php

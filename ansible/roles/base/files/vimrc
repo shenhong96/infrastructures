@@ -1,0 +1,54 @@
+packadd! dracula
+syntax enable
+colorscheme dracula
+
+syntax on
+set hlsearch
+hi Search ctermbg=yellow ctermfg=blue
+set scrolloff=3
+
+set spell
+set complete+=kspell
+set completeopt=menuone,longest,preview
+set encoding=utf-8
+set shortmess+=c
+autocmd FileType yaml setlocal ts=2 sts=2 sw=2 expandtab
+let g:indentLine_char = '⦙'
+set ignorecase
+set smartcase
+set incsearch
+
+filetype plugin on
+filetype indent on
+set cursorcolumn
+set cursorline
+set number
+set mouse=a
+set backspace=indent,eol,start
+set history=1000
+
+
+
+" Minimalist-AutoCompletePop-Plugin
+inoremap <expr> <Tab> TabComplete()
+fun! TabComplete()
+    if getline('.')[col('.') - 2] =~ '\K' || pumvisible()
+        return "\<C-P>"
+    else
+        return "\<Tab>"
+    endif
+endfun
+
+set completeopt=menu,menuone,noinsert
+inoremap <expr> <CR> pumvisible() ? "\<C-Y>" : "\<CR>"
+autocmd InsertCharPre * call AutoComplete()
+fun! AutoComplete()
+    if v:char =~ '\K'
+        \ && getline('.')[col('.') - 4] !~ '\K'
+        \ && getline('.')[col('.') - 3] =~ '\K'
+        \ && getline('.')[col('.') - 2] =~ '\K' " last char
+        \ && getline('.')[col('.') - 1] !~ '\K'
+
+        call feedkeys("\<C-P>", 'n')
+    end
+endfun

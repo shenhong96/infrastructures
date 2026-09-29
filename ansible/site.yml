@@ -6,3 +6,18 @@
   gather_facts: false # nothing uses facts; saves a round trip
   roles:
     - proxmox_host
+
+# Each container's Proxmox side (config, dataset, start guard); every task runs on the host.
+- name: Containers
+  hosts: containers
+  tags: lxc
+  gather_facts: false # a container may not exist yet
+  roles:
+    - lxc
+
+- name: Inside each machine
+  hosts: proxmox:containers:!skip_inside
+  tags: base
+  gather_facts: false # nothing uses facts
+  roles:
+    - base
