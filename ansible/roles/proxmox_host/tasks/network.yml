@@ -1,0 +1,18 @@
+# ponytail: no handlers. A change here takes effect at the next reboot (or a manual
+# `ifreload -a`); nothing restarts networking on its own.
+
+- name: NIC name (systemd link file)
+  ansible.builtin.copy:
+    src: 10-lan0.link
+    dest: /etc/systemd/network/10-lan0.link
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Interfaces and the vmbr0 bridge
+  ansible.builtin.copy:
+    src: interfaces
+    dest: /etc/network/interfaces
+    owner: root
+    group: root
+    mode: "0644"

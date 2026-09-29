@@ -1,0 +1,93 @@
+# Adopts the disks as they are. ponytail: nothing here partitions, formats, unlocks or
+# mounts anything. When a disk is replaced, prepare it by hand (LUKS, mkfs), then rerun;
+# add an initialisation step here if that ever needs to be repeatable.
+
+# Read-only, so it also runs in --check. (Ansible's mount facts leave out FUSE mounts
+# such as MergerFS, hence mountpoint(1).)
+- name: Every managed mount point is mounted
+  ansible.builtin.command: mountpoint -q {{ item.mount_point }}
+  changed_when: false
+  check_mode: false
+  loop: "{{ fstab_mounts }}"
+  loop_control:
+    label: "{{ item.mount_point }}"
+
+# The disk key is binary, so it's kept base64-encoded. Compare with what's on the host
+# rather than rewriting it; a difference shows as `changed` in --check too.
+- name: Disk key is current
+  ansible.builtin.slurp:
+    src: /etc/cryptkey
+  register: proxmox_host_cryptkey
+  failed_when: false
+  changed_when: proxmox_host_cryptkey.content | default('') != cryptkey_b64
+  no_log: true
+
+- name: Write the disk key
+  ansible.builtin.shell: umask 077 && base64 -d > /etc/cryptkey.new && mv /etc/cryptkey.new /etc/cryptkey
+  args:
+    stdin: "{{ cryptkey_b64 }}"
+  when: proxmox_host_cryptkey is changed and not ansible_check_mode
+  changed_when: true
+  no_log: true
+
+- name: Crypttab
+  ansible.builtin.copy:
+    src: crypttab
+    dest: /etc/crypttab
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Fstab
+  ansible.builtin.template:
+    src: fstab.j2
+    dest: /etc/fstab
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: SnapRAID config
+  ansible.builtin.copy:
+    src: snapraid.conf
+    dest: /etc/snapraid.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Sanoid config folder
+  ansible.builtin.file:
+    path: /etc/sanoid
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Sanoid config
+  ansible.builtin.copy:
+    src: sanoid.conf
+    dest: /etc/sanoid/sanoid.conf
+    owner: root
+    group: root
+    mode: "0640"
+
+- name: Snapraid-runner checkout
+  ansible.builtin.git:
+    repo: https://github.com/Chronial/snapraid-runner.git
+    dest: /opt/snapraid-runner
+    version: v0.5
+
+- name: Snapraid-runner config (holds SMTP credentials and email addresses)
+  ansible.builtin.copy:
+    content: "{{ snapraid_runner_conf }}"
+    dest: /root/.snapraid-runner.conf
+    owner: root
+    group: root
+    mode: "0640"
+  diff: false
+  no_log: true
+
+# /etc/pve is Proxmox's cluster filesystem: it sets owners and modes itself.
+- name: Proxmox storage definitions # noqa: risky-file-permissions
+  ansible.builtin.copy:
+    src: storage.cfg
+    dest: /etc/pve/storage.cfg

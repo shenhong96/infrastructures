@@ -1,0 +1,46 @@
+# Plain settings for the Proxmox host. Secrets are in secrets.sops.yml next to this file.
+
+# Legacy role's list; mergerfs now comes from Debian's own package (2.40.2 on trixie).
+host_packages:
+  - vim
+  - libgl1
+  - libegl1
+  - iotop
+  - htop
+  - btop
+  - lm-sensors
+  - git
+  - btrfs-progs
+  - screen
+  - cryptsetup
+  - ncdu
+  - sanoid
+  - ntfs-3g
+  - sudo
+  - snapraid
+  - ripgrep
+  - jq
+  - yq
+  - iperf3
+  - zsh
+  - python3-pip
+  - mergerfs
+
+# /etc/fstab, rendered by templates/fstab.j2 (same order and values as the legacy role).
+fstab_mounts:
+  # Data disks
+  - {device: /dev/mapper/12TB-WD-WD140EDGZ-11B1PA0-SERIAL_Y6GUZM1C, mount_point: /mnt/disk1, type: ext4, options: defaults, dump: "0", pass: "2"}
+  - {device: /dev/mapper/hc550-2CGUY70P, mount_point: /mnt/disk2, type: ext4, options: defaults, dump: "0", pass: "2"}
+  - {device: /dev/disk/by-id/ata-WDC_WD140EDGZ-11B1PA0_Y6G394EC-part1, mount_point: /mnt/disk3, type: xfs, options: defaults, dump: "0", pass: "2"}
+  - {device: /dev/disk/by-id/ata-ST14000NM001G-2KJ103_ZL2AYBS4-part1, mount_point: /mnt/disk4, type: ext4, options: defaults, dump: "0", pass: "2"}
+  # Parity disk
+  - {device: /dev/mapper/hc550-2CH9LLDN, mount_point: /mnt/parity1, type: ext4, options: defaults, dump: "0", pass: "2"}
+  # MergerFS pool. Caution: the glob also picks up /mnt/disk2-new, a plain folder on the root disk.
+  - device: /mnt/disk*
+    mount_point: /mnt/storage
+    type: fuse.mergerfs
+    options: direct_io,defaults,allow_other,minfreespace=50G,fsname=mergerfs,cache.files=partial,dropcacheonclose=true,category.create=mfs
+    dump: "0"
+    pass: "0"
+  # Cache SSD (LUKS + btrfs)
+  - {device: /dev/mapper/predatorG7, mount_point: /mnt/cache, type: btrfs, options: "defaults,noatime,compress=zstd", dump: "0", pass: "2"}

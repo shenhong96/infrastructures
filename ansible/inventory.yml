@@ -10,6 +10,12 @@ all:
     proxmox:
       ansible_host: 192.168.9.152
   children:
+    # Roles that run inside a container skip these. Their Proxmox config is still
+    # managed from the host. CT 101 has only Python 3.8 (Ubuntu 20.04); Ansible needs
+    # 3.9+. Remove it from here once its OS is upgraded.
+    skip_inside:
+      hosts:
+        fileserver:
     containers:
       # Commands run inside each container through `pct exec` on the host, so a container
       # needs no SSH server. The system nc carries the SSH connection because macOS
@@ -77,12 +83,12 @@ all:
             swap: '0'
             tty: '2'
             lxc.cgroup2.devices.allow:
-            - c 226:0 rwm
-            - c 226:128 rwm
-            - c 10:200 rwm
+              - c 226:0 rwm
+              - c 226:128 rwm
+              - c 10:200 rwm
             lxc.mount.entry:
-            - /dev/dri dev/dri none bind,optional,create=dir
-            - /dev/net/tun dev/net/tun none bind,create=file
+              - /dev/dri dev/dri none bind,optional,create=dir
+              - /dev/net/tun dev/net/tun none bind,create=file
             lxc.apparmor.profile: unconfined
         apps:
           vmid: 111
@@ -109,8 +115,8 @@ all:
             unprivileged: '1'
             lxc.cgroup2.devices.allow: c 10:200 rwm
             lxc.mount.entry:
-            - /dev/net/tun dev/net/tun none bind,create=file
-            - /dev/null sys/module/apparmor/parameters/enabled none bind 0 0
+              - /dev/net/tun dev/net/tun none bind,create=file
+              - /dev/null sys/module/apparmor/parameters/enabled none bind 0 0
             lxc.apparmor.profile: unconfined
         nextcloud:
           vmid: 112

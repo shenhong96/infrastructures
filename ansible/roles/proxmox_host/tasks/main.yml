@@ -1,0 +1,10 @@
+- name: Host packages
+  ansible.builtin.apt:
+    name: "{{ host_packages }}"
+    state: present
+
+- name: Storage
+  ansible.builtin.import_tasks: storage.yml
+
+- name: Network
+  ansible.builtin.import_tasks: network.yml

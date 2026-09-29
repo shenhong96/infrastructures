@@ -1,0 +1,6 @@
+# /etc/fstab
+# Created by Ansible Template
+# <file system>        <mount point>           <type>  <options>           <dump>  <pass>
+{% for mount in fstab_mounts %}
+{{ mount.device }}    {{ mount.mount_point }}    {{ mount.type }}    {{ mount.options | default('defaults') }}    {{ mount.dump | default('0') }}    {{ mount.pass | default('0') }}
+{% endfor %}
