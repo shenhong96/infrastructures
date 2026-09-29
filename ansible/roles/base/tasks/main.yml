@@ -1,6 +1,6 @@
 # OS basics on the host and inside each container Ansible can run in, adopted as found.
-# Not managed yet: users and SSH keys (which keys to trust is still open), and the files
-# that hold secrets until their values are in SOPS (see the Phase 2 plan).
+# Not managed: users and SSH keys. One-off fixes (e.g. removing a stale key) run once as
+# ad-hoc commands; this role only declares the state to keep.
 
 # ponytail: not the apt module; Ansible's Python on the 20.04 containers (3.9, deadsnakes)
 # has no apt bindings. Only a new container lacks these.
@@ -47,27 +47,46 @@
     dest: /
   when: (role_path ~ '/files/' ~ inventory_hostname) is directory
 
-# Whole crontabs, one file per user in files/crontabs/<machine>/. The cron module can't
-# adopt a job that lacks its "#Ansible:" marker; it would add a second copy of it.
-- name: Crontabs match the repo
-  ansible.builtin.command: crontab -l -u {{ item | basename }}
-  loop: "{{ query('fileglob', role_path ~ '/files/crontabs/' ~ inventory_hostname ~ '/*') }}"
-  loop_control:
-    label: "{{ item | basename }}"
-  register: base_crontabs
-  check_mode: false # read-only
-  changed_when: base_crontabs.stdout | trim != lookup('file', item) | trim
-  failed_when: base_crontabs.rc != 0 and 'no crontab' not in base_crontabs.stderr
+# A file holding a secret is kept whole, base64-encoded (so Jinja never parses it), in
+# the machine's secrets.sops.yml as secret_files_b64: {path: content}.
+- name: Files that hold a secret # noqa: risky-file-permissions
+  ansible.builtin.copy:
+    content: "{{ item.value | b64decode }}"
+    dest: "{{ item.key }}"
+  loop: "{{ secret_files_b64 | default({}) | dict2items }}"
+  no_log: true
+  diff: false
 
-- name: Install the crontabs that differ
-  ansible.builtin.command: crontab -u {{ item.item | basename }} -
-  args:
-    stdin: "{{ lookup('file', item.item) }}"
-  loop: "{{ base_crontabs.results | select('changed') }}"
-  loop_control:
-    label: "{{ item.item | basename }}"
-  when: not ansible_check_mode
-  changed_when: true
+# Whole crontabs per user: files/crontabs/<machine>/<user>, or secret_crontabs_b64 in the
+# machine's secrets.sops.yml when one holds a secret. The cron module can't adopt a job
+# that lacks its "#Ansible:" marker; it would add a second copy of it.
+- name: Crontabs
+  no_log: true # a crontab can hold a ping URL
+  vars:
+    base_crontab_dir: "{{ role_path }}/files/crontabs/{{ inventory_hostname }}"
+    base_secret_crontabs: "{{ secret_crontabs_b64 | default({}) }}"
+  block:
+    - name: Crontabs match the repo
+      ansible.builtin.command: crontab -l -u {{ item }}
+      loop: "{{ query('fileglob', base_crontab_dir ~ '/*') | map('basename') | list + base_secret_crontabs | list }}"
+      vars:
+        base_crontab: "{{ base_secret_crontabs[item] | b64decode if item in base_secret_crontabs
+          else lookup('file', base_crontab_dir ~ '/' ~ item) }}"
+      register: base_crontabs
+      check_mode: false # read-only
+      changed_when: base_crontabs.stdout | trim != base_crontab | trim
+      failed_when: base_crontabs.rc != 0 and 'no crontab' not in base_crontabs.stderr
+
+    - name: Install the crontabs that differ
+      ansible.builtin.command: crontab -u {{ item.item }} -
+      args:
+        stdin: "{{ base_crontab | trim }}"
+      vars:
+        base_crontab: "{{ base_secret_crontabs[item.item] | b64decode if item.item in base_secret_crontabs
+          else lookup('file', base_crontab_dir ~ '/' ~ item.item) }}"
+      loop: "{{ base_crontabs.results | select('changed') }}"
+      when: not ansible_check_mode
+      changed_when: true
 
 # Installed once; after that its version is left alone (apt upgrades it).
 - name: Docker

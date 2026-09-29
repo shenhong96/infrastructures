@@ -77,6 +77,25 @@
       when: lxc_config.args | length > 0 and not lxc_config.missing and not ansible_check_mode
       changed_when: true
 
+    - name: Starts at boot but isn't running
+      ansible.builtin.command: pct status {{ vmid }}
+      register: lxc_status
+      check_mode: false # read-only
+      changed_when: pct.onboot | default('0') == '1' and 'running' not in lxc_status.stdout
+      failed_when: false # a missing container
+
+    # Data comes back before a container is created or started: an app that found an
+    # empty folder would set itself up from scratch on top of it. (pct create also
+    # refuses a missing bind source, but only after the dataset exists.)
+    - name: Start guard, every bind-mount source has data # noqa: no-handler (must run before the start, also in --check)
+      ansible.builtin.command: find {{ item }} -mindepth 1 -maxdepth 1 -print -quit
+      loop: "{{ lxc_config.binds }}"
+      register: lxc_guard
+      check_mode: false # read-only
+      changed_when: false
+      failed_when: lxc_guard.stdout == ''
+      when: lxc_status is changed or lxc_config.missing
+
     - name: Create the container empty (rebuild fallback, no dump to restore)
       when: lxc_config.missing and not ansible_check_mode
       block:
@@ -104,24 +123,6 @@
             path: /etc/pve/lxc/{{ vmid }}.conf
             line: "{{ item }}"
           loop: "{{ lxc_config.raw }}"
-
-    - name: Starts at boot but isn't running
-      ansible.builtin.command: pct status {{ vmid }}
-      register: lxc_status
-      check_mode: false # read-only
-      changed_when: pct.onboot | default('0') == '1' and 'running' not in lxc_status.stdout
-      failed_when: false # a missing container in --check
-
-    # Data comes back before containers start: an app that found an empty folder would
-    # set itself up from scratch on top of it.
-    - name: Start guard, every bind-mount source has data # noqa: no-handler (must run before the start, also in --check)
-      ansible.builtin.command: find {{ item }} -mindepth 1 -maxdepth 1 -print -quit
-      loop: "{{ lxc_config.binds }}"
-      register: lxc_guard
-      check_mode: false # read-only
-      changed_when: false
-      failed_when: lxc_guard.stdout == ''
-      when: lxc_status is changed
 
     - name: Start
       ansible.builtin.command: pct start {{ vmid }}
