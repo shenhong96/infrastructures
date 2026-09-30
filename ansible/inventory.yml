@@ -10,12 +10,11 @@ all:
     proxmox:
       ansible_host: 192.168.9.152
   children:
-    # Roles that run inside a container skip these. Their Proxmox config is still
-    # managed from the host. CT 101 has only Python 3.8 (Ubuntu 20.04); Ansible needs
-    # 3.9+. Remove it from here once its OS is upgraded.
+    # Roles that run inside a container skip these (e.g. an OS whose Python is too old
+    # for Ansible, 3.9+); their Proxmox config is still managed from the host. Empty since
+    # CT 101 was rebuilt on Ubuntu 24.04 (2026-09-30).
     skip_inside:
-      hosts:
-        fileserver:
+      hosts: {}
     # Machines that join the tailnet (the tailscale role).
     tailscale:
       hosts:
@@ -38,6 +37,7 @@ all:
           pct:
             arch: amd64
             cores: '2'
+            features: nesting=1 # Ubuntu 24.04's systemd-networkd needs it, or the CT has no network
             hostname: File-Server
             memory: '1504'
             mp0: /mnt/storage,mp=/mnt/proxmox-host,size=0T

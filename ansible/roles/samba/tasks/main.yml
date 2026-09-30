@@ -1,0 +1,81 @@
+# Samba adopted as found on the fileserver: Ubuntu's own packages (noble carries the same
+# 4.19.5 upstream as the old PPA build), the live smb.conf byte for byte, the users the
+# shares refer to, the Samba passwords from SOPS, smbd and nmbd. Not managed: the data on
+# the bind mounts, NFS (dropped), winbind (a standalone server needs none), autorestic
+# (retired; its config is only archived in SOPS).
+
+# ponytail: no recommends; they pull in winbind and its nsswitch/PAM changes, which a
+# standalone server never uses. samba-vfs-modules holds vfs_fruit and streams_xattr.
+- name: Samba packages
+  ansible.builtin.apt:
+    name: [samba, samba-vfs-modules, smbclient]
+    install_recommends: false
+    update_cache: true
+    cache_valid_time: 86400
+    state: present
+
+- name: Groups
+  ansible.builtin.group:
+    name: "{{ item.name }}"
+    gid: "{{ item.uid }}"
+  loop: "{{ samba_users }}"
+
+- name: Users
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    uid: "{{ item.uid }}"
+    group: "{{ item.name }}"
+    groups: "{{ item.groups }}"
+    append: true
+    shell: /bin/sh
+    create_home: false
+  loop: "{{ samba_users }}"
+
+- name: Samba config
+  ansible.builtin.copy:
+    src: smb.conf
+    dest: /etc/samba/smb.conf
+    owner: root
+    group: root
+    mode: "0640"
+  notify: Reload smbd
+
+# One line per user in smbpasswd format (`pdbedit -L -w`), from samba_smbpasswd in the
+# machine's secrets.sops.yml. Create-only: a user the passdb already lists keeps its
+# password, so a later `smbpasswd` is never overwritten. The list shows only names.
+- name: Samba users the passdb lacks
+  ansible.builtin.command: pdbedit -L
+  vars:
+    samba_wanted: "{{ samba_smbpasswd | default('') | trim | split('\n') | reject('equalto', '') | list }}"
+    samba_have: "{{ samba_passdb.stdout_lines | map('split', ':') | map('first') | list }}"
+  register: samba_passdb
+  check_mode: false # read-only
+  changed_when: samba_wanted | map('split', ':') | map('first') | difference(samba_have) | length > 0
+  no_log: true
+
+# ponytail: pdbedit -i can't read a pipe (smbpasswd:/dev/stdin imports nothing and exits 0),
+# so the line goes stdin -> a 0600 temp file removed by the trap in the same task, and
+# the task fails unless pdbedit reports the account "ok". Never in argv.
+- name: Import them
+  ansible.builtin.shell: |
+    set -euo pipefail
+    f=$(mktemp)
+    trap 'rm -f "$f"' EXIT
+    cat > "$f"
+    pdbedit -i smbpasswd:"$f" | grep '\.\.\.ok' > /dev/null
+  args:
+    executable: /bin/bash
+    stdin: "{{ item }}"
+  vars:
+    samba_have: "{{ samba_passdb.stdout_lines | map('split', ':') | map('first') | list }}"
+  loop: "{{ samba_smbpasswd | default('') | trim | split('\n') | reject('equalto', '') | list }}"
+  when: item.split(':')[0] not in samba_have and not ansible_check_mode
+  changed_when: true
+  no_log: true
+
+- name: Samba running and enabled at boot
+  ansible.builtin.service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop: [smbd, nmbd]

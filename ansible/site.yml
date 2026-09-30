@@ -1,5 +1,5 @@
 # The only playbook; tags select one part of it. Roles for the containers (lxc, base,
-# gitlab, jellyfin, nextcloud, tailscale, komodo) are added as they reach zero changes.
+# samba, gitlab, jellyfin, nextcloud, tailscale, komodo) are added as they reach zero changes.
 - name: Proxmox host
   hosts: proxmox
   tags: host
@@ -21,6 +21,13 @@
   gather_facts: false # nothing uses facts
   roles:
     - base
+
+- name: Samba file server
+  hosts: fileserver
+  tags: samba
+  gather_facts: false # nothing uses facts
+  roles:
+    - samba
 
 - name: GitLab
   hosts: gitlab

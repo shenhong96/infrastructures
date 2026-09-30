@@ -1,0 +1,6 @@
+# The fileserver's Linux users with the uids/gids they had on Ubuntu 20.04 (files on the
+# bind mounts are owned by these numbers). Groups are created with the same name and gid.
+# No home folders (the live users had none) and no Linux passwords: only Samba logs them in.
+samba_users:
+  - {name: ahlooii, uid: 1000, groups: users}
+  - {name: privateshr, uid: 1002, groups: ""}
