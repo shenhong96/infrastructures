@@ -1,5 +1,5 @@
 # The only playbook; tags select one part of it. Roles for the containers (lxc, base,
-# samba, gitlab, jellyfin, nextcloud, tailscale, komodo) are added as they reach zero changes.
+# samba, gitlab, jellyfin, nextcloud, proxy, tailscale, komodo) are added as they reach zero changes.
 - name: Proxmox host
   hosts: proxmox
   tags: host
@@ -49,6 +49,13 @@
   gather_facts: false # nothing uses facts
   roles:
     - nextcloud
+
+- name: Reverse proxy
+  hosts: proxy
+  tags: proxy
+  gather_facts: false # nothing uses facts
+  roles:
+    - proxy
 
 # Last: on a rebuilt machine it stops at the manual tailnet login, after the apps are in.
 - name: Tailscale

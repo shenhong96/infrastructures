@@ -1,0 +1,320 @@
+{
+    order filter after encode
+    # auto_https off
+    log {
+        output file /data/access.log {
+            roll_size 10mb
+            roll_keep 5
+            roll_keep_for 168h
+        }
+    }
+    email {env.ACME_EMAIL}
+}
+
+(themepark) {
+    filter {
+        content_type text/html.*
+        search_pattern </head>
+        replacement "<link rel='stylesheet' type='text/css' href='https://theme-park.dev/css/base/{args[0]}/{args[1]}.css'></head>"
+    }
+}
+
+(themeparkLogo) {
+    filter {
+        content_type text/html.*
+        search_pattern </head>
+        replacement "<link rel='stylesheet' type='text/css' href='https://theme-park.dev/css/base/{args[0]}/{args[1]}.css'><link rel='stylesheet' type='text/css' href='https://theme-park.dev/css/addons/{args[0]}/{args[2]}/{args[2]}.css'></head>"
+    }
+}
+
+(headers) {
+    header {
+        Permissions-Policy interest-cohort=()
+        Strict-Transport-Security "max-age=31536000; includeSubdomains"
+        X-XSS-Protection "1; mode=block"
+        X-Content-Type-Options "nosniff"
+        X-Robots-Tag noindex, nofollow
+        Referrer-Policy "same-origin"
+    }
+}
+
+(remove_security_header) {
+    header_down -x-webkit-csp
+    header_down -content-security-policy
+}
+
+(remove_header_compression) {
+    header_up -Accept-Encoding
+}
+
+
+*.ahlooii.com {
+    tls {
+        dns cloudflare {env.CF_API_TOKEN}
+    }
+}
+
+nextcloud.ahlooii.com {
+    reverse_proxy  https://192.168.9.157:443 {
+        transport http {
+            tls_insecure_skip_verify
+        }
+        
+    }
+    import headers
+}
+
+gitlab.ahlooii.com {
+    reverse_proxy  https://192.168.9.159:443 {
+        transport http {
+            tls_insecure_skip_verify
+        }
+        
+    }
+    import headers
+}
+
+proxmox.ahlooii.com {
+    reverse_proxy  https://192.168.9.152:8006 {
+        transport http {
+            tls_insecure_skip_verify
+        }
+        
+    }
+    import headers
+}
+
+router.ahlooii.com {
+    reverse_proxy  https://192.168.9.2:443 {
+        transport http {
+            tls_insecure_skip_verify
+        }
+        
+    }
+    import headers
+}
+
+syncthing.ahlooii.com {
+    reverse_proxy  https://192.168.9.151:443 {
+        transport http {
+            tls_insecure_skip_verify
+        }
+        
+    }
+    import headers
+}
+
+jellyfin.ahlooii.com {
+    reverse_proxy 192.168.9.154:8096 {
+        
+    }
+    import headers
+}
+
+adguard.ahlooii.com {
+    reverse_proxy 192.168.9.151:3000 {
+        
+    }
+    import headers
+    import themepark adguard organizr-dark
+}
+
+audiobook.ahlooii.com {
+    # Cache audio files (they rarely change)
+    @audio_files path *.mp3 *.m4a *.m4b *.flac *.aac *.opus *.ogg
+    header @audio_files Cache-Control "public, max-age=604800"
+    
+    # Enable range requests for streaming  
+    header Accept-Ranges "bytes"
+
+    # Streaming endpoints - no buffering
+    @streaming {
+        path /api/items/*/play*
+        path /api/items/*/stream*
+        path /api/items/*/download*
+        path /api/items/*/file/*
+    }
+    
+    reverse_proxy @streaming 192.168.9.151:13378 {
+        transport http {
+            read_timeout 600s
+            write_timeout 600s
+        }
+        flush_interval -1    
+    }
+
+    reverse_proxy 192.168.9.151:13378 {
+        transport http {
+            read_timeout 300s
+            write_timeout 300s
+        }
+    }
+    import headers
+}
+
+budget.ahlooii.com {
+    reverse_proxy 192.168.9.151:8096 {
+        
+    }
+    import headers
+}
+
+gotify.ahlooii.com {
+    reverse_proxy 192.168.9.151:8087 {
+        
+    }
+    import headers
+}
+
+librespeed.ahlooii.com {
+    reverse_proxy 192.168.9.151:82 {
+        
+    }
+    import headers
+    import themepark librespeed space-gray
+}
+
+portainer.ahlooii.com {
+    reverse_proxy 192.168.9.151:9000 {
+        import remove_security_header
+        import remove_header_compression
+
+    }
+    import headers
+    import themepark portainer aquamarine
+}
+
+qbit.ahlooii.com {
+    reverse_proxy 192.168.9.156:8081 {
+        
+    }
+    import headers
+}
+
+home.ahlooii.com {
+    reverse_proxy 192.168.9.151:7777 {
+        
+    }
+    import headers
+}
+
+uptime.ahlooii.com {
+    reverse_proxy 192.168.9.151:3001 {
+        
+    }
+    import headers
+}
+
+wallabag.ahlooii.com {
+    reverse_proxy 192.168.9.151:8765 {
+        
+    }
+    import headers
+}
+
+lidarr.ahlooii.com {
+    reverse_proxy 192.168.9.156:8686 {
+        import remove_security_header
+        import remove_header_compression
+
+    }
+    import headers
+    import themepark lidarr hotline
+}
+
+jackett.ahlooii.com {
+    reverse_proxy 192.168.9.156:9117 {
+        import remove_security_header
+        import remove_header_compression
+
+    }
+    import headers
+    import themepark jackett hotline
+}
+
+prowlarr.ahlooii.com {
+    reverse_proxy 192.168.9.156:9696 {
+        import remove_security_header
+        import remove_header_compression
+
+    }
+    import headers
+    import themepark prowlarr hotline
+}
+
+radarr.ahlooii.com {
+    reverse_proxy 192.168.9.156:7878 {
+        import remove_security_header
+        import remove_header_compression
+
+    }
+    import headers
+    import themepark radarr hotline
+}
+
+sonarr.ahlooii.com {
+    reverse_proxy 192.168.9.156:8989 {
+        import remove_security_header
+        import remove_header_compression
+
+    }
+    import headers
+    import themepark sonarr hotline
+}
+
+readarr.ahlooii.com {
+    reverse_proxy 192.168.9.156:8787 {
+        import remove_security_header
+        import remove_header_compression
+
+    }
+    import headers
+    import themepark readarr hotline
+}
+
+whisparr.ahlooii.com {
+    reverse_proxy 192.168.9.156:6969 {
+        import remove_security_header
+        import remove_header_compression
+
+    }
+    import headers
+    import themepark whisparr dark
+}
+
+bazarr.ahlooii.com {
+    reverse_proxy 192.168.9.156:6767 {
+        import remove_security_header
+        import remove_header_compression
+
+    }
+    import headers
+    import themepark bazarr dracula
+}
+
+pocket-id.ahlooii.com {
+    reverse_proxy 192.168.9.151:1411 {
+        header_up Host {host}
+        header_up X-Real-IP {remote}
+        header_up X-Forwarded-For {remote}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}
+
+calibre.ahlooii.com {
+    reverse_proxy 192.168.9.151:8083 {
+        import remove_security_header
+        header_up Host {upstream_hostport}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+
+        transport http {
+            dial_timeout 300s
+            response_header_timeout 300s
+            read_timeout 300s
+            write_timeout 300s
+        }
+    }
+    import headers
+}

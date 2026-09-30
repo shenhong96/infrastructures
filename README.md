@@ -63,6 +63,16 @@ The `gitlab`, `jellyfin` and `nextcloud` roles put the software and its config f
 - **GitLab and Jellyfin:** GitLab's data (`/var/opt/gitlab`) and Jellyfin's library database and settings (`/var/lib/jellyfin`, `/etc/jellyfin`) live only on the container's root disk. Only a CT dump restores them. A fresh install gives empty apps.
 - **Nextcloud fallback:** the role installs the stack and, only if `/var/www/nextcloud/occ` is missing, the 30.0.4 code (sha256 checked). It never touches `config.php`, the data folder or `/var/lib/mysql`. Then restore a database dump if there is one; if not, run `occ maintenance:install` and `occ files:scan --all`. Shares, calendars and contacts are lost that way.
 
+## Proxy: what a rebuild gives back
+
+The `proxy` role and `base` put the reverse proxy's files back; the stack itself is started by hand once (stacks belong to Komodo, Phase 3).
+
+- **What Ansible delivers:** `prometheus-node-exporter` on :9100, and under `/opt/caddy/` the `compose.yaml`, `Dockerfile` and `conf/Caddyfile` from `stacks/proxy/`, the empty `data/` and `config/` folders, and `.env` (from `host_vars/proxy/secrets.sops.yml`, root-only). The Caddyfile holds no secret: the Cloudflare token and the ACME email come from `.env` as `{env.CF_API_TOKEN}` and `{env.ACME_EMAIL}`.
+- **First start (one-off, ad hoc):** `pct exec 104 -- bash -c 'cd /opt/caddy && docker compose -p proxy up -d --build'`. It builds the pinned Caddy 2.8.4 with the Cloudflare DNS and caddy2-filter plugins. With an empty `data/` Caddy asks Let's Encrypt for a new `*.ahlooii.com` wildcard by DNS-01, which takes one to three minutes.
+- **Changing the Caddyfile:** run `--tags proxy`; the handler reloads Caddy in the running container. A changed `.env` (a new token) needs `docker compose -p proxy up -d` in `/opt/caddy`: an env file is read only when the container is created.
+- **Secrets:** the two keys in `.env` are `CF_API_TOKEN` and `ACME_EMAIL`. Caddy's certificate and ACME account (`/opt/caddy/data`) are not in the repo; they are re-issued on their own.
+- **Container:** Ubuntu 24.04 with Docker 29 needs the raw key `lxc.mount.entry: /dev/null sys/module/apparmor/parameters/enabled none bind 0 0` in the inventory, as on `apps`, or `docker run` fails on the AppArmor check.
+
 ## Not working yet
 
 Deploying anything (the Ansible roles, Komodo), rebuilding from scratch, and backups and restores. Each section is added here once it has been shown to work.

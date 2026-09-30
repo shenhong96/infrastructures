@@ -57,13 +57,14 @@ all:
             features: fuse=1,keyctl=1,nesting=1
             hostname: Proxy
             memory: '1024'
-            mp0: /mnt/storage/appdata/ssl_cert/,mp=/opt/ssl_cert,size=0T
             net0: name=eth0,bridge=vmbr0,firewall=1,gw=192.168.9.2,hwaddr=4E:E0:39:0B:B3:71,ip=192.168.9.155/24,type=veth
             onboot: '1'
             ostype: ubuntu
             rootfs: ZFS-DATA:104/vm-104-disk-1.raw,size=20G
             swap: '1024'
             unprivileged: '1'
+            # Docker on Ubuntu 24.04 can't start containers here without it (as on apps).
+            lxc.mount.entry: /dev/null sys/module/apparmor/parameters/enabled none bind 0 0
             lxc.apparmor.profile: unconfined
         media:
           vmid: 110

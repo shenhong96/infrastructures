@@ -1,0 +1,54 @@
+# The reverse proxy CT: node-exporter from apt and the Caddy stack's files under /opt/caddy.
+# Not managed: the containers themselves (stacks belong to Komodo; the first
+# `docker compose up -d --build` is a one-off, see the README), /opt/caddy/.env (base
+# delivers it from SOPS as a secret file), Caddy's certificate state under data/ and config/.
+
+# ponytail: Ubuntu's package, not the hand-copied 1.2.2 binary CT 104 ran since 2021. Same
+# port (9100); collector defaults and some metric names differ between 1.2 and 1.7.
+- name: Node exporter package
+  ansible.builtin.apt:
+    name: prometheus-node-exporter
+    update_cache: true
+    cache_valid_time: 86400
+    state: present
+
+- name: Node exporter running and enabled at boot
+  ansible.builtin.service:
+    name: prometheus-node-exporter
+    enabled: true
+    state: started
+
+- name: Stack folders
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: [/opt/caddy, /opt/caddy/conf, /opt/caddy/data, /opt/caddy/config]
+
+# base writes it with the default mode; it holds the Cloudflare token.
+- name: The env file is root-only
+  ansible.builtin.file:
+    path: /opt/caddy/.env
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Compose file and Dockerfile
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../stacks/proxy/{{ item }}"
+    dest: /opt/caddy/{{ item }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [compose.yaml, Dockerfile]
+
+- name: Caddyfile
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../stacks/proxy/Caddyfile"
+    dest: /opt/caddy/conf/Caddyfile
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload Caddy

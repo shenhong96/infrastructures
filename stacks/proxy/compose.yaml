@@ -1,0 +1,34 @@
+# The reverse proxy on CT 104 (Proxmox), as found plus the CT's own move to /opt/caddy.
+# Build and first start are one-off: cd /opt/caddy && docker compose -p proxy up -d --build
+name: proxy
+
+services:
+  caddy:
+    image: caddy-cf:2.8.4
+    build:
+      context: /opt/caddy
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    # CF_API_TOKEN and ACME_EMAIL, which the Caddyfile refers to as {env.NAME}. Read only when
+    # the container is created, so a changed token needs `up -d`, not a reload.
+    env_file: /opt/caddy/.env
+    volumes:
+      # A folder, not the file: Ansible replaces the Caddyfile with a new inode, which a
+      # single-file bind mount would never see.
+      - /opt/caddy/conf:/etc/caddy
+      - /opt/caddy/data:/data
+      - /opt/caddy/config:/config
+
+  # As found; Komodo's agent replaces it in Phase 3.
+  portainer:
+    image: portainer/agent
+    container_name: portainer_agent
+    ports:
+      - '9001:9001'
+    restart: always
+    volumes:
+      - '/var/run/docker.sock:/var/run/docker.sock'
+      - '/var/lib/docker/volumes:/var/lib/docker/volumes'

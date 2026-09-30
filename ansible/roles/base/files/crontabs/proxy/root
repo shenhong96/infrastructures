@@ -24,6 +24,5 @@
 @reboot sleep 60 && systemctl restart sshd
 #Ansible: cronjob managed by ansible
 @hourly bash /root/scripts/sysctl_status_recover.sh
-@hourly cp -r /opt/nginx_proxy_manager/letsencrypt/live/npm-12 /opt/ssl_cert
 #Ansible: DynDNS update
 */5 * * * * bash /root/duckdns/duck.sh >/dev/null 2>&1
