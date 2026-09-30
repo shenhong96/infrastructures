@@ -47,7 +47,6 @@
     header_up -Accept-Encoding
 }
 
-
 *.ahlooii.com {
     tls {
         dns cloudflare {env.CF_API_TOKEN}
@@ -184,13 +183,6 @@ portainer.ahlooii.com {
     import themepark portainer aquamarine
 }
 
-qbit.ahlooii.com {
-    reverse_proxy 192.168.9.156:8081 {
-        
-    }
-    import headers
-}
-
 home.ahlooii.com {
     reverse_proxy 192.168.9.151:7777 {
         
@@ -212,85 +204,8 @@ wallabag.ahlooii.com {
     import headers
 }
 
-lidarr.ahlooii.com {
-    reverse_proxy 192.168.9.156:8686 {
-        import remove_security_header
-        import remove_header_compression
-
-    }
-    import headers
-    import themepark lidarr hotline
-}
-
-jackett.ahlooii.com {
-    reverse_proxy 192.168.9.156:9117 {
-        import remove_security_header
-        import remove_header_compression
-
-    }
-    import headers
-    import themepark jackett hotline
-}
-
-prowlarr.ahlooii.com {
-    reverse_proxy 192.168.9.156:9696 {
-        import remove_security_header
-        import remove_header_compression
-
-    }
-    import headers
-    import themepark prowlarr hotline
-}
-
-radarr.ahlooii.com {
-    reverse_proxy 192.168.9.156:7878 {
-        import remove_security_header
-        import remove_header_compression
-
-    }
-    import headers
-    import themepark radarr hotline
-}
-
-sonarr.ahlooii.com {
-    reverse_proxy 192.168.9.156:8989 {
-        import remove_security_header
-        import remove_header_compression
-
-    }
-    import headers
-    import themepark sonarr hotline
-}
-
-readarr.ahlooii.com {
-    reverse_proxy 192.168.9.156:8787 {
-        import remove_security_header
-        import remove_header_compression
-
-    }
-    import headers
-    import themepark readarr hotline
-}
-
-whisparr.ahlooii.com {
-    reverse_proxy 192.168.9.156:6969 {
-        import remove_security_header
-        import remove_header_compression
-
-    }
-    import headers
-    import themepark whisparr dark
-}
-
-bazarr.ahlooii.com {
-    reverse_proxy 192.168.9.156:6767 {
-        import remove_security_header
-        import remove_header_compression
-
-    }
-    import headers
-    import themepark bazarr dracula
-}
+# More sites, kept encrypted in SOPS and written by the proxy role.
+import /etc/caddy/private.caddy
 
 pocket-id.ahlooii.com {
     reverse_proxy 192.168.9.151:1411 {

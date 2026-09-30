@@ -15,6 +15,11 @@ all:
     # CT 101 was rebuilt on Ubuntu 24.04 (2026-09-30).
     skip_inside:
       hosts: {}
+    # Machines that run Prometheus node-exporter (the node_exporter role).
+    node_exporter:
+      hosts:
+        proxy:
+        vpn:
     # Machines that join the tailnet (the tailscale role).
     tailscale:
       hosts:
@@ -143,8 +148,8 @@ all:
             swap: '4096'
             lxc.apparmor.profile: unconfined
         vpn:
-          vmid: 114
-          dataset: ZFS-DATA/proxmox-dataset/images/privatevpn
+          vmid: 118
+          dataset: ZFS-DATA/proxmox-dataset/images/vpn
           pct:
             arch: amd64
             cores: '6'
@@ -157,10 +162,13 @@ all:
             net0: name=eth0,bridge=vmbr0,firewall=1,gw=192.168.9.2,hwaddr=86:6E:14:2C:BE:BD,ip=192.168.9.156/24,type=veth
             onboot: '1'
             ostype: ubuntu
-            rootfs: ZFS-DATA:114/vm-114-disk-1.raw,size=70G
+            rootfs: ZFS-DATA:118/vm-118-disk-0.raw,size=70G
             searchdomain: 8.8.8.8
             swap: '4096'
             unprivileged: '1'
+            # Docker on Ubuntu 24.04 can't start containers here without it (as on proxy and apps).
+            lxc.mount.entry: /dev/null sys/module/apparmor/parameters/enabled none bind 0 0
+            lxc.apparmor.profile: unconfined
         gitlab:
           vmid: 116
           dataset: ZFS-DATA/proxmox-dataset/images/gitlab

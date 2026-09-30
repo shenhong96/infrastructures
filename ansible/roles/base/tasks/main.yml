@@ -55,18 +55,19 @@
   when: (role_path ~ '/files/' ~ inventory_hostname) is directory
 
 # A file holding a secret is kept whole, base64-encoded (so Jinja never parses it), in
-# the machine's secrets.sops.yml as secret_files_b64: {path: content}.
+# the machine's secrets.sops.yml as secret_files_b64: [{key: path, value: content}, ...], so the
+# paths are encrypted too.
 - name: Folders of the files that hold a secret # noqa: risky-file-permissions
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory # no mode: a folder that exists stays as it is
-  loop: "{{ secret_files_b64 | default({}) | list | map('dirname') | unique | list }}"
+  loop: "{{ secret_files_b64 | default([]) | map(attribute='key') | map('dirname') | unique | list }}"
 
 - name: Files that hold a secret # noqa: risky-file-permissions
   ansible.builtin.copy:
     content: "{{ item.value | b64decode }}"
     dest: "{{ item.key }}"
-  loop: "{{ secret_files_b64 | default({}) | dict2items }}"
+  loop: "{{ secret_files_b64 | default([]) }}"
   no_log: true
   diff: false
 

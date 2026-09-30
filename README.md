@@ -65,7 +65,7 @@ The `gitlab`, `jellyfin` and `nextcloud` roles put the software and its config f
 
 ## Proxy: what a rebuild gives back
 
-The `proxy` role and `base` put the reverse proxy's files back; the stack itself is started by hand once (stacks belong to Komodo, Phase 3).
+The `proxy`, `node_exporter` and `base` roles put the reverse proxy's files back; the stack itself is started by hand once (stacks belong to Komodo, Phase 3).
 
 - **What Ansible delivers:** `prometheus-node-exporter` on :9100, and under `/opt/caddy/` the `compose.yaml`, `Dockerfile` and `conf/Caddyfile` from `stacks/proxy/`, the empty `data/` and `config/` folders, and `.env` (from `host_vars/proxy/secrets.sops.yml`, root-only). The Caddyfile holds no secret: the Cloudflare token and the ACME email come from `.env` as `{env.CF_API_TOKEN}` and `{env.ACME_EMAIL}`.
 - **First start (one-off, ad hoc):** `pct exec 104 -- bash -c 'cd /opt/caddy && docker compose -p proxy up -d --build'`. It builds the pinned Caddy 2.8.4 with the Cloudflare DNS and caddy2-filter plugins. With an empty `data/` Caddy asks Let's Encrypt for a new `*.ahlooii.com` wildcard by DNS-01, which takes one to three minutes.

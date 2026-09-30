@@ -1,22 +1,7 @@
-# The reverse proxy CT: node-exporter from apt and the Caddy stack's files under /opt/caddy.
+# The reverse proxy CT: the Caddy stack's files under /opt/caddy (node-exporter is the node_exporter role).
 # Not managed: the containers themselves (stacks belong to Komodo; the first
 # `docker compose up -d --build` is a one-off, see the README), /opt/caddy/.env (base
 # delivers it from SOPS as a secret file), Caddy's certificate state under data/ and config/.
-
-# ponytail: Ubuntu's package, not the hand-copied 1.2.2 binary CT 104 ran since 2021. Same
-# port (9100); collector defaults and some metric names differ between 1.2 and 1.7.
-- name: Node exporter package
-  ansible.builtin.apt:
-    name: prometheus-node-exporter
-    update_cache: true
-    cache_valid_time: 86400
-    state: present
-
-- name: Node exporter running and enabled at boot
-  ansible.builtin.service:
-    name: prometheus-node-exporter
-    enabled: true
-    state: started
 
 - name: Stack folders
   ansible.builtin.file:
@@ -43,6 +28,18 @@
     group: root
     mode: "0644"
   loop: [compose.yaml, Dockerfile]
+
+# More sites, kept whole and base64-encoded in SOPS; the Caddyfile imports it.
+- name: Private Caddy sites
+  ansible.builtin.copy:
+    content: "{{ proxy_private_caddy_b64 | b64decode }}"
+    dest: /opt/caddy/conf/private.caddy
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+  notify: Reload Caddy
 
 - name: Caddyfile
   ansible.builtin.copy:
