@@ -16,6 +16,11 @@ all:
     skip_inside:
       hosts:
         fileserver:
+    # Machines that join the tailnet (the tailscale role).
+    tailscale:
+      hosts:
+        media:
+        apps:
     containers:
       # Commands run inside each container through `pct exec` on the host, so a container
       # needs no SSH server. The system nc carries the SSH connection because macOS

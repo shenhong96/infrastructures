@@ -1,0 +1,139 @@
+# Tailscale adopted as found on the media and apps containers: package, apt source,
+# service, node prefs (`tailscale set`), media's serve config, apps' forwarding sysctl.
+# Not managed: /var/lib/tailscale (the node's identity; a CT dump restores it) and
+# /etc/default/tailscaled (stock). The role never logs in: no `tailscale up`, no auth key.
+
+# ponytail: the apt source is a per-machine file, byte for byte as found (tailscale.list.media,
+# .apps). apps' says `focal` on a jammy machine, a leftover of an in-place upgrade; it stays
+# until a dedicated run moves it to jammy (and deletes the stray tailscale.list.distUpgrade).
+- name: Apt source
+  ansible.builtin.copy:
+    src: tailscale.list.{{ inventory_hostname }}
+    dest: /etc/apt/sources.list.d/tailscale.list
+    owner: root
+    group: root
+    mode: "0644"
+  register: tailscale_apt_source
+
+- name: Apt keyring
+  ansible.builtin.copy:
+    src: tailscale-archive-keyring.gpg
+    dest: /usr/share/keyrings/tailscale-archive-keyring.gpg
+    owner: root
+    group: root
+    mode: "0644"
+  register: tailscale_apt_keyring
+
+# ponytail: skipped in --check so it isn't one more "changed"; a new source only
+# happens on a fresh machine or a real apply.
+- name: Refresh the package lists for a new source
+  ansible.builtin.apt:
+    update_cache: true
+  when: (tailscale_apt_source is changed or tailscale_apt_keyring is changed) and not ansible_check_mode
+
+# No version pin and no hold: whatever is installed stays; upgrades are run by hand.
+- name: Tailscale package
+  ansible.builtin.apt:
+    name: tailscale
+    state: present
+
+# A subnet router or exit node needs IP forwarding.
+- name: Forwarding sysctl
+  ansible.builtin.copy:
+    src: 99-tailscale.conf
+    dest: /etc/sysctl.d/99-tailscale.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: tailscale_prefs.AdvertiseRoutes is defined
+  notify: Reload sysctl
+
+- name: Tailscaled running and enabled at boot
+  ansible.builtin.service:
+    name: tailscaled
+    enabled: true
+    state: started
+
+# Only BackendState leaves these two tasks; the status output holds node keys.
+- name: Tailscale status
+  ansible.builtin.command: tailscale status --json
+  register: tailscale_status
+  check_mode: false # read-only
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Backend state
+  ansible.builtin.set_fact:
+    tailscale_backend_state: "{{ (tailscale_status.stdout | default('{}', true) | from_json).BackendState | default('unknown') }}"
+  no_log: true
+
+# Joining is manual on purpose: no credentials are stored, and both nodes are user-owned
+# with key expiry off.
+- name: Machine is on the tailnet
+  ansible.builtin.fail:
+    msg: >-
+      {{ inventory_hostname }} is not on the tailnet (state {{ tailscale_backend_state }}).
+      On the Proxmox host run `pct exec {{ vmid }} -- tailscale up` and open the URL. Then in
+      the admin console approve its routes and exit node, disable key expiry, and rename the
+      machine to {{ tailscale_machine_name }}.
+  when: tailscale_backend_state != 'Running'
+
+# Supported prefs (the field names of `tailscale debug prefs`); add a flag below to add one.
+- name: Only prefs the role can set
+  ansible.builtin.assert:
+    that: tailscale_prefs.keys() | list | difference(['Hostname', 'CorpDNS', 'NoStatefulFiltering', 'AdvertiseRoutes']) | length == 0
+    quiet: true
+
+# The debug prefs output holds the node's private keys: no_log, and only the declared
+# fields are compared. Route order is not stable, so routes are compared sorted.
+- name: Prefs match the repo
+  ansible.builtin.command: tailscale debug prefs
+  vars:
+    tailscale_live: "{{ tailscale_prefs_live.stdout | from_json | dict2items | selectattr('key', 'in', tailscale_prefs) | items2dict }}"
+  register: tailscale_prefs_live
+  check_mode: false # read-only
+  changed_when: >-
+    (tailscale_live | dict2items | rejectattr('key', 'eq', 'AdvertiseRoutes') | items2dict)
+    != (tailscale_prefs | dict2items | rejectattr('key', 'eq', 'AdvertiseRoutes') | items2dict)
+    or (tailscale_live.AdvertiseRoutes | default([], true) | sort)
+    != (tailscale_prefs.AdvertiseRoutes | default([], true) | sort)
+  no_log: true
+
+# An exit node is 0.0.0.0/0 and ::/0 among the advertised routes; `stateful-filtering`
+# is the opposite of NoStatefulFiltering. Verified against `tailscale set --help` on 1.90.8 and 1.102.4.
+- name: Set the prefs that differ
+  ansible.builtin.command:
+    argv: "{{ ['tailscale', 'set'] + tailscale_flags }}"
+  vars:
+    tailscale_flags: >-
+      {{ (['--hostname=' ~ tailscale_prefs.Hostname] if 'Hostname' in tailscale_prefs else [])
+      + (['--accept-dns=' ~ tailscale_prefs.CorpDNS | string | lower] if 'CorpDNS' in tailscale_prefs else [])
+      + (['--stateful-filtering=' ~ (not tailscale_prefs.NoStatefulFiltering) | string | lower]
+      if 'NoStatefulFiltering' in tailscale_prefs else [])
+      + (['--advertise-exit-node=' ~ (['0.0.0.0/0', '::/0'] | difference(tailscale_prefs.AdvertiseRoutes) | length == 0) | string | lower,
+      '--advertise-routes=' ~ tailscale_prefs.AdvertiseRoutes | difference(['0.0.0.0/0', '::/0']) | join(',')]
+      if 'AdvertiseRoutes' in tailscale_prefs else []) }}
+  when: tailscale_prefs_live is changed and not ansible_check_mode
+  changed_when: true
+
+# Serve config lives in tailscaled's state, not a file. The name in Web is the machine's
+# MagicDNS name, so only the port and the proxy target are compared.
+- name: Serve config
+  when: tailscale_serve_proxy is defined
+  block:
+    - name: Serve config matches the repo
+      ansible.builtin.command: tailscale serve status --json
+      vars:
+        tailscale_serve_live: "{{ tailscale_serve_status.stdout | from_json }}"
+      register: tailscale_serve_status
+      check_mode: false # read-only
+      changed_when: >-
+        (tailscale_serve_live.TCP | default({})) != {'443': {'HTTPS': true}}
+        or (tailscale_serve_live.Web | default({}) | dict2items | map(attribute='value.Handlers') | list)
+        != [{'/': {'Proxy': tailscale_serve_proxy}}]
+
+    - name: Serve tailnet-only https 443
+      ansible.builtin.command: tailscale serve --bg --https=443 {{ tailscale_serve_proxy }}
+      when: tailscale_serve_status is changed and not ansible_check_mode
+      changed_when: true

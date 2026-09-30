@@ -1,0 +1,7 @@
+# Tailscale node prefs to keep, named as in `tailscale debug prefs`; the tailscale role
+# turns them into `tailscale set` flags. Subnet router for the LAN plus exit node.
+tailscale_prefs:
+  CorpDNS: false
+  AdvertiseRoutes: [0.0.0.0/0, '::/0', 192.168.9.0/24]
+# The name to give the machine in the admin console after a manual join.
+tailscale_machine_name: portainer

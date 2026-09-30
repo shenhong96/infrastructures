@@ -1,2 +1,13 @@
 # The jellyfin role's packages and repo are built for 22.04 (jammy).
 lxc_template: ubuntu-22.04-standard_22.04-1_amd64.tar.zst
+
+# Tailscale node prefs to keep, named as in `tailscale debug prefs`; the tailscale role
+# turns them into `tailscale set` flags.
+tailscale_prefs:
+  Hostname: media-server2
+  CorpDNS: false
+  NoStatefulFiltering: true
+# The name to give the machine in the admin console after a manual join.
+tailscale_machine_name: jellyfin
+# Tailnet-only https on 443 in front of Jellyfin.
+tailscale_serve_proxy: http://127.0.0.1:8096
