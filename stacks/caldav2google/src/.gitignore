@@ -1,0 +1,9 @@
+# Never commit secrets or local state.
+secrets.env
+data/*
+!data/.gitkeep
+credentials.json
+token.json
+token.pickle
+calendar_sync.json
+.venv/

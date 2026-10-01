@@ -1,9 +1,11 @@
-# Captured 2026-10-01 from CT 111 /opt/caldav2google/docker-compose.yml (project caldav2google; its source and data stay in that folder, and the image already exists, so a deploy never builds).
+# Captured 2026-10-01 from CT 111 /opt/caldav2google/docker-compose.yml (project caldav2google).
+# The image source is in ./src; the image caldav2google:pinned exists, so a deploy never builds. Rebuild by hand:
+#   docker compose -p caldav2google -f compose.yaml build   (then deploy)
 # Relative paths made absolute, inline secrets moved to secrets.sops.env.
 services:
   caldav2google:
     build:
-      context: /opt/caldav2google
+      context: ./src
     image: caldav2google:pinned
     container_name: caldav2google
     init: true
