@@ -1,9 +1,11 @@
 # Plain settings for every machine. Secrets are in secrets.sops.yml next to this file.
 timezone: Asia/Kuala_Lumpur
 
-# Komodo. Agents connect to Core only when this is true (Phase 3 step 2: enrollment is a
-# deliberate run, -e komodo_enrolled=true, after the install has been reviewed).
-komodo_enrolled: false
+# Komodo. Agents connect to Core only when this is true (enrolled 2026-10-01, Phase 3 step 2;
+# it was a deliberate run after the install had been reviewed).
+komodo_enrolled: true
+# Create or reconcile the main sync (servers.toml + stacks/) and run it on each komodo run.
+komodo_sync: true
 # Replace the Core key every agent trusts. Only after Core's keys were really lost.
 komodo_replace_core_key: false
 # Core's LAN address, from its container config; agents connect to ws://<it>:9120.
