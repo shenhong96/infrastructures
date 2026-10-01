@@ -1,0 +1,93 @@
+# Safety settings on every stack, enforced by tests/test_komodo_gate.py: a sync only creates
+# or updates the stack record. Nothing deploys until someone runs DeployStack on it.
+# Same folder on every agent machine: the canary proves the path on each.
+
+[[stack]]
+name = "canary-proxmox"
+[stack.config]
+server = "proxmox"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "canary"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/canary"
+file_paths = ["compose.yaml"]
+
+[[stack]]
+name = "canary-proxy"
+[stack.config]
+server = "proxy"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "canary"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/canary"
+file_paths = ["compose.yaml"]
+
+[[stack]]
+name = "canary-apps"
+[stack.config]
+server = "apps"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "canary"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/canary"
+file_paths = ["compose.yaml"]
+
+[[stack]]
+name = "canary-nextcloud"
+[stack.config]
+server = "nextcloud"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "canary"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/canary"
+file_paths = ["compose.yaml"]
+
+[[stack]]
+name = "canary-gitlab"
+[stack.config]
+server = "gitlab"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "canary"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/canary"
+file_paths = ["compose.yaml"]
+
+[[stack]]
+name = "canary-vpn"
+[stack.config]
+server = "vpn"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "canary"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/canary"
+file_paths = ["compose.yaml"]

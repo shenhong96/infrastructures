@@ -38,6 +38,24 @@ class KomodoGate(unittest.TestCase):
                 self.assertFalse(server["config"]["auto_rotate_keys"])
                 self.assertEqual(server["config"]["address"], "")
 
+    def test_stacks_only_record_never_deploy(self):
+        # A sync must create or update a stack record and nothing else: no deploy flag, no
+        # automatic pull, update or webhook, and a project name that matches today's one.
+        seen = set()
+        for path in sorted((ROOT / "stacks").rglob("komodo.toml")):
+            for stack in tomllib.loads(path.read_text())["stack"]:
+                with self.subTest(stack["name"]):
+                    self.assertNotIn(stack["name"], seen)
+                    seen.add(stack["name"])
+                    self.assertNotIn("deploy", stack)
+                    config = stack["config"]
+                    for flag in ("auto_pull", "poll_for_updates", "auto_update", "webhook_enabled"):
+                        self.assertIs(config[flag], False, flag)
+                    self.assertTrue(config["project_name"])
+                    self.assertTrue(config["server"])
+                    compose = ROOT / config["run_directory"] / config["file_paths"][0]
+                    self.assertTrue(compose.is_file(), f"{compose} is missing")
+
     def test_procedures_stay_unscheduled_until_the_end_of_adoption(self):
         # Flip this test, in the same commit, when Phase 3 step 7 turns the job on.
         for proc in tomllib.loads((ROOT / "komodo/procedures.toml").read_text())["procedure"]:

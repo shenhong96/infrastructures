@@ -1,0 +1,17 @@
+# Safety settings on every stack, enforced by tests/test_komodo_gate.py: a sync only creates
+# or updates the stack record. Nothing deploys until someone runs DeployStack on it.
+
+[[stack]]
+name = "monitoring-apps"
+[stack.config]
+server = "apps"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "monitoring"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/monitoring-apps"
+file_paths = ["compose.yaml"]

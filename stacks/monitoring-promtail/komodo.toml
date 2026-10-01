@@ -1,0 +1,33 @@
+# Safety settings on every stack, enforced by tests/test_komodo_gate.py: a sync only creates
+# or updates the stack record. Nothing deploys until someone runs DeployStack on it.
+# The same file runs on nextcloud and gitlab (config files stay on the machines).
+
+[[stack]]
+name = "monitoring-nextcloud"
+[stack.config]
+server = "nextcloud"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "monitoring"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/monitoring-promtail"
+file_paths = ["compose.yaml"]
+
+[[stack]]
+name = "monitoring-gitlab"
+[stack.config]
+server = "gitlab"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "monitoring"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/monitoring-promtail"
+file_paths = ["compose.yaml"]

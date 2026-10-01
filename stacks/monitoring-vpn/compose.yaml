@@ -1,0 +1,22 @@
+---
+version: '3.5'
+networks:
+  monitoring:
+    name: main-monitoring-stack
+services:
+  alloy:
+    image: grafana/alloy:latest
+    ports:
+      - "12345:12345"
+    volumes:
+      - /opt/monitoring/alloy:/etc/alloy/
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/monitoring/alloy/data:/var/lib/alloy/data
+    command: >
+      run 
+      --server.http.listen-addr=0.0.0.0:12345 
+      --storage.path=/var/lib/alloy/data 
+      /etc/alloy/config.alloy
+    restart: unless-stopped
+    networks:
+      - monitoring

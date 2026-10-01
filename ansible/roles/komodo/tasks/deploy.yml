@@ -1,0 +1,41 @@
+# Deploys the stacks named in komodo_deploy, one after the other, and stops at the first one
+# that fails. Nothing else deploys anything: the syncs only create stack records. Run from the
+# komodo role (the play's login is reused), e.g.
+#   ansible-playbook site.yml --tags komodo -e '{"komodo_deploy": ["canary-nextcloud"]}'
+# or alone with tasks_from: deploy. The list never lives in a committed file.
+- name: The komodo_deploy list is a list of names
+  ansible.builtin.assert:
+    that:
+      - komodo_deploy is sequence
+      - komodo_deploy is not string
+      - komodo_deploy | length == komodo_deploy | unique | length
+    fail_msg: 'Pass the stacks as JSON: -e ''{"komodo_deploy": ["canary-nextcloud"]}'''
+    quiet: true
+
+- name: Secrets from SOPS (only when this isn't part of a full role run)
+  ansible.builtin.set_fact:
+    komodo_secrets: "{{ lookup('community.sops.sops', komodo_secrets_file, input_type='dotenv', output_type='json') | from_json }}"
+  no_log: true
+  when: komodo_secrets is not defined
+
+- name: Login (only when this isn't part of a full role run)
+  ansible.builtin.include_tasks: login.yml
+  when: komodo_jwt is not defined
+
+- name: Stacks as Core has them
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /read/ListStacks
+
+- name: Every named stack exists in Core
+  ansible.builtin.assert:
+    that: item in (komodo_api.json | map(attribute='name'))
+    fail_msg: "{{ item }} is not a stack in Core: push it and run the sync first."
+    quiet: true
+  loop: "{{ komodo_deploy }}"
+
+- name: Deploy
+  ansible.builtin.include_tasks: deploy_one.yml
+  loop: "{{ komodo_deploy }}"
+  loop_control:
+    loop_var: komodo_stack

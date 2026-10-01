@@ -58,3 +58,7 @@
 - name: Close the gate
   ansible.builtin.include_tasks: close_gate.yml
   when: komodo_close_gate | bool and not ansible_check_mode
+
+- name: Deploy the named stacks
+  ansible.builtin.include_tasks: deploy.yml
+  when: komodo_deploy | length > 0 and not ansible_check_mode

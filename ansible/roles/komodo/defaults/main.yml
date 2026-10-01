@@ -32,6 +32,9 @@ komodo_sync: false
 # passed on the command line, never committed; a committed value would open a rebuild by itself.
 komodo_open_gate: false
 komodo_close_gate: false
+# Stacks to deploy in this run (tasks/deploy.yml). Only ever passed on the command line, as
+# -e '{"komodo_deploy": ["canary-nextcloud"]}': a committed list would deploy on every run.
+komodo_deploy: []
 
 # What the compose file reads from the environment (it falls back to apps' values).
 komodo_compose_env:
