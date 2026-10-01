@@ -1,0 +1,12 @@
+# Managed by Ansible (roles/proxmox_host).
+[Unit]
+Description=Config drift snapshot: collect, sanitize, commit, push, notify
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/job-heartbeat {{ snapshot_heartbeat_slug }} -- /usr/local/sbin/config-snapshot run
+UMask=0077
+Nice=10
+TimeoutStartSec=2h

@@ -11,3 +11,11 @@ tailscale_prefs:
 tailscale_machine_name: jellyfin
 # Tailnet-only https on 443 in front of Jellyfin.
 tailscale_serve_proxy: http://127.0.0.1:8096
+
+# Drift snapshot (Phase 4 plan decision 11): proposed, pending user decision 11, redacted.
+# All three optional until checked live: Jellyfin creates them from a GUI setting, so a
+# fresh install (or one where a given setting was never touched) may not have them yet.
+snapshot_paths:
+  - {path: /etc/jellyfin/system.xml, optional: true}
+  - {path: /etc/jellyfin/network.xml, optional: true}
+  - {path: /etc/jellyfin/encoding.xml, optional: true}

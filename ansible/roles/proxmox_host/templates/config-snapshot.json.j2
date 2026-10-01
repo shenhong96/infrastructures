@@ -1,0 +1,40 @@
+{
+  "repo_url": {{ snapshot_repo_url | to_json }},
+  "commit_url_base": {{ snapshot_commit_url_base | to_json }},
+  "branch": {{ snapshot_branch | to_json }},
+  "git_author": {{ snapshot_git_author | to_json }},
+  "deploy_key": "/etc/config-snapshot/deploy_key",
+  "known_hosts": "/etc/config-snapshot/github_known_hosts",
+  "gotify_url": {{ snapshot_gotify_url | to_json }},
+  "gotify_token_file": "/etc/config-snapshot/gotify_token",
+  "gitleaks": "/usr/local/bin/gitleaks",
+  "limits": {
+    "file_bytes": {{ snapshot_limit_file_bytes }},
+    "total_bytes": {{ snapshot_limit_total_bytes }}
+  },
+  "redact_pve_description": {{ snapshot_redact_pve_description | to_json }},
+  "machines": [
+{%- set machine_names = ['proxmox'] + groups.containers %}
+{%- for name in machine_names %}
+    {
+      "name": {{ name | to_json }},
+{%- if name == 'proxmox' %}
+      "vmid": null,
+      "docker": true,
+{%- else %}
+      "vmid": {{ hostvars[name].vmid | to_json }},
+      "docker": {{ (hostvars[name].snapshot_docker | default(true)) | to_json }},
+{%- endif %}
+      "paths": [
+{%- set paths = hostvars[name].snapshot_paths | default([]) %}
+{%- for p in paths %}
+        {
+          "path": {{ (p.path if p is mapping else p) | to_json }},
+          "optional": {{ (p.optional | default(false) if p is mapping else false) | to_json }}
+        }{{ "," if not loop.last else "" }}
+{%- endfor %}
+      ]
+    }{{ "," if not loop.last else "" }}
+{%- endfor %}
+  ]
+}

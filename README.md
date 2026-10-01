@@ -75,6 +75,34 @@ The `proxy`, `node_exporter` and `base` roles put the files Caddy reads back; Ko
 - **Secrets:** the two keys in `.env` are `CF_API_TOKEN` and `ACME_EMAIL`. Caddy's certificate and ACME account (`/opt/caddy/data`) are not in the repo; they are re-issued on their own.
 - **Container:** Ubuntu 24.04 with Docker 29 needs the raw key `lxc.mount.entry: /dev/null sys/module/apparmor/parameters/enabled none bind 0 0` in the inventory, as on `apps`, or `docker run` fails on the AppArmor check.
 
+## Drift snapshot and heartbeats
+
+**Pending:** code and templates exist (`roles/proxmox_host/files/config-snapshot.py`, `files/job-heartbeat`, `tasks/snapshot.yml`, `tasks/monitoring.yml`); nothing has run on the host. `heartbeats_enabled`/`snapshot_enabled` (`host_vars/proxmox/main.yml`, both `false`) keep both task files out of every run, including a plain `--check`, so the missing secrets below never break an ordinary pass; the commissioning step flips them to `true`, at which point each still `assert`s its own secrets are set and fails loudly if they're not. The nightly timer installs disabled (`snapshot_timer_enabled: false`); Phase 6 enables it and accepts the first successful scheduled run as the baseline.
+
+**What's collected (sanitized, then pushed to a private repo):** per machine, installed packages, enabled/active systemd units, crontabs, and (where `docker: true`) running Compose projects' config files and image identities; on the Proxmox host also the non-secret `/etc/pve` guest/cluster config (an allowlist, never `priv/` or any key material), network config, fstab, crypttab, SnapRAID/sanoid config; everywhere, the `snapshot_paths` explicitly declared per machine in `host_vars/<machine>/main.yml` (AdGuard, Caddy, Samba, GitLab, Jellyfin's XMLs, the host's `sanoid.sh`/`lxc_off.sh`). Every credential-shaped value (passwords, tokens, keys, API secrets, session/signing keys, connection-string userinfo, bcrypt/argon hashes) is redacted before anything touches disk; gitleaks re-checks the whole sanitized candidate before it's committed.
+
+**Never collected:** `.env`/`secrets.env`/`*.sops.*`, private keys and certificates, credential files, the disk's LUKS key file (resolved from `/etc/crypttab`), this tool's own config and workspace, `/etc/shadow`, resolved container environments, app databases, and arbitrary home directories. Nextcloud's `config.php` is deliberately excluded (PHP, rewritten by the app itself). A file that should never be there failing to redact cleanly aborts the whole run rather than committing a partial, misleading snapshot.
+
+**Handling a drift alert:** every notification means the live configuration no longer matches what's declared. Three responses, depending on which is true:
+1. **The change is wanted:** declare it — edit the Ansible role/template or the Komodo stack definition so the repo describes the new, intended state, then commit. The next snapshot should then show no diff.
+2. **The change is unwanted:** undo it by re-running the relevant Ansible role, or by redeploying the stack through Komodo, so the machine goes back to matching the repo. Never hand-edit the live file and call it fixed; that's exactly the drift this exists to catch.
+3. **The setting only exists in a database** (an app's own admin UI, not a file): the snapshot can't see or restore it. Recovery relies on that app's own data backup (Phase 5), not on this repo.
+
+**SOPS keys to add** (admin-only, `host_vars/proxmox/secrets.sops.yml`; `sops ansible/host_vars/proxmox/secrets.sops.yml`):
+| Key | Used by |
+|---|---|
+| `snapshot_deploy_key` | config-snapshot's push access to the private `infrastructures-snapshot` repo (write-only, scoped to that one repo) |
+| `snapshot_gotify_token` | the `config-snapshot` app's token in Gotify, for the drift notification |
+| `healthchecks_ping_key` | job-heartbeat's ping key for every check in `heartbeat_checks` |
+| `healthchecks_api_key` *(optional)* | a read-write healthchecks.io API key; lets Ansible create/reconcile the checks by slug instead of someone doing it by hand |
+
+**New host root-crontab lines (pending; the crontab itself lives in SOPS's `secret_crontabs_b64`, which this agent doesn't edit):** schedules unchanged, each wrapped in `job-heartbeat` so a missed or failed run alerts externally:
+```
+0 0 * * 6 /usr/local/bin/job-heartbeat snapraid -- python3 /opt/snapraid-runner/snapraid-runner.py -c ~/.snapraid-runner.conf
+*/5 * * * * /usr/local/bin/job-heartbeat sanoid -- bash /root/scripts/sanoid.sh
+```
+Today's lines are the same commands without the wrapper; SnapRAID's also ends in `&& curl … <self-hosted ping URL>`. Only the `job-heartbeat` prefix is new (decision 6 also drops SnapRAID's existing ping to the self-hosted Healthchecks instance, which the hosted check replaces). The other three existing host cron jobs (`chmod`, `lxc_off.sh`, a Saturday `rename…` job) get no heartbeat (decision 16).
+
 ## Not working yet
 
 Deploying anything (the Ansible roles, Komodo), rebuilding from scratch, and backups and restores. Each section is added here once it has been shown to work.

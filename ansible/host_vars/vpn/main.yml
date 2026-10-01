@@ -1,0 +1,5 @@
+# Plain settings for vpn. Secrets are in secrets.sops.yml next to this file.
+
+# Drift snapshot (Phase 4 plan decision 11): no extra snapshot_paths proposed yet for this
+# machine; the plan's decision 11 didn't cover it. Collection still runs (packages,
+# crontabs, systemd units, docker compose projects and images), just with no `paths` entry.

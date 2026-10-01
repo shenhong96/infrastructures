@@ -1,0 +1,133 @@
+# config-snapshot: a nightly, sanitized copy of the real configuration pushed to a private
+# repo, with drift reported through Gotify (Phase 4 plan, decisions 1, 5, 9-13). Collection
+# and sanitization are config-snapshot.py's job (roles/proxmox_host/files, agent A); this
+# file only installs it and its non-secret inputs. The clone itself happens on first run,
+# not here, so Ansible needs no network access to GitHub.
+# Gated by snapshot_enabled (host_vars/proxmox/main.yml): false keeps a plain run a no-op
+# here, so a normal `site.yml`/`--check` never fails on the secrets below. Once it's true,
+# snapshot_deploy_key and snapshot_gotify_token must be in
+# host_vars/proxmox/secrets.sops.yml, admin-only — see the README's "Drift snapshot and
+# heartbeats" section — or this still fails on purpose.
+
+- name: The gitleaks tarball
+  ansible.builtin.get_url:
+    url: "{{ proxmox_host_gitleaks_url }}"
+    dest: /usr/local/src/gitleaks_{{ proxmox_host_gitleaks_version }}_linux_x64.tar.gz
+    checksum: sha256:{{ proxmox_host_gitleaks_sha256 }}
+    owner: root
+    group: root
+    mode: "0644"
+  register: proxmox_host_gitleaks_tarball
+
+- name: The gitleaks binary
+  ansible.builtin.unarchive:
+    src: "{{ proxmox_host_gitleaks_tarball.dest }}"
+    dest: /usr/local/bin
+    remote_src: true
+    include: [gitleaks]
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Private directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+  loop:
+    - /etc/config-snapshot
+    - /var/lib/config-snapshot
+
+- name: The config-snapshot script
+  ansible.builtin.copy:
+    src: config-snapshot.py
+    dest: /usr/local/sbin/config-snapshot
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: GitHub's known host keys (pinned; never discovered by scanning)
+  ansible.builtin.copy:
+    src: github_known_hosts
+    dest: /etc/config-snapshot/github_known_hosts
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Deploy key (snapshot_deploy_key) is set
+  ansible.builtin.assert:
+    that: snapshot_deploy_key is defined
+    fail_msg: add snapshot_deploy_key to host_vars/proxmox/secrets.sops.yml, see the README's "Drift snapshot and heartbeats" section
+    quiet: true
+
+- name: Deploy key (write access to the private snapshot repo only)
+  ansible.builtin.copy:
+    content: "{{ snapshot_deploy_key }}"
+    dest: /etc/config-snapshot/deploy_key
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+
+- name: Gotify token (snapshot_gotify_token) is set
+  ansible.builtin.assert:
+    that: snapshot_gotify_token is defined
+    fail_msg: add snapshot_gotify_token to host_vars/proxmox/secrets.sops.yml, see the README's "Drift snapshot and heartbeats" section
+    quiet: true
+
+- name: Gotify app token
+  ansible.builtin.copy:
+    content: "{{ snapshot_gotify_token }}"
+    dest: /etc/config-snapshot/gotify_token
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+
+# Everything below is non-secret; config.json itself is 0600 only because it names the
+# machines and paths this host reads, not because any value in it is sensitive.
+- name: The config.json (machines = proxmox + every inventory container)
+  ansible.builtin.template:
+    src: config-snapshot.json.j2
+    dest: /etc/config-snapshot/config.json
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Unit file
+  ansible.builtin.template:
+    src: config-snapshot.service.j2
+    dest: /etc/systemd/system/config-snapshot.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: proxmox_host_snapshot_service
+
+- name: Timer file
+  ansible.builtin.template:
+    src: config-snapshot.timer.j2
+    dest: /etc/systemd/system/config-snapshot.timer
+    owner: root
+    group: root
+    mode: "0644"
+  register: proxmox_host_snapshot_timer
+
+# A new or changed unit needs a reload before the service/timer modules can see it.
+- name: Reload systemd for the unit and timer
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: (proxmox_host_snapshot_service is changed or proxmox_host_snapshot_timer is changed)
+    and not ansible_check_mode
+
+# Decision 9: installed but disabled until Phase 6 accepts the first nightly run as the
+# baseline. The service itself is never "enabled": only the timer triggers it.
+- name: Timer installed, enabled only when snapshot_timer_enabled is true
+  ansible.builtin.service:
+    name: config-snapshot.timer
+    enabled: "{{ snapshot_timer_enabled }}"
+    state: "{{ 'started' if snapshot_timer_enabled | bool else 'stopped' }}"
+  when: not (proxmox_host_snapshot_timer is changed and ansible_check_mode)

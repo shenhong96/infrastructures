@@ -1,0 +1,11 @@
+# Pinned downloads this role installs on the Proxmox host. No upstream checksum file exists
+# for config-snapshot (it's this repo's own script); gitleaks publishes one, used below.
+
+# Decision 13 (Phase 4 plan): the pinned upstream 8.30.0 binary, sha256-checked. From
+# https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_checksums.txt
+# (linux_x64 asset), read 2026-10-01. To upgrade, change the version and hash together.
+proxmox_host_gitleaks_version: 8.30.0
+proxmox_host_gitleaks_sha256: 79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e
+proxmox_host_gitleaks_url: >-
+  https://github.com/gitleaks/gitleaks/releases/download/v{{ proxmox_host_gitleaks_version }}/gitleaks_{{
+  proxmox_host_gitleaks_version }}_linux_x64.tar.gz

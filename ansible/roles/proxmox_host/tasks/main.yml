@@ -8,3 +8,18 @@
 
 - name: Network
   ansible.builtin.import_tasks: network.yml
+
+# Phase 4: drift snapshot and job heartbeats, gated by heartbeats_enabled/snapshot_enabled
+# (host_vars/proxmox/main.yml) so a plain run — including --check — stays a no-op here
+# until the commissioning step turns a flag on. Once on, each still asserts its own secrets
+# are in host_vars/proxmox/secrets.sops.yml and fails loudly if they're not — see the
+# README's "Drift snapshot and heartbeats".
+- name: Monitoring (job-heartbeat, healthchecks.io checks)
+  ansible.builtin.import_tasks: monitoring.yml
+  when: heartbeats_enabled | bool
+  tags: monitoring
+
+- name: Config drift snapshot
+  ansible.builtin.import_tasks: snapshot.yml
+  when: snapshot_enabled | bool
+  tags: snapshot

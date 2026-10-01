@@ -1,0 +1,11 @@
+# Managed by Ansible (roles/proxmox_host).
+[Unit]
+Description=Nightly config drift snapshot
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+Persistent=false
+RandomizedDelaySec=0
+
+[Install]
+WantedBy=timers.target

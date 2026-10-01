@@ -1,0 +1,127 @@
+# job-heartbeat and the healthchecks.io checks it pings (Phase 4 plan decisions 2, 7-9, 16).
+# Nothing here talks to healthchecks.io except the optional check-sync block below; pinging
+# itself happens at run time, from job-heartbeat, never from Ansible.
+# Gated by heartbeats_enabled (host_vars/proxmox/main.yml): false keeps a plain run a no-op
+# here, so a normal `site.yml`/`--check` never fails on the secrets below. Once it's true,
+# healthchecks_ping_key (always needed) and healthchecks_api_key (optional: lets Ansible
+# create/reconcile the checks) must be in host_vars/proxmox/secrets.sops.yml, admin-only —
+# see the README's "Drift snapshot and heartbeats" section — or this still fails on purpose.
+
+- name: The job-heartbeat wrapper
+  ansible.builtin.copy:
+    src: job-heartbeat
+    dest: /usr/local/bin/job-heartbeat
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: The job-heartbeat config folder
+  ansible.builtin.file:
+    path: /etc/job-heartbeat
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Ping key (healthchecks_ping_key) is set
+  ansible.builtin.assert:
+    that: healthchecks_ping_key is defined
+    fail_msg: add healthchecks_ping_key to host_vars/proxmox/secrets.sops.yml, see the README's "Drift snapshot and heartbeats" section
+    quiet: true
+
+- name: Ping key file
+  ansible.builtin.copy:
+    content: "{{ healthchecks_ping_key }}"
+    dest: /etc/job-heartbeat/ping_key
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+
+- name: The job-heartbeat state folder (ping-failed markers)
+  ansible.builtin.file:
+    path: /var/lib/job-heartbeat
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+# Decision 2: with a read-write API key, Ansible creates or reconciles each check by slug;
+# without one the host still pings whatever already exists in the healthchecks.io project,
+# it just isn't the one that created it. A second run with the same inputs changes nothing.
+# Lookup is GET .../checks/?slug=<slug> (List Existing Checks, filtered): the single-check
+# GET only takes a uuid/unique_key, never a slug, so that endpoint can't be used here.
+# https://healthchecks.io/docs/api/
+- name: Healthchecks checks (decision 2)
+  when: healthchecks_api_key is defined
+  no_log: true
+  block:
+    - name: Each check's current state (read-only; also how --check reports without writing)
+      ansible.builtin.uri:
+        url: https://healthchecks.io/api/v3/checks/?slug={{ item.slug }}
+        headers:
+          X-Api-Key: "{{ healthchecks_api_key }}"
+        status_code: [200]
+      register: proxmox_host_heartbeat_current
+      loop: "{{ heartbeat_checks }}"
+      loop_control:
+        label: "{{ item.slug }}"
+      check_mode: false # read-only
+      failed_when: status != 200 or (json.checks | length) > 1
+      changed_when: >-
+        (json.checks | length) == 0 or
+        json.checks[0].name != item.name or
+        json.checks[0].grace != item.grace or
+        (item.schedule is defined and
+         (json.checks[0].schedule | default('') != item.schedule or
+          json.checks[0].tz | default('') != item.tz)) or
+        (item.timeout is defined and
+         json.checks[0].timeout | default(0) | int != item.timeout | int)
+
+    # No check yet: POST .../checks/ creates one (201). A check already exists but differs:
+    # POST to its own update_url updates it (200). `unique` is never used: the lookup above
+    # already is the upsert decision, by slug.
+    - name: Checks are created or updated
+      ansible.builtin.uri:
+        url: >-
+          {{ item.json.checks[0].update_url if (item.json.checks | length) > 0
+             else 'https://healthchecks.io/api/v3/checks/' }}
+        method: POST
+        headers:
+          X-Api-Key: "{{ healthchecks_api_key }}"
+        body_format: json
+        body:
+          slug: "{{ item.item.slug }}"
+          name: "{{ item.item.name }}"
+          grace: "{{ item.item.grace }}"
+          schedule: "{{ item.item.schedule | default(omit) }}"
+          tz: "{{ item.item.tz | default(omit) }}"
+          timeout: "{{ item.item.timeout | default(omit) }}"
+          channels: "*"
+        status_code: "{{ [200] if (item.json.checks | length) > 0 else [201] }}"
+      register: proxmox_host_heartbeat_sync
+      loop: "{{ proxmox_host_heartbeat_current.results }}"
+      loop_control:
+        label: "{{ item.item.slug }}"
+      when: item is changed and not ansible_check_mode
+      changed_when: true
+
+    # Create/update has no "paused" field; only a fresh create (status 201) needs it set
+    # explicitly (decision 9: drift stays paused until Phase 6 accepts the first baseline).
+    - name: Newly created checks that should start paused
+      ansible.builtin.uri:
+        url: "{{ item.json.pause_url }}"
+        method: POST
+        headers:
+          X-Api-Key: "{{ healthchecks_api_key }}"
+        status_code: [200]
+      loop: "{{ proxmox_host_heartbeat_sync.results }}"
+      loop_control:
+        label: "{{ item.item.item.slug }}"
+      when: item is changed and item.status == 201 and (item.item.item.paused | default(false))
+      changed_when: true
+
+# Phase 5 (approved B2 item): restic-* per approved off-site job, plus a monthly
+# restic-check. Deliberately not created here yet: an uninstalled backup job must never
+# read as healthy.

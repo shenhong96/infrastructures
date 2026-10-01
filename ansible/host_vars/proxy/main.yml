@@ -1,0 +1,5 @@
+# Plain settings for proxy. Secrets are in secrets.sops.yml next to this file.
+
+# Drift snapshot (Phase 4 plan decision 11): proposed, pending user decision 11, redacted.
+snapshot_paths:
+  - /opt/caddy/conf/Caddyfile

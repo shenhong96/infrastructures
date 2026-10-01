@@ -1,2 +1,6 @@
 # The nextcloud role's nginx, PHP PPA and packages are built for 22.04 (jammy).
 lxc_template: ubuntu-22.04-standard_22.04-1_amd64.tar.zst
+
+# Drift snapshot (Phase 4 plan decision 11): no snapshot_paths here. config.php is left out
+# on purpose: it's PHP, and Nextcloud rewrites it (maintenance window markers, cron state),
+# so every snapshot would show a diff that isn't a real config change.

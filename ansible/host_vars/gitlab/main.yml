@@ -1,3 +1,8 @@
 timezone: Etc/UTC
 # The gitlab role's repo is built for 22.04 (jammy).
 lxc_template: ubuntu-22.04-standard_22.04-1_amd64.tar.zst
+
+# Drift snapshot (Phase 4 plan decision 11): proposed, pending user decision 11, redacted
+# (the Ruby-assignment format: config-snapshot.py's gitlab.rb sanitizer).
+snapshot_paths:
+  - /etc/gitlab/gitlab.rb

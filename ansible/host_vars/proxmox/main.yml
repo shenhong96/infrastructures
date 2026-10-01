@@ -44,3 +44,68 @@ fstab_mounts:
     pass: "0"
   # Cache SSD (LUKS + btrfs)
   - {device: /dev/mapper/predatorG7, mount_point: /mnt/cache, type: btrfs, options: "defaults,noatime,compress=zstd", dump: "0", pass: "2"}
+
+# Drift snapshot and heartbeats (Phase 4 plan). Nothing here runs on the host yet:
+# heartbeats_enabled/snapshot_enabled keep monitoring.yml/snapshot.yml out of every run
+# (including plain `site.yml`/`--check`) until the SOPS keys exist; flipped to true in the
+# commissioning step once they do. The asserts inside stay: turning a flag on with a secret
+# still missing still fails loudly, on purpose. See the README's "Drift snapshot and
+# heartbeats" section.
+heartbeats_enabled: false
+snapshot_enabled: false
+
+# Decision 1: doesn't exist yet; created private, with a write-only deploy key, before the
+# first real run. commit_url_base is only used to build the Gotify notification text.
+snapshot_repo_url: git@github.com:shenhong96/infrastructures-snapshot.git
+snapshot_commit_url_base: https://github.com/shenhong96/infrastructures-snapshot/commit/
+snapshot_branch: main
+snapshot_git_author: config-snapshot <config-snapshot@proxmox.invalid>
+# Decision 5: direct to the Gotify container's published port, not through Caddy or AdGuard.
+snapshot_gotify_url: http://192.168.9.151:8087
+snapshot_limit_file_bytes: 1048576
+snapshot_limit_total_bytes: 52428800
+# Decision 12: the description field holds a password hint and a tunnel ID.
+snapshot_redact_pve_description: true
+# Decision 9: off until Phase 6 reviews the commissioning runs and accepts a baseline.
+snapshot_timer_enabled: false
+snapshot_heartbeat_slug: drift-commissioning
+
+# Decision 11: proposed, pending user decision 11 in the Phase 4 plan; optional until
+# checked against the live host (sanoid.sh is read by cron either way; lxc_off.sh is extra).
+snapshot_paths:
+  - {path: /root/scripts/sanoid.sh, optional: true}
+  - {path: /root/scripts/lxc_off.sh, optional: true}
+
+# healthchecks.io checks (decision 2): a schedule and grace per real job (decisions 7-9),
+# cadence unchanged from the existing cron/script. No entry for chmod/lxc_off/rename
+# (decision 16: no heartbeat). drift-commissioning has no fixed cadence (used by hand before
+# Phase 6), so it uses a "simple" check (timeout, not schedule/tz): a week of silence alerts,
+# not a missed 5-minute window. drift stays paused until Phase 6 activates the nightly timer.
+heartbeat_checks:
+  - slug: snapraid
+    name: SnapRAID parity sync
+    schedule: "0 0 * * 6"
+    tz: "{{ timezone }}"
+    grace: 43200
+    paused: false
+  - slug: sanoid
+    name: Sanoid ZFS snapshots
+    schedule: "*/5 * * * *"
+    tz: "{{ timezone }}"
+    grace: 3600
+    paused: false
+  - slug: drift
+    name: Config drift snapshot
+    schedule: "30 4 * * *"
+    tz: "{{ timezone }}"
+    grace: 7200
+    paused: true
+  - slug: drift-commissioning
+    name: Config drift snapshot (commissioning)
+    timeout: 86400
+    grace: 604800
+    paused: false
+  # Phase 5, after the approved B2 item. Commented out on purpose: an uninstalled backup
+  # job must never read as healthy.
+  # - {slug: restic-xxx, name: "restic: ...", schedule: "...", tz: "{{ timezone }}", grace: ...}
+  # - {slug: restic-check, name: Monthly restic verification, schedule: "0 6 1 * *", tz: "{{ timezone }}", grace: 86400}

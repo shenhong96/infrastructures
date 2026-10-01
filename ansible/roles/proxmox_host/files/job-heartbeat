@@ -1,0 +1,58 @@
+#!/bin/sh
+# job-heartbeat <check-slug> -- <command> [args...]
+#
+# Wraps a scheduled job so healthchecks.io sees it start, succeed or fail, and goes quiet
+# if cron/systemd never runs it at all. Pings https://hc-ping.com/<ping_key>/<slug>[/<stage>]:
+# "start" before the command, then the command's own exit status after. A ping that fails
+# (no key file, or curl itself fails) is logged locally and never blocks or retries the
+# command: the protected job's result is the only thing that matters here.
+#
+# The ping key never appears in argv or a process listing: curl reads the URL from a config
+# file piped in on stdin (--config -), not from a command-line argument.
+set -u
+
+base=${JOB_HEARTBEAT_BASE:-https://hc-ping.com}
+key_file=${JOB_HEARTBEAT_KEY_FILE:-/etc/job-heartbeat/ping_key}
+state_dir=${JOB_HEARTBEAT_STATE:-/var/lib/job-heartbeat}
+
+if [ "$#" -lt 3 ] || [ "$2" != "--" ]; then
+  echo "usage: job-heartbeat <check-slug> -- <command> [args...]" >&2
+  exit 2
+fi
+slug=$1
+shift 2
+
+marker="$state_dir/$slug.ping-failed"
+
+# $1 is the URL stage: "start", or the command's exit status. Never prints the key; a
+# failure here is reported once to syslog and recorded as a marker file, nothing more.
+ping() {
+  stage=$1
+  key=$(cat "$key_file" 2>/dev/null)
+  if [ -z "$key" ]; then
+    logger -t job-heartbeat "$slug: ping failed (no key file)"
+    mkdir -p "$state_dir" 2>/dev/null
+    touch "$marker" 2>/dev/null
+    return 0
+  fi
+  url="$base/$key/$slug"
+  [ -n "$stage" ] && url="$url/$stage"
+  if printf 'url = "%s"\n' "$url" \
+    | curl -fsS -m 10 --retry 3 --retry-max-time 30 -o /dev/null --config -; then
+    rm -f "$marker" 2>/dev/null
+  else
+    logger -t job-heartbeat "$slug: ping failed ($stage)"
+    mkdir -p "$state_dir" 2>/dev/null
+    touch "$marker" 2>/dev/null
+  fi
+  return 0
+}
+
+ping start
+
+"$@"
+status=$?
+
+ping "$status"
+
+exit "$status"
