@@ -1,0 +1,22 @@
+#!/bin/bash
+# Opaque SOPS blobs: a whole config file kept as a single encrypted value (names and keys stay hidden in the public repo).
+#   tools/sops-blob new  FILE.sops.yaml < plain      encrypt stdin into FILE.sops.yaml (use the final path: it picks the keys)
+#   tools/sops-blob edit FILE.sops.yaml              decrypt to a private temp file, open $EDITOR, encrypt again on save
+# (`sops edit` itself cannot do this: it would turn the blob into a normal tree.) Never prints the content.
+set -euo pipefail
+umask 077
+file=${2:-}; [[ "$file" == *.sops.yaml ]] || { echo "usage: $0 new|edit FILE.sops.yaml" >&2; exit 2; }
+enc() { sops -e --filename-override "$file" --input-type binary --output-type yaml /dev/stdin; }
+case "${1:-}" in
+new) enc > "$file.new" && mv "$file.new" "$file" ;;
+edit)
+  tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+  sops -d --input-type yaml --output-type binary "$file" > "$tmp/f"
+  cp "$tmp/f" "$tmp/orig"
+  ${EDITOR:-vi} "$tmp/f"
+  if cmp -s "$tmp/f" "$tmp/orig"; then echo "unchanged"; exit 0; fi
+  [ -s "$tmp/f" ] || { echo "STOP: empty result, nothing written" >&2; exit 1; }
+  enc < "$tmp/f" > "$file.new" && mv "$file.new" "$file"; echo "$file updated"
+  ;;
+*) echo "usage: $0 new|edit FILE.sops.yaml" >&2; exit 2 ;;
+esac

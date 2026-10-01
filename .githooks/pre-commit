@@ -40,7 +40,14 @@ fmt == "yaml" {
 END { exit !(mac && rcp && plain == 0) }
 AWK
 
+# Config that names things or holds keys (the homepage dashboard, smokeping's targets and mail login) is only ever
+# committed as an opaque *.sops.yaml blob, and the decrypted copies live in .decrypted/ (komodo-decrypt-files).
+PLAINTEXT_CONFIG='(^|/)(\.decrypted/|homepage/(bookmarks|docker|proxmox|services|settings|widgets)\.ya?ml(\..*)?$|homepage/[^/]*\.bak|smokeping/(Targets|ssmtp\.conf)$)'
+
 while IFS= read -r -d '' f; do
+  if [[ "$f" =~ $PLAINTEXT_CONFIG ]]; then
+    fail "$f: this config must only be committed as an encrypted *.sops.yaml blob"; continue
+  fi
   case "${f##*/}" in
     *.sops.env) ;; # encrypted, checked below
     *.env | *.tfstate | *.tfstate.* | *.agekey | keys.txt | cryptkey | *vault_pass*)

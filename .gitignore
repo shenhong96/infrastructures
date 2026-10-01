@@ -8,6 +8,16 @@ secrets.env
 *.decrypted
 *.decrypted.*
 
+# Decrypted config blobs (komodo-decrypt-files) and config that is only committed as an encrypted *.sops.yaml blob
+.decrypt*/
+stacks/**/homepage/*.yaml
+!stacks/**/homepage/*.sops.yaml
+!stacks/**/homepage/kubernetes.yaml
+stacks/**/homepage/*.bak*
+stacks/**/smokeping/Targets
+stacks/**/smokeping/ssmtp.conf
+stacks/**/smokeping/ssmtp.conf.yaml
+
 # Keys and credentials
 *.agekey
 keys.txt

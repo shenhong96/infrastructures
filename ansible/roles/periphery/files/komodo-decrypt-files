@@ -1,0 +1,77 @@
+#!/bin/bash
+# Pre-deploy step of a Komodo stack (installed by roles/periphery), next to komodo-decrypt-env. Run in the stack's folder:
+#   komodo-decrypt-files [-m 0600|0640|0644] dir/name.sops.yaml [other/file.sops.yaml ...]
+# For whole config files that must not sit in a public repo in clear (names and keys would leak): each file
+# is an opaque SOPS blob made with  sops --input-type binary --output-type yaml  (a single `data: ENC[..]`).
+# Every blob is decrypted to .decrypted/<same path without ".sops">, so dir/name.sops.yaml -> .decrypted/dir/name.yaml.
+# The stack's compose file bind-mounts those files (read-only) where the app wants them.
+#   * List every blob of the stack in ONE call: the whole .decrypted folder is replaced each time.
+#   * .decrypted is root-only (0700) whatever the file mode; -m 0644 only lets the container's user read its own file.
+#   * Also writes files.env (not secret): BLOBS_<FOLDER>_SHA=<sha256 over the encrypted blobs in that folder>.
+#     A compose label ${BLOBS_<FOLDER>_SHA} on the service makes a changed blob change the container's config, so
+#     `docker compose up -d` recreates it (a plain bind of a replaced file would keep the old inode).
+# Fails closed: if anything can't be decrypted, .decrypted and files.env are removed and the exit code stops
+# the deploy. Never prints a value: output is a count, a failure message names the file, nothing else.
+# Komodo logs this command's output in the update, so keep it that way.
+set -u
+umask 077
+export PATH=/usr/local/bin:/usr/bin:/bin
+export SOPS_AGE_KEY_FILE="${SOPS_AGE_KEY_FILE:-/etc/komodo/sops/age.key}"
+unset SOPS_AGE_KEY SOPS_AGE_KEY_CMD SOPS_AGE_SSH_PRIVATE_KEY_FILE
+
+OUT=.decrypted
+fail() { echo "komodo-decrypt-files: $*" >&2; exit 1; }
+
+mode=0600
+if [ "${1:-}" = "-m" ]; then
+  mode=${2:-}
+  shift 2 2>/dev/null || fail "-m needs a mode"
+  case "$mode" in 0600 | 0640 | 0644) ;; *) fail "mode must be 0600, 0640 or 0644" ;; esac
+fi
+[ "$#" -ge 1 ] || fail "no file named"
+[ -r "$SOPS_AGE_KEY_FILE" ] || fail "the lab key is missing"
+
+if command -v sha256sum >/dev/null; then sha() { sha256sum | cut -d' ' -f1; }; else sha() { shasum -a 256 | cut -d' ' -f1; }; fi
+
+work=$(mktemp -d ./.decrypt.XXXXXX) || fail "cannot make a temporary folder here"
+trap 'rm -rf "$work"' EXIT
+trap 'exit 1' INT TERM HUP
+drop() { rm -rf -- "$OUT" files.env; }
+
+dups=$(printf '%s\n' "$@" | LC_ALL=C sort | uniq -d)
+[ -z "$dups" ] || fail "a file is named twice"
+for src in "$@"; do
+  # plain relative path, no dots in front of a component (so no .. and no hidden names), ends in .sops.yaml
+  [[ "$src" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*){0,3}$ ]] || fail "bad file name"
+  case "$src" in *.sops.yaml) ;; *) fail "$src is not a .sops.yaml file" ;; esac
+  [ -f "$src" ] && [ ! -L "$src" ] || fail "$src is missing"
+done
+
+n=0
+stamps=""
+for src in "$@"; do
+  dst=${src%.sops.yaml}.yaml
+  mkdir -p -m 0700 "$work/out/$(dirname "$dst")" || { drop; fail "cannot place $dst"; }
+  if ! sops --decrypt --input-type yaml --output-type binary "$src" >"$work/out/$dst" 2>/dev/null || [ ! -s "$work/out/$dst" ]; then
+    drop # an older plaintext must not pass for the current one
+    fail "cannot decrypt $src"
+  fi
+  chmod "$mode" "$work/out/$dst" || { drop; fail "cannot set the mode of $dst"; }
+  top=${src%%/*}; [ "$top" = "$src" ] && top=ROOT
+  stamps="$stamps$top $src $(sha <"$src")"$'\n'
+  n=$((n + 1))
+done
+
+# the stamp file: one variable per top-level folder of the blobs (hash over the sorted "path hash" lines of that folder)
+: >"$work/files.env"
+for top in $(printf '%s' "$stamps" | cut -d' ' -f1 | LC_ALL=C sort -u); do
+  var=$(printf '%s' "$top" | tr 'a-z./-' 'A-Z___')
+  h=$(printf '%s' "$stamps" | LC_ALL=C sort | awk -v t="$top" '$1 == t { print $2, $3 }' | sha)
+  printf 'BLOBS_%s_SHA=%s\n' "$var" "$h" >>"$work/files.env"
+done
+
+# swap in: old folder out of the way, new one in; any failure leaves nothing behind
+rm -rf -- "$OUT.old"
+{ [ ! -e "$OUT" ] || mv -- "$OUT" "$OUT.old"; } && mv -- "$work/out" "$OUT" && mv -f -- "$work/files.env" ./files.env || { drop; rm -rf -- "$OUT.old"; fail "cannot place the decrypted files"; }
+rm -rf -- "$OUT.old"
+echo "decrypted $n file(s)"

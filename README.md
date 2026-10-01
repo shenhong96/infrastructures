@@ -48,6 +48,8 @@ Two age keys, set in `.sops.yaml` (the first matching rule wins):
 
 **Editing a secret:** `sops <file>` opens it decrypted in your editor and encrypts it again on save. Create a new secrets file the same way, at its final path, so the right rule picks its keys.
 
+**Opaque config files:** a whole config file that names things or holds keys is committed as one encrypted value, `NAME.sops.yaml` (`tools/sops-blob new|edit`). The Komodo agent decrypts it before a deploy (`komodo-decrypt-files`) into `.decrypted/`, which the compose file bind-mounts read-only. The hook and the tests refuse the plaintext twin.
+
 **Where the secrets came from:** moved from ansible-vault on 2026-09-29, with values unchanged: 58 keys, the disk key (`cryptkey_b64`, base64), AdGuard's config (encrypted) and `crypttab` (plaintext: device paths and a key-file path only). 33 keys weren't carried over: Oracle-Arm, the workstation, thanos and kubernetes groups, `mysql_db`, and values nothing uses or that belong to guests that no longer exist. App values are provisional until Phase 3 compares them with what's running.
 
 **If a key leaks:**
