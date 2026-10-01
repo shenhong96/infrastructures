@@ -1,0 +1,27 @@
+# Captured 2026-10-01 from CT 111 /opt/adguard/docker-compose.yml (project adguard; AdGuard writes its own config under /opt/adguard/confdir, which stays live and is not in this repo).
+# Relative paths made absolute, inline secrets moved to secrets.sops.env.
+---
+x-monitoring: &loki
+  labels:
+    logging: "promtail"
+    logging_jobname: "containerlogs"
+
+version: "3"
+services:
+  adguardhome:
+    image: adguard/adguardhome:v0.107.59
+    container_name: adguard
+    ports:
+      - 53:53/tcp
+      - 53:53/udp
+      - 784:784/udp
+      - 853:853/tcp
+      - 3000:3000/tcp
+      - 180:80/tcp
+      - 1443:443/tcp
+    volumes:
+      - /opt/adguard/workdir:/opt/adguardhome/work
+      - /opt/adguard/confdir:/opt/adguardhome/conf
+      - /opt/traefik/certs/ahlooii.com:/data
+    restart: always
+    <<: *loki
