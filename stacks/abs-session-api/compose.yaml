@@ -1,0 +1,33 @@
+# Captured 2026-10-01 from CT 111 /opt/aio/abs-session-api/docker-compose.yml (project abs-session-api; the app source and token file stay in that folder on the machine).
+# Relative paths made absolute, inline secrets moved to secrets.sops.env.
+services:
+  abs-session-api:
+    image: node:22-alpine
+    container_name: abs-session-api
+    command: node /app/server.js
+    working_dir: /app
+    restart: unless-stopped
+    ports:
+      - 7778:7778
+    environment:
+      - ABS_BASE_URL=http://192.168.9.151:13378
+      - TOKEN_FILE=/app/abs.token
+      - PORT=7778
+      - SESSIONS_LIMIT=20
+      - CACHE_TTL_SECONDS=30
+      - ITEM_CACHE_TTL_SECONDS=3600
+    volumes:
+      - /opt/aio/abs-session-api/server.js:/app/server.js:ro
+      - /opt/aio/abs-session-api/index.html:/app/index.html:ro
+      - /opt/aio/abs-session-api/widget.html:/app/widget.html:ro
+      - /opt/aio/abs-session-api/abs.token:/app/abs.token:ro
+    labels:
+      gethomepage.enable: "true"
+      gethomepage.name: "Audiobook Sessions"
+      gethomepage.group: "Media"
+      gethomepage.href: "http://192.168.9.151:7778/"
+      gethomepage.widget.type: "iframe"
+      gethomepage.widget.src: "http://192.168.9.151:7778/widget"
+      gethomepage.widget.classes: "h-20 sm:h-20 md:h-20 lg:h-20 xl:h-20 2xl:h-20"
+      gethomepage.widget.allowScrolling: "yes"
+      gethomepage.widget.refreshInterval: "30000"
