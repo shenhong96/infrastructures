@@ -286,6 +286,20 @@ services:
       gethomepage.icon: "grafana.png"
       gethomepage.href: "http://192.168.9.151:3030"
 
+  # Was a live container missing from the captured file; definition recovered from its inspect data (2026-10-01).
+  speedtest:
+    restart: always
+    image: frdmn/speedtest-grafana:latest
+    container_name: speedtest
+    environment:
+      - "SPEEDTEST_INTERVAL=3600"
+      - "SPEEDTEST_HOST=local"
+    depends_on:
+      - influxdb
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+
   influxdb:
     restart: always
     image: influxdb:1.8
