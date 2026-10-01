@@ -1,0 +1,544 @@
+# Captured 2026-10-01 from CT 111 /opt/aio/docker-compose.yml (project aio; app config stays under /opt/aio on the machine).
+# Relative paths made absolute, inline secrets moved to secrets.sops.env, Portainer's agent removed.
+---
+x-lsio: &lsio
+  environment:
+    - PUID=1000
+    - PGID=117
+    - TZ=Asia/Kuala_Lumpur
+
+version: "2.1"
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    environment:
+      - PUID=1000
+      - PGID=117
+      - HOMEPAGE_ALLOWED_HOSTS=home.ahlooii.com,192.168.9.151:7777
+    ports:
+      - 7777:3000
+    volumes:
+      - /opt/aio/homepage/config:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/aio/homepage/images:/app/public/images
+      - /mnt/appdata:/mnt/appdata:ro
+      - /mnt/ssd:/mnt/ssd:ro
+    restart: unless-stopped
+
+  homer:
+    container_name: homer
+    image: b4bz/homer
+    environment:
+      - INIT_ASSETS=0
+    ports:
+      - 3010:8080
+    volumes:
+      - /opt/aio/homer/config:/www/assets
+    restart: always
+
+  homarr:
+    container_name: homarr
+    image: ghcr.io/ajnart/homarr:latest
+    restart: unless-stopped
+    volumes:
+      - /opt/aio/homarr/configs:/app/data/configs
+      - /opt/aio/homarr/icons:/app/public/icons
+    ports:
+      - "9999:7575"
+    labels:
+      gethomepage.enable: "true"
+      gethomepage.name: "Homarr"
+      gethomepage.description: "Alternative dashboard"
+      gethomepage.group: "Infrastructure"
+      gethomepage.icon: "homarr.png"
+      gethomepage.href: "http://192.168.9.151:9999"
+
+  librespeed:
+    image: ghcr.io/linuxserver/librespeed
+    container_name: librespeed
+    <<: *lsio
+    volumes:
+      - /opt/aio/librespeed/config:/config
+    ports:
+      - 82:80
+    restart: unless-stopped
+    labels:
+      gethomepage.enable: "true"
+      gethomepage.name: "LibreSpeed"
+      gethomepage.description: "Network speed test"
+      gethomepage.group: "Tools"
+      gethomepage.icon: "librespeed.png"
+      gethomepage.href: "http://192.168.9.151:82"
+
+  uptime-kuma:
+    container_name: uptime-kuma
+    image: "louislam/uptime-kuma:1"
+    ports:
+      - "3001:3001"
+    volumes:
+      - "/opt/aio/uptime-kuma:/app/data"
+    restart: always
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+      gethomepage.enable: "true"
+      gethomepage.name: "Uptime Kuma"
+      gethomepage.description: "Uptime monitoring"
+      gethomepage.group: "Monitoring"
+      gethomepage.icon: "uptime-kuma.png"
+      gethomepage.href: "http://192.168.9.151:3001"
+      gethomepage.widget.type: "uptimekuma"
+      gethomepage.widget.url: "http://uptime-kuma:3001"
+      gethomepage.widget.slug: "default"
+
+  smokeping:
+    image: lscr.io/linuxserver/smokeping:latest
+    container_name: smokeping
+    volumes:
+      - /opt/aio/smokeping/config:/config
+      - /opt/aio/smokeping/data:/data
+    ports:
+      - 81:80
+    restart: unless-stopped
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+      gethomepage.enable: "true"
+      gethomepage.name: "SmokePing"
+      gethomepage.description: "Network latency monitoring"
+      gethomepage.group: "Monitoring"
+      gethomepage.icon: "smokeping.png"
+      gethomepage.href: "http://192.168.9.151:81"
+
+  firefox:
+    image: lscr.io/linuxserver/firefox:latest
+    container_name: firefox
+    environment:
+      - PUID=1000
+      - PGID=117
+      - TZ=Asia/Kuala_Lumpur
+      - FILE__PASSWORD=/run/secret/password
+    volumes:
+      - /opt/aio/firefox:/config
+    ports:
+      - 3309:3000
+    shm_size: "2gb"
+    restart: unless-stopped
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+      gethomepage.enable: "true"
+      gethomepage.name: "Firefox"
+      gethomepage.description: "Browser in the cloud"
+      gethomepage.group: "Tools"
+      gethomepage.icon: "firefox.png"
+      gethomepage.href: "http://192.168.9.151:3309"
+
+  webtop:
+    image: lscr.io/linuxserver/webtop:ubuntu-mate
+    container_name: webtop
+    security_opt:
+      - seccomp:unconfined
+    volumes:
+      - /opt/aio/webtop:/config
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/aio/homepage/images:/app/public/images
+      - /mnt/appdata:/mnt/appdata:ro
+      - /mnt/ssd:/mnt/ssd:ro
+    ports:
+      - 1596:3000
+    shm_size: "4gb"
+    restart: unless-stopped
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+      gethomepage.enable: "true"
+      gethomepage.name: "Webtop"
+      gethomepage.description: "Ubuntu MATE desktop"
+      gethomepage.group: "Tools"
+      gethomepage.icon: "webtop.png"
+      gethomepage.href: "http://192.168.9.151:1596"
+
+  healthchecks:
+    image: lscr.io/linuxserver/healthchecks:latest
+    container_name: healthchecks
+    environment:
+      - PUID=1000
+      - PGID=117
+      - SITE_ROOT=https://health.ahlooii.com
+      - SITE_NAME=Homelab Health Check For Crontab
+      - DEFAULT_FROM_EMAIL=${HEALTHCHECKS_DEFAULT_FROM_EMAIL}
+      - EMAIL_HOST=smtp.gmail.com
+      - EMAIL_PORT=587
+      - EMAIL_HOST_USER=${HEALTHCHECKS_EMAIL_HOST_USER}
+      - EMAIL_HOST_PASSWORD=${HEALTHCHECKS_EMAIL_HOST_PASSWORD}
+      - EMAIL_USE_TLS=True
+      - SUPERUSER_EMAIL=${HEALTHCHECKS_SUPERUSER_EMAIL}
+      - SUPERUSER_PASSWORD=${HEALTHCHECKS_SUPERUSER_PASSWORD}
+      - REGENERATE_SETTINGS=False
+      - SITE_LOGO_URL=https://www.svgrepo.com/show/120975/alarm.svg
+      - ALLOWED_HOSTS=["health.ahlooii.com","192.168.9.151"]
+      - SECRET_KEY=${HEALTHCHECKS_SECRET_KEY}
+      - APPRISE_ENABLED=True
+    volumes:
+      - /opt/aio/healthcheck:/config
+    ports:
+      - 8078:8000
+    restart: always
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+      gethomepage.enable: "true"
+      gethomepage.name: "Healthchecks"
+      gethomepage.description: "Cron job monitoring"
+      gethomepage.group: "Monitoring"
+      gethomepage.icon: "healthchecks.png"
+      gethomepage.href: "http://192.168.9.151:8078"
+      gethomepage.widget.type: "healthchecks"
+      gethomepage.widget.url: "http://healthchecks:8000"
+      gethomepage.widget.key: "${HEALTHCHECKS_HOMEPAGE_KEY}"
+
+  gotify:
+    image: gotify/server
+    container_name: gotify
+    ports:
+      - 8087:80
+    environment:
+      - GOTIFY_DEFAULTUSER_PASS=${GOTIFY_DEFAULTUSER_PASS}
+    volumes:
+      - "/opt/aio/gotify:/app/data"
+    restart: always
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+      gethomepage.enable: "true"
+      gethomepage.name: "Gotify"
+      gethomepage.description: "Push notifications"
+      gethomepage.group: "Infrastructure"
+      gethomepage.icon: "gotify.png"
+      gethomepage.href: "http://192.168.9.151:8087"
+      gethomepage.widget.type: "gotify"
+      gethomepage.widget.url: "http://gotify:80"
+      gethomepage.widget.key: "${GOTIFY_HOMEPAGE_KEY}"
+
+  olivetin:
+    image: jamesread/olivetin:2022-04-07
+    container_name: olivetin
+    volumes:
+      - /opt/aio/olivetin:/config
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /opt/aio/homepage/images:/app/public/images
+      - /mnt/appdata:/mnt/appdata:ro
+      - /mnt/ssd:/mnt/ssd:ro
+    ports:
+      - "1337:1337"
+    restart: always
+    labels:
+      gethomepage.enable: "true"
+      gethomepage.name: "OliveTin"
+      gethomepage.description: "Predefined shell commands"
+      gethomepage.group: "DevOps"
+      gethomepage.icon: "olivetin.png"
+      gethomepage.href: "http://192.168.9.151:1337"
+
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf:2.36.0
+    container_name: audiobookshelf
+    ports:
+      - 13378:80
+    volumes:
+      - /mnt/books:/books
+      - /mnt/cache/audiobookshelf/metadata:/metadata
+      - /opt/aio/audiobookshelf/config:/config
+    restart: always
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+      gethomepage.enable: "true"
+      gethomepage.name: "Audiobookshelf"
+      gethomepage.description: "Audiobook and podcast server"
+      gethomepage.group: "Media"
+      gethomepage.icon: "audiobookshelf.png"
+      gethomepage.href: "http://192.168.9.151:13378"
+      gethomepage.widget.type: "audiobookshelf"
+      gethomepage.widget.url: "http://audiobookshelf:80"
+      gethomepage.widget.key: "${AUDIOBOOKSHELF_HOMEPAGE_KEY}"
+
+  grafana:
+    restart: always
+    image: grafana/grafana:6.7.2
+    volumes:
+      - "/opt/aio/speedtest-grafana/grafana/provisioning:/etc/grafana/provisioning"
+    ports:
+      - "3030:3000"
+    environment:
+      - "GF_SERVER_ROOT_URL=http://localhost"
+      - "GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}"
+      - "GF_AUTH_ANONYMOUS_ENABLED=true"
+    depends_on:
+      - influxdb
+    labels:
+      gethomepage.enable: "true"
+      gethomepage.name: "Grafana Speedtest"
+      gethomepage.description: "Speedtest dashboard"
+      gethomepage.group: "Monitoring"
+      gethomepage.icon: "grafana.png"
+      gethomepage.href: "http://192.168.9.151:3030"
+
+  influxdb:
+    restart: always
+    image: influxdb:1.8
+    ports:
+      - "8086:8086"
+    volumes:
+      - "/opt/aio/speedtest-grafana/influxdb:/var/lib/influxdb"
+    environment:
+      - "INFLUXDB_ADMIN_USER=admin"
+      - "INFLUXDB_ADMIN_PASSWORD=${INFLUXDB_ADMIN_PASSWORD}"
+      - "INFLUXDB_DB=speedtest"
+
+  wallabag:
+    image: wallabag/wallabag:2.5.2
+    restart: unless-stopped
+    container_name: wallabag
+    environment:
+      - MYSQL_ROOT_PASSWORD=${WALLABAG_MYSQL_ROOT_PASSWORD}
+      - SYMFONY__ENV__DATABASE_DRIVER=pdo_mysql
+      - SYMFONY__ENV__DATABASE_HOST=wallabag-db
+      - SYMFONY__ENV__DATABASE_PORT=3306
+      - SYMFONY__ENV__DATABASE_NAME=wallabag
+      - SYMFONY__ENV__DATABASE_USER=wallabag
+      - SYMFONY__ENV__DATABASE_PASSWORD=${WALLABAG_DATABASE_PASSWORD}
+      - SYMFONY__ENV__DATABASE_CHARSET=utf8mb4
+      - SYMFONY__ENV__MAILER_HOST=smtp.gmail.com
+      - SYMFONY__ENV__MAILER_USER=${WALLABAG_MAILER_USER}
+      - SYMFONY__ENV__MAILER_PASSWORD=${WALLABAG_MAILER_PASSWORD}
+      - SYMFONY__ENV__FROM_EMAIL=wallabag@example.com
+      - SYMFONY__ENV__DOMAIN_NAME=https://wallabag.ahlooii.com
+      - SYMFONY__ENV__SERVER_NAME="Your wallabag instance"
+    ports:
+      - "8765:80"
+    volumes:
+      - /mnt/ssd/wallabag/data:/var/www/wallabag/web/assets/images
+    depends_on:
+      - wallabag-db
+      - wallabag-redis
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+      gethomepage.enable: "true"
+      gethomepage.name: "Wallabag"
+      gethomepage.description: "Read-it-later articles"
+      gethomepage.group: "Tools"
+      gethomepage.icon: "wallabag.png"
+      gethomepage.href: "http://192.168.9.151:8765"
+
+  wallabag-db:
+    image: mariadb
+    restart: unless-stopped
+    container_name: wallabag_db
+    environment:
+      - MYSQL_ROOT_PASSWORD=${WALLABAG_DB_MYSQL_ROOT_PASSWORD}
+    volumes:
+      - /mnt/ssd/wallabag/db:/var/lib/mysql
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+
+  wallabag-redis:
+    image: redis:alpine
+    restart: unless-stopped
+    container_name: wallabag_redis
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+
+  syncthing:
+    image: ghcr.io/linuxserver/syncthing:2.0.9
+    container_name: syncthing
+    volumes:
+      - /opt/aio/syncthing/config:/config
+      - /mnt/syncthing/Mate-20:/mnt/mate20
+      - /mnt/ssd:/ssd
+    ports:
+      - 8384:8384
+      - 22000:22000/tcp
+      - 22000:22000/udp
+      - 21027:21027/udp
+    restart: unless-stopped
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+      gethomepage.enable: "true"
+      gethomepage.name: "Syncthing"
+      gethomepage.description: "File synchronization"
+      gethomepage.group: "Tools"
+      gethomepage.icon: "syncthing.png"
+      gethomepage.href: "http://192.168.9.151:8384"
+
+  photoview-db:
+    image: mariadb:10.5
+    container_name: photoview-db
+    restart: always
+    environment:
+      - MYSQL_DATABASE=photoview
+      - MYSQL_USER=photoview
+      - MYSQL_PASSWORD=${PHOTOVIEW_DB_PASSWORD}
+      - MYSQL_RANDOM_ROOT_PASSWORD=1
+    volumes:
+      - /opt/aio/photoview/db_data:/var/lib/mysql
+
+  photoview:
+    image: viktorstrate/photoview:2.3
+    container_name: photoview
+    restart: always
+    ports:
+      - "8009:80"
+    depends_on:
+      - photoview-db
+    environment:
+      - PHOTOVIEW_DATABASE_DRIVER=mysql
+      - PHOTOVIEW_MYSQL_URL=${PHOTOVIEW_MYSQL_URL}
+      - PHOTOVIEW_LISTEN_IP=photoview
+      - PHOTOVIEW_LISTEN_PORT=80
+      - PHOTOVIEW_MEDIA_CACHE=/app/cache
+    volumes:
+      - /opt/aio/photoview/api_cache:/app/cache
+      - /mnt/photos:/photos:ro
+    labels:
+      gethomepage.enable: "true"
+      gethomepage.name: "Photoview"
+      gethomepage.description: "Self-hosted photo gallery"
+      gethomepage.group: "Photos"
+      gethomepage.icon: "photoview.png"
+      gethomepage.href: "http://192.168.9.151:8009"
+
+  code-server:
+    image: lscr.io/linuxserver/code-server
+    container_name: code-server
+    environment:
+      - PUID=1000
+      - PGID=117
+      - TZ=Asia/Kuala_Lumpur
+      - PASSWORD=${CODE_SERVER_PASSWORD}
+      - HASHED_PASSWORD=
+      - SUDO_PASSWORD=${CODE_SERVER_SUDO_PASSWORD}
+      - SUDO_PASSWORD_HASH=
+      - DEFAULT_WORKSPACE=/homer
+    volumes:
+      - /opt/aio/vscode:/config
+      - /opt/aio/homer:/homer
+    ports:
+      - 8443:8443
+    restart: unless-stopped
+    labels:
+      gethomepage.enable: "true"
+      gethomepage.name: "Code Server"
+      gethomepage.description: "VS Code in the browser"
+      gethomepage.group: "DevOps"
+      gethomepage.icon: "code-server.png"
+      gethomepage.href: "http://192.168.9.151:8443"
+
+  code-server-homepage:
+    image: lscr.io/linuxserver/code-server
+    container_name: code-server-homepage
+    environment:
+      - PUID=1000
+      - PGID=117
+      - TZ=Asia/Kuala_Lumpur
+      - PASSWORD=${CODE_SERVER_HOMEPAGE_PASSWORD}
+      - HASHED_PASSWORD=
+      - SUDO_PASSWORD=${CODE_SERVER_HOMEPAGE_SUDO_PASSWORD}
+      - SUDO_PASSWORD_HASH=
+      - DEFAULT_WORKSPACE=/homepage
+    volumes:
+      - /opt/aio/vscode-homepage:/config
+      - /opt/aio/homepage/config:/homepage
+    ports:
+      - 8444:8443
+    restart: unless-stopped
+    labels:
+      gethomepage.enable: "true"
+      gethomepage.name: "Code Server (Homepage)"
+      gethomepage.description: "VS Code for Homepage config"
+      gethomepage.group: "DevOps"
+      gethomepage.icon: "code-server.png"
+      gethomepage.href: "http://192.168.9.151:8444"
+
+  pocket-id:
+    image: ghcr.io/pocket-id/pocket-id:v1.6.4
+    container_name: pocket-id
+    restart: unless-stopped
+    environment:
+      - APP_URL=https://pocket-id.ahlooii.com
+      - TRUST_PROXY=true
+      - MAXMIND_LICENSE_KEY=${POCKET_ID_MAXMIND_LICENSE_KEY}
+      - ENCRYPTION_KEY=${POCKET_ID_ENCRYPTION_KEY}
+      - ALLOW_USER_SIGNUPS=open
+      - PUID=1000
+      - PGID=117
+    ports:
+      - "1411:1411"
+    volumes:
+      - /opt/aio/pocket_id:/app/data
+    labels:
+      gethomepage.enable: "true"
+      gethomepage.name: "Pocket ID"
+      gethomepage.description: "OIDC identity provider"
+      gethomepage.group: "Infrastructure"
+      gethomepage.icon: "pocket-id.png"
+      gethomepage.href: "http://192.168.9.151:1411"
+
+  calibre:
+    image: lscr.io/linuxserver/calibre:latest
+    container_name: calibre
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      - PUID=1000
+      - PGID=117
+      - TZ=Etc/UTC
+      - PASSWORD=
+      - CLI_ARGS=
+    volumes:
+      - /opt/aio/calibre/server:/config
+    ports:
+      - 8082:8080
+      - 8181:8181
+      - 8081:8081
+    restart: unless-stopped
+    labels:
+      gethomepage.enable: "true"
+      gethomepage.name: "Calibre"
+      gethomepage.description: "E-book management"
+      gethomepage.group: "Media"
+      gethomepage.icon: "calibre.png"
+      gethomepage.href: "http://192.168.9.151:8082"
+
+  calibre-web:
+    image: lscr.io/linuxserver/calibre-web:latest
+    container_name: calibre-web
+    environment:
+      - PUID=1000
+      - PGID=117
+      - TZ=Etc/UTC
+      - DOCKER_MODS=linuxserver/mods:universal-calibre
+      - OAUTHLIB_RELAX_TOKEN_SCOPE=1
+    volumes:
+      - /opt/aio/calibre/webui:/config
+      - /mnt/books/calibre-server/:/books
+    ports:
+      - 8083:8083
+    restart: unless-stopped
+    labels:
+      gethomepage.enable: "true"
+      gethomepage.name: "Calibre Web"
+      gethomepage.description: "E-book web reader"
+      gethomepage.group: "Media"
+      gethomepage.icon: "calibre-web.png"
+      gethomepage.href: "http://192.168.9.151:8083"
+
+networks:
+  traefik:
+    external: true
