@@ -1,9 +1,9 @@
 # Which age key encrypts which files. The first matching rule wins.
 #   admin  age1wk8x…udrhc  your Mac, Bitwarden, one offline copy; decrypts everything
-#   lab    age14c5x…qezjr  every machine running the Komodo agent; app files only
+#   lab    age1206d…2hyvt  every machine running the Komodo agent; app files only
 creation_rules:
   - path_regex: stacks/komodo/ # Ansible deploys Komodo: admin only
     age: age1wk8xfnvlt0avl0m9pnwd4f0q64qezvlh6d60yzcsm7yjj34mjyjs7udrhc
   - path_regex: stacks/.*\.sops\.[^/]+$ # app secrets and encrypted app config
-    age: age1wk8xfnvlt0avl0m9pnwd4f0q64qezvlh6d60yzcsm7yjj34mjyjs7udrhc,age14c5hxk6ckdpfzreesyezdn6dw67vpuk45gcsmmt43k40jmlhu3lqpqezjr
+    age: age1wk8xfnvlt0avl0m9pnwd4f0q64qezvlh6d60yzcsm7yjj34mjyjs7udrhc,age1206d97xd5zwyhd4dnwd9tw6rqwn9uc2ssxxxgdta3k5rrqlanfxs02hyvt
   - age: age1wk8xfnvlt0avl0m9pnwd4f0q64qezvlh6d60yzcsm7yjj34mjyjs7udrhc # everything else: machine secrets, disk key
