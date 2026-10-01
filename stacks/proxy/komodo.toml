@@ -1,0 +1,17 @@
+# Safety settings on every stack, enforced by tests/test_komodo_gate.py: a sync only creates
+# or updates the stack record. Nothing deploys until someone runs DeployStack on it.
+
+[[stack]]
+name = "proxy"
+[stack.config]
+server = "proxy"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "proxy"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/proxy"
+file_paths = ["compose.yaml"]
