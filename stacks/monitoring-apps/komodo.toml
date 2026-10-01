@@ -15,3 +15,5 @@ branch = "main"
 git_provider = "github.com"
 run_directory = "stacks/monitoring-apps"
 file_paths = ["compose.yaml"]
+# The Alloy config is bind-mounted from this folder and read at start: a change restarts the service.
+config_files = [{ path = "config.alloy", services = ["alloy"], requires = "Restart" }]

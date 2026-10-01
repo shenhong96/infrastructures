@@ -1,5 +1,6 @@
 # Captured 2026-10-01 from proxmox host /opt/docker-compose.yml (project opt).
-# Relative paths made absolute, Portainer's agent removed.
+# Relative paths made absolute, Portainer's agent removed. The Prometheus, Loki and Grafana datasource config
+# now live next to this file (bind-mounted read-only); the data folders stay on the machine.
 ---
 x-monitoring: &loki
   labels:
@@ -62,7 +63,7 @@ services:
     ports:
       - 9090:9090
     volumes:
-      - /opt/prometheus:/etc/prometheus
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - /mnt/storage/appdata/monitoring/prometheus:/prometheus
     command: 
       - '--web.enable-lifecycle'  
@@ -103,7 +104,7 @@ services:
       - 3000:3000
     restart: unless-stopped
     volumes:
-      - /opt/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ./grafana-datasources:/etc/grafana/provisioning/datasources:ro
       - /mnt/storage/appdata/monitoring/grafana:/var/lib/grafana
     environment:
       - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
@@ -115,7 +116,7 @@ services:
     container_name: loki
     user: root
     volumes:
-      - /opt/loki:/etc/loki
+      - ./loki-config.yaml:/etc/loki/loki-config.yaml:ro
       - /mnt/storage/appdata/monitoring/loki:/tmp/loki # This is where loki stores all the data chunks, the logs.
     ports:
       - "3100:3100"

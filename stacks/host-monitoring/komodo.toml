@@ -15,3 +15,9 @@ branch = "main"
 git_provider = "github.com"
 run_directory = "stacks/host-monitoring"
 file_paths = ["compose.yaml"]
+# Static config bind-mounted from this folder and read at start: a change restarts only that service.
+config_files = [
+  { path = "prometheus.yml", services = ["prometheus"], requires = "Restart" },
+  { path = "loki-config.yaml", services = ["loki"], requires = "Restart" },
+  { path = "grafana-datasources/datasources.yaml", services = ["grafana"], requires = "Restart" },
+]

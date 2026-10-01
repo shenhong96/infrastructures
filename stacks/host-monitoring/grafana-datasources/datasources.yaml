@@ -1,0 +1,18 @@
+# Grafana datasources (host Grafana). Same names, uids and urls as the ones that lived only in grafana.db,
+# so existing dashboards keep working; a rebuilt Grafana gets them from here.
+apiVersion: 1
+
+datasources:
+  - name: loki
+    uid: ceofts4g1tkw0e
+    type: loki
+    access: proxy
+    url: http://192.168.9.152:3100
+    isDefault: true
+  - name: prometheus
+    uid: ceog2753mbr40d
+    type: prometheus
+    access: proxy
+    url: http://192.168.9.152:9090
+    jsonData:
+      httpMethod: POST

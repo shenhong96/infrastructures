@@ -1,0 +1,134 @@
+// System log collection
+local.file_match "system" {
+  path_targets = [{
+    __address__ = "localhost",
+    __path__ = "/var/log/*log",
+    host = "PrivateVPN",
+    job = "varlogs",
+  }]
+}
+
+loki.source.file "system" {
+  targets = local.file_match.system.targets
+  forward_to = [loki.write.default.receiver]
+  legacy_positions_file = "/tmp/positions.yaml"
+}
+
+// Docker log collection (containers with logging=promtail label)
+discovery.docker "flog_scrape" {
+  host = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+  filter {
+    name = "label"
+    values = ["logging=promtail"]
+  }
+}
+
+discovery.relabel "flog_scrape" {
+  targets = []
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex = "/(.*)"
+    target_label = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_log_stream"]
+    target_label = "logstream"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_logging_jobname"]
+    target_label = "job"
+  }
+}
+
+loki.source.docker "flog_scrape" {
+  host = "unix:///var/run/docker.sock"
+  targets = discovery.docker.flog_scrape.targets
+  forward_to = [loki.write.default.receiver]
+  relabel_rules = discovery.relabel.flog_scrape.rules
+  refresh_interval = "5s"
+}
+
+// Enhanced Docker metrics collection with proper container labeling
+discovery.docker "all_containers" {
+  host = "unix:///var/run/docker.sock"
+  refresh_interval = "5s"
+}
+
+discovery.relabel "docker_metrics_relabel" {
+  targets = discovery.docker.all_containers.targets
+  
+  // Extract clean container name (remove leading slash)
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex = "/(.*)"
+    target_label = "container_name"
+    replacement = "${1}"
+  }
+  
+  // Add container ID
+  rule {
+    source_labels = ["__meta_docker_container_id"]
+    target_label = "container_id"
+  }
+  
+  // Add image name
+  rule {
+    source_labels = ["__meta_docker_container_image"]
+    target_label = "image"
+  }
+  
+  // Add compose service name if available
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label = "compose_service"
+  }
+  
+  // Set job label
+  rule {
+    target_label = "job"
+    replacement = "docker-containers"
+  }
+}
+
+prometheus.exporter.cadvisor "docker_metrics" {
+  docker_host = "unix:///var/run/docker.sock"
+  storage_duration = "5m"
+  docker_only = true
+  store_container_labels = true  // Enable container labels in metrics
+}
+
+discovery.relabel "cadvisor_relabel" {
+  targets = prometheus.exporter.cadvisor.docker_metrics.targets
+  
+  rule {
+    target_label = "job"
+    replacement = "cadvisor"
+  }
+  
+  rule {
+    target_label = "instance"
+    replacement = constants.hostname
+  }
+}
+
+prometheus.scrape "docker_scraper" {
+  targets = discovery.relabel.cadvisor_relabel.output
+  forward_to = [prometheus.remote_write.metrics_service.receiver]
+  scrape_interval = "10s"
+}
+
+// Loki endpoint
+loki.write "default" {
+  endpoint {
+    url = "http://192.168.9.152:3100/loki/api/v1/push"
+  }
+  external_labels = {}
+}
+
+// Prometheus endpoint
+prometheus.remote_write "metrics_service" {
+  endpoint {
+    url = "http://192.168.9.152:9090/api/v1/write"
+  }
+}

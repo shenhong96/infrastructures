@@ -1,0 +1,40 @@
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /tmp/loki
+  storage:
+    filesystem:
+      chunks_directory: /tmp/loki/chunks
+      rules_directory: /tmp/loki/rules
+  replication_factor: 1
+  ring:
+    instance_addr: 127.0.0.1
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2020-10-24
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+ruler:
+  alertmanager_url: http://localhost:9093
+  
+limits_config:
+  ingestion_rate_mb: 20 # the maximum ingestion rate per tenant in MB/s
+  ingestion_burst_size_mb: 50 # the maximum ingestion burst size per tenant in MB
+  max_query_lookback: 672h # 28 days
+  retention_period: 672h   # 28 days
+
+compactor:
+  working_directory: /tmp/loki/retention
+  delete_request_store: filesystem
+  retention_enabled: true

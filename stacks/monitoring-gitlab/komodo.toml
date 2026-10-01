@@ -2,9 +2,9 @@
 # or updates the stack record. Nothing deploys until someone runs DeployStack on it.
 
 [[stack]]
-name = "monitoring-vpn"
+name = "monitoring-gitlab"
 [stack.config]
-server = "vpn"
+server = "gitlab"
 auto_pull = false
 poll_for_updates = false
 auto_update = false
@@ -13,7 +13,7 @@ project_name = "monitoring"
 repo = "shenhong96/infrastructures"
 branch = "main"
 git_provider = "github.com"
-run_directory = "stacks/monitoring-vpn"
+run_directory = "stacks/monitoring-gitlab"
 file_paths = ["compose.yaml"]
-# The Alloy config is bind-mounted from this folder and read at start: a change restarts the service.
-config_files = [{ path = "config.alloy", services = ["alloy"], requires = "Restart" }]
+# The promtail config is bind-mounted from this folder and read at start: a change restarts the service.
+config_files = [{ path = "promtail-config.yaml", services = ["promtail"], requires = "Restart" }]
