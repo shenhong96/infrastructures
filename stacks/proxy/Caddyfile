@@ -173,16 +173,6 @@ librespeed.ahlooii.com {
     import themepark librespeed space-gray
 }
 
-portainer.ahlooii.com {
-    reverse_proxy 192.168.9.151:9000 {
-        import remove_security_header
-        import remove_header_compression
-
-    }
-    import headers
-    import themepark portainer aquamarine
-}
-
 home.ahlooii.com {
     reverse_proxy 192.168.9.151:7777 {
         
