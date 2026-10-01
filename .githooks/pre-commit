@@ -42,7 +42,8 @@ AWK
 
 while IFS= read -r -d '' f; do
   case "${f##*/}" in
-    .env | secrets.env | *.tfstate | *.tfstate.* | *.agekey | keys.txt | cryptkey | *vault_pass*)
+    *.sops.env) ;; # encrypted, checked below
+    *.env | *.tfstate | *.tfstate.* | *.agekey | keys.txt | cryptkey | *vault_pass*)
       fail "$f: this file must never be committed"; continue ;;
   esac
   git show ":$f" | grep -q '\$ANSIBLE_VAULT;[0-9]' && fail "$f: contains ansible-vault data"

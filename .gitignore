@@ -1,6 +1,9 @@
 # Decrypted secrets: only the *.sops.* files are ever committed
 secrets.env
 .env
+# Any decrypted env file next to a stack (komodo-decrypt-env writes NAME.env from NAME.sops.env)
+*.env
+!*.sops.env
 *.dec
 *.decrypted
 *.decrypted.*

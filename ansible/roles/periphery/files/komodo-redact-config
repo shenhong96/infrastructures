@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+"""Komodo stores the output of `docker compose config` in its database. With secrets passed in
+through env files that output holds them in clear, so a stack's compose_cmd_wrapper pipes it
+through here:  docker compose ... config | komodo-redact-config secrets.env [app.env ...]
+Every value in the named env files is replaced by REDACTED. Fails closed: if a value would
+survive (or a file can't be read), nothing goes to stdout and the exit code stops the deploy.
+Installed by roles/periphery."""
+import re
+import sys
+
+MIN_LEN = 4        # shorter values (0, v2, true) are not secrets and would mangle the output
+SUBSTRING_LEN = 12 # from here a value is replaced wherever it occurs; shorter ones only as a whole word
+
+
+def values(path):
+    out = set()
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.rstrip("\n")
+            if not line.strip() or line.lstrip().startswith("#") or "=" not in line:
+                continue
+            v = line.split("=", 1)[1].strip()
+            if len(v) >= 2 and v[0] == v[-1] and v[0] in "'\"":
+                v = v[1:-1]
+            else:
+                v = re.sub(r"\s+#.*$", "", v)
+            if len(v) >= MIN_LEN:
+                out.add(v)
+    return out
+
+
+def variants(v):
+    forms = {v, v.replace("'", "''"), v.replace("\\", "\\\\").replace('"', '\\"')}
+    return {f for x in forms for f in (x, x.replace("$", "$$"))}
+
+
+def word(f):
+    return re.compile(r"(?<![A-Za-z0-9_./-])" + re.escape(f) + r"(?![A-Za-z0-9_./-])")
+
+
+def main(paths):
+    secrets = set()
+    for p in paths:
+        secrets |= values(p)
+    text = sys.stdin.read()
+    for v in sorted(secrets, key=len, reverse=True):
+        for f in sorted(variants(v), key=len, reverse=True):
+            if len(v) >= SUBSTRING_LEN:
+                text = text.replace(f, "REDACTED")
+            else:
+                text = word(f).sub("REDACTED", text)
+    for v in secrets:
+        left = v in text if len(v) >= SUBSTRING_LEN else word(v).search(text)
+        if left:
+            raise SystemExit("komodo-redact-config: a value would survive, refusing to print")
+    sys.stdout.write(text)
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        raise SystemExit("komodo-redact-config: no env file named")
+    try:
+        main(sys.argv[1:])
+    except OSError:
+        raise SystemExit("komodo-redact-config: cannot read an env file")

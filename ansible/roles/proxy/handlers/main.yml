@@ -1,7 +1,7 @@
-# Only when the stack is up: on a new container the first `up` reads the file anyway.
+# Only when Caddy is up: on a new container the first `up` reads the file anyway. Plain docker
+# commands, because /opt/caddy no longer holds a compose file (Komodo runs the stack).
 - name: Reload Caddy
   ansible.builtin.shell: |
-    cd /opt/caddy
-    [ -n "$(docker compose -p proxy ps -q --status running caddy)" ] || exit 0
-    docker compose -p proxy exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+    [ -n "$(docker ps -q --filter name=^caddy$ --filter status=running)" ] || exit 0
+    docker exec caddy caddy reload --config /etc/caddy/Caddyfile
   changed_when: true

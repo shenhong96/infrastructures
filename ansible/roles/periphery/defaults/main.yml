@@ -5,7 +5,7 @@ periphery_version: v2.2.0
 periphery_sha256: ace9007805dbfe75ad73c75c36bb26852fa909d825577f31f5d13eecd3c52660
 periphery_url: https://github.com/moghtech/komodo/releases/download/{{ periphery_version }}/periphery-x86_64
 
-# For the pre-deploy decryption of app secrets (the lab key itself arrives with Phase 3 step 3).
+# For the pre-deploy decryption of app secrets (the lab key is placed by tasks/main.yml).
 # The sha256 is from upstream's sops-v3.12.2.checksums.txt.
 periphery_sops_version: v3.12.2
 periphery_sops_sha256: 14e2e1ba3bef31e74b70cf0b674f6443c80f6c5f3df15d05ffc57c34851b4998

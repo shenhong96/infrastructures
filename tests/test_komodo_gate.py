@@ -53,6 +53,13 @@ class KomodoGate(unittest.TestCase):
                         self.assertIs(config[flag], False, flag)
                     self.assertTrue(config["project_name"])
                     self.assertTrue(config["server"])
+                    if config.get("files_on_host"):
+                        # The compose file stays on the machine and is not in git (vpn): the
+                        # folder holds only komodo.toml, and Komodo never writes an env file there.
+                        self.assertEqual([p.name for p in path.parent.iterdir()], ["komodo.toml"])
+                        self.assertTrue(config["run_directory"].startswith("/"))
+                        self.assertTrue(config["env_file_path"] not in (".env", ""), "Komodo must not use .env")
+                        continue
                     compose = ROOT / config["run_directory"] / config["file_paths"][0]
                     self.assertTrue(compose.is_file(), f"{compose} is missing")
 

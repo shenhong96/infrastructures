@@ -1,12 +1,13 @@
-# The reverse proxy on CT 104 (Proxmox), as found plus the CT's own move to /opt/caddy.
-# Build and first start are one-off: cd /opt/caddy && docker compose -p proxy up -d --build
+# The reverse proxy on CT 104 (Proxmox). Komodo runs this file and owns the Dockerfile next to it;
+# Ansible keeps what Caddy reads under /opt/caddy: .env and conf/ (Caddyfile, private.caddy).
+# The image exists, so a deploy never builds; a rebuild is a deliberate `docker compose build`.
 name: proxy
 
 services:
   caddy:
     image: caddy-cf:2.8.4
     build:
-      context: /opt/caddy
+      context: .
     container_name: caddy
     restart: unless-stopped
     ports:
@@ -21,14 +22,3 @@ services:
       - /opt/caddy/conf:/etc/caddy
       - /opt/caddy/data:/data
       - /opt/caddy/config:/config
-
-  # As found; Komodo's agent replaces it in Phase 3.
-  portainer:
-    image: portainer/agent
-    container_name: portainer_agent
-    ports:
-      - '9001:9001'
-    restart: always
-    volumes:
-      - '/var/run/docker.sock:/var/run/docker.sock'
-      - '/var/lib/docker/volumes:/var/lib/docker/volumes'

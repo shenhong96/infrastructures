@@ -2,7 +2,8 @@
 # (it needs the Docker socket). Installed and enabled on every machine in the periphery
 # group, but it connects to no Core until komodo_enrolled is true (Phase 3 step 2).
 # Not managed: /etc/komodo/keys/periphery.key and .pub (the agent's identity: the agent
-# makes them on first start, a CT dump keeps them), /etc/komodo/stacks (Komodo's clones).
+# makes them on first start, a CT dump keeps them), /etc/komodo/stacks (Komodo's clones, which
+# also hold the decrypted secrets.env files, root-only, until the next deploy replaces them).
 
 - name: Git (Komodo clones the repo with it)
   ansible.builtin.apt:
@@ -41,6 +42,38 @@
     owner: root
     group: root
     mode: "0755"
+
+# Secret-safe deploys (Phase 3 step 3). The lab key opens the app secrets (stacks/*/*.sops.*,
+# never Komodo's or a machine's own); each stack's pre-deploy step runs komodo-decrypt-env, and its
+# `docker compose config` output goes through komodo-redact-config before Core stores it.
+- name: Lab key folder
+  ansible.builtin.file:
+    path: /etc/komodo/sops
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Lab key
+  ansible.builtin.copy:
+    content: "{{ lab_age_key | trim }}\n"
+    dest: /etc/komodo/sops/age.key
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  diff: false
+
+- name: Pre-deploy and redaction helpers
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: /usr/local/sbin/{{ item }}
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - komodo-decrypt-env
+    - komodo-redact-config
 
 - name: Config
   ansible.builtin.template:

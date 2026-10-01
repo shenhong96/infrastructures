@@ -65,11 +65,11 @@ The `gitlab`, `jellyfin` and `nextcloud` roles put the software and its config f
 
 ## Proxy: what a rebuild gives back
 
-The `proxy`, `node_exporter` and `base` roles put the reverse proxy's files back; the stack itself is started by hand once (stacks belong to Komodo, Phase 3).
+The `proxy`, `node_exporter` and `base` roles put the files Caddy reads back; Komodo runs the stack (`stacks/proxy/compose.yaml` and `Dockerfile`, from its own clone), so Ansible places neither.
 
-- **What Ansible delivers:** `prometheus-node-exporter` on :9100, and under `/opt/caddy/` the `compose.yaml`, `Dockerfile` and `conf/Caddyfile` from `stacks/proxy/`, the empty `data/` and `config/` folders, and `.env` (from `host_vars/proxy/secrets.sops.yml`, root-only). The Caddyfile holds no secret: the Cloudflare token and the ACME email come from `.env` as `{env.CF_API_TOKEN}` and `{env.ACME_EMAIL}`.
-- **First start (one-off, ad hoc):** `pct exec 104 -- bash -c 'cd /opt/caddy && docker compose -p proxy up -d --build'`. It builds the pinned Caddy 2.8.4 with the Cloudflare DNS and caddy2-filter plugins. With an empty `data/` Caddy asks Let's Encrypt for a new `*.ahlooii.com` wildcard by DNS-01, which takes one to three minutes.
-- **Changing the Caddyfile:** run `--tags proxy`; the handler reloads Caddy in the running container. A changed `.env` (a new token) needs `docker compose -p proxy up -d` in `/opt/caddy`: an env file is read only when the container is created.
+- **What Ansible delivers:** `prometheus-node-exporter` on :9100, and under `/opt/caddy/` the `conf/Caddyfile` from `stacks/proxy/`, the empty `data/` and `config/` folders, and `.env` (from `host_vars/proxy/secrets.sops.yml`, root-only). The Caddyfile holds no secret: the Cloudflare token and the ACME email come from `.env` as `{env.CF_API_TOKEN}` and `{env.ACME_EMAIL}`.
+- **First start (one-off, ad hoc, before Komodo owns it):** from a clone of the repo, `cd stacks/proxy && docker compose -p proxy up -d --build` (the compose file's `.env` is `/opt/caddy/.env`, an absolute path). It builds the pinned Caddy 2.8.4 with the Cloudflare DNS and caddy2-filter plugins. With an empty `data/` Caddy asks Let's Encrypt for a new `*.ahlooii.com` wildcard by DNS-01, which takes one to three minutes.
+- **Changing the Caddyfile:** run `--tags proxy`; the handler reloads Caddy in the running container. A changed `.env` (a new token) needs a Komodo redeploy of `proxy` (or `up -d` from its clone): an env file is read only when the container is created.
 - **Secrets:** the two keys in `.env` are `CF_API_TOKEN` and `ACME_EMAIL`. Caddy's certificate and ACME account (`/opt/caddy/data`) are not in the repo; they are re-issued on their own.
 - **Container:** Ubuntu 24.04 with Docker 29 needs the raw key `lxc.mount.entry: /dev/null sys/module/apparmor/parameters/enabled none bind 0 0` in the inventory, as on `apps`, or `docker run` fails on the AppArmor check.
 
