@@ -1,0 +1,24 @@
+data: ENC[AES256_GCM,data:Ap24RB3CW2HisFoVpChOFJ8NKSnohAdzib4c7Ku/WavFLuFRUYPe9wc/lo4h0FhhxefPZ4PC/TrW8icPfxESVFqzz2WDZQjNXLuHcLVfgG3OeHhJnaXw6H5dKt3TBwWqdpA3XC5sJNChXsYJN29gx7WSVmaHZrd/6C39Nf2F7FJCVXDlH4NEsaoL12buCU2Db8xtc4owgpHmTfVwKWOa6DyZn2aTflDRujtaqk3z3k0xYAn8WrbSkpjeI1yCUTQQEla8nuhNCg6bdVwsQVTGteMOYM3yWSZyBMcEJWLt4sUlttRtBwDbH6fYl9s8UC5Z0CHX7+8Ef7o1cPMhZ7fpWxVEaXVBxEGpi3It94KdLilR5aoBntV7sUeNRcj6l/YuCa95WJPlsvSA+nWNonEjDJq6sY3o3fI2wO/YYsKaVu6umHsokQMUKjLLjEONnLvXIDdrmgydl69FLktsa+xXVoG5s3/LKDFhg9iuRjPhdcgEGWJj5oKDIuI0WekKUyl9sngygEcpkA6h0ntU3wxWerbfsbU0HmsXQEi1WoI0aVeAJUWYxkFC1S/M2uj3D8gB26pvEpnIc+ViPECXqrT/9aIE1pb7thajMYGAeEKJn8Dm5bimjlw=,iv:s+rQ8sfjyRvBk7FT5DiCSZqbhxCylJE9sx7svQG2MaI=,tag:b3/dx2NqA4lz9g2Wq0HLTQ==,type:str]
+sops:
+    age:
+        - recipient: age1wk8xfnvlt0avl0m9pnwd4f0q64qezvlh6d60yzcsm7yjj34mjyjs7udrhc
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBFVlBTTXZkL1B2d2ptTlhp
+            ZlppWHZhSFVqRDVPLzFOc1JYd2JJR0YzYUZ3CjdKblR2ejNSS0RxOEdCdUtJc3Zz
+            YVFJcTRRY0lnOTVZeUJpUkhuM2ZSR00KLS0tIFVYWVdnYkRXajRsczRvQ0E2a1J4
+            M1JXdjdiTnZTTmVQVnZ3eXNTeUI5WFUK3zhorg+n/b47+S3zkoPPHFLzmCN4PyWE
+            7Era3v/wF7Tec7jIudGTYiVgu052jyOz0Q977INDA7ds+67+Nblxag==
+            -----END AGE ENCRYPTED FILE-----
+        - recipient: age1206d97xd5zwyhd4dnwd9tw6rqwn9uc2ssxxxgdta3k5rrqlanfxs02hyvt
+          enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBidTY0c08zeFd2OFNPbUNJ
+            OGdVSTM5UmJ0NnNtbjN0bE5WSTdxZUk5OEYwCmVHSExkQThGcHBOaWVMT3hlYkhw
+            SDZSS2M3bjdkcEp6ZFBFOXhTWHpCVEkKLS0tIEwzeFB4dnBnbjk2YnVOZkQzSXJi
+            K3VQKzRjbHUyMjFJTXV6ZzcybzZIL0kKm00zm8HnX3Sj+2Te1lbhJVlo4nbqBQ49
+            MABa595lgpF43yLxj+4BCnQWE0hrFXuv1Fq8XmVzInzGr1uNup/WhA==
+            -----END AGE ENCRYPTED FILE-----
+    lastmodified: "2026-10-01T11:43:33Z"
+    mac: ENC[AES256_GCM,data:nGeVirw/Y/TOSzO222g41wOI8g8bgILXB6k8qWoHkoaj/syM+bjwSGqIzQX0Su8LGKxtUr6+ZdhREdDcwQKLDqRVv9hnuZxirwSZ5s2+aOEgV4sEB8mUc0AmpmsxAZ3jZUmfjiXYlLdqiyzdNYU6tk3Vv1Y2yEo5XQFtiVeKyEo=,iv:l1ulTCdTeiC3eGg8EvivV19zN6i8uF2W2DeCmP10Ynk=,tag:/nJsOTpGRUYn5m3bXAv2rg==,type:str]
+    version: 3.12.2

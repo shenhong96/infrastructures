@@ -1,4 +1,8 @@
-# Captured 2026-10-01 from CT 111 /opt/aio/docker-compose.yml (project aio; app config stays under /opt/aio on the machine).
+# Captured 2026-10-01 from CT 111 /opt/aio/docker-compose.yml (project aio; app data stays under /opt/aio on the machine).
+# Config that used to sit loose on the machine now comes from this folder: plain files bind-mounted as they are, and
+# the ones that name things or hold keys (homepage, smokeping Targets and ssmtp.conf) as encrypted *.sops.yaml blobs that
+# komodo-decrypt-files turns into ./.decrypted/... before every deploy. The BLOBS_*_SHA labels (from files.env) make a
+# changed blob recreate its container.
 # Relative paths made absolute, inline secrets moved to secrets.sops.env, Portainer's agent removed.
 ---
 x-lsio: &lsio
@@ -18,8 +22,19 @@ services:
       - HOMEPAGE_ALLOWED_HOSTS=home.ahlooii.com,192.168.9.151:7777
     ports:
       - 7777:3000
+    labels:
+      homelab.config-rev: "${BLOBS_HOMEPAGE_SHA}"
     volumes:
-      - /opt/aio/homepage/config:/app/config
+      - ./.decrypted/homepage/bookmarks.yaml:/app/config/bookmarks.yaml:ro
+      - ./.decrypted/homepage/docker.yaml:/app/config/docker.yaml:ro
+      - ./.decrypted/homepage/proxmox.yaml:/app/config/proxmox.yaml:ro
+      - ./.decrypted/homepage/services.yaml:/app/config/services.yaml:ro
+      - ./.decrypted/homepage/settings.yaml:/app/config/settings.yaml:ro
+      - ./.decrypted/homepage/widgets.yaml:/app/config/widgets.yaml:ro
+      - ./homepage/custom.css:/app/config/custom.css:ro
+      - ./homepage/custom.js:/app/config/custom.js:ro
+      - ./homepage/kubernetes.yaml:/app/config/kubernetes.yaml:ro
+      - /opt/aio/homepage/config/logs:/app/config/logs # homepage writes its log here
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/aio/homepage/images:/app/public/images
       - /mnt/appdata:/mnt/appdata:ro
@@ -97,11 +112,18 @@ services:
     container_name: smokeping
     volumes:
       - /opt/aio/smokeping/config:/config
+      - ./smokeping/General:/config/General:ro
+      - ./smokeping/Alerts:/config/Alerts:ro
+      - ./smokeping/Probes:/config/Probes:ro
+      - ./smokeping/Presentation:/config/Presentation:ro
+      - ./.decrypted/smokeping/Targets.yaml:/config/Targets:ro
+      - ./.decrypted/smokeping/ssmtp.conf.yaml:/config/ssmtp.conf:ro
       - /opt/aio/smokeping/data:/data
     ports:
       - 81:80
     restart: unless-stopped
     labels:
+      homelab.config-rev: "${BLOBS_SMOKEPING_SHA}"
       logging: "promtail"
       logging_jobname: "containerlogs"
       gethomepage.enable: "true"
@@ -226,7 +248,7 @@ services:
     image: jamesread/olivetin:2022-04-07
     container_name: olivetin
     volumes:
-      - /opt/aio/olivetin:/config
+      - ./olivetin/config.yaml:/config/config.yaml:ro
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/aio/homepage/images:/app/public/images
       - /mnt/appdata:/mnt/appdata:ro
@@ -269,7 +291,7 @@ services:
     restart: always
     image: grafana/grafana:6.7.2
     volumes:
-      - "/opt/aio/speedtest-grafana/grafana/provisioning:/etc/grafana/provisioning"
+      - "./speedtest-grafana/provisioning:/etc/grafana/provisioning:ro"
     ports:
       - "3030:3000"
     environment:

@@ -1,0 +1,6 @@
+actions:
+  - title: Stop Traefik
+    shell: docker stop traefik
+
+  - title: start Traefik
+    shell: docker start traefik
