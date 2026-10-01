@@ -1,0 +1,17 @@
+# One call to Core's API: POST api_path with api_body, answer in komodo_api.json. Core is
+# reached from inside this machine (the Mac's Python can't open LAN sockets). Never logged:
+# a body can hold a password, an answer a token. Reads also run in --check; every write is
+# guarded by the caller.
+- name: Core API {{ api_path }}
+  ansible.builtin.uri:
+    url: "{{ komodo_url }}{{ api_path }}"
+    method: POST
+    body_format: json
+    body: "{{ api_body | default({}) }}"
+    headers: "{{ {'Authorization': 'Bearer ' ~ komodo_jwt} if komodo_jwt | default('') | length > 0 else {} }}"
+    return_content: true
+    timeout: 60
+  register: komodo_api
+  check_mode: false
+  changed_when: false
+  no_log: true

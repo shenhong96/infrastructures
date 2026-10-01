@@ -1,0 +1,19 @@
+# Managed by Ansible (roles/periphery). No secrets in this file; the keys are under keys/.
+root_directory = "/etc/komodo"
+private_key = "file:/etc/komodo/keys/periphery.key"
+
+# A Core admin gets no shell on this machine through Komodo; use `pct exec`.
+disable_terminals = true
+disable_container_terminals = true
+
+# Outbound only: never listen on :8120. Without this, an agent with no core_addresses
+# listens, and with no core_public_keys that listener is unauthenticated.
+server_enabled = false
+{% if komodo_enrolled | bool %}
+
+# Enrolled: connect out to Core. core.pub is written by Ansible before the first
+# connection, so Core's key is never trusted on first use.
+core_addresses = ["ws://{{ komodo_core_ip }}:9120"]
+connect_as = "{{ inventory_hostname }}"
+core_public_keys = ["file:/etc/komodo/keys/core.pub"]
+{% endif %}

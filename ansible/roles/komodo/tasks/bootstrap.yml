@@ -1,0 +1,60 @@
+# Core is up and healthy. Keys first, then the API: the admin login, the sync, the agents'
+# keys. Every step checks before it creates, so a second run changes nothing.
+
+# Core makes a new key pair, silently, when keys/ is empty. Nothing is written back to the
+# agents here; the periphery role stops the run if the key they trust is a different one.
+- name: Core's key pair is there
+  ansible.builtin.stat:
+    path: "{{ komodo_dir }}/keys/core.key"
+  register: komodo_core_key
+
+- name: Core's key is private
+  ansible.builtin.assert:
+    that: komodo_core_key.stat.exists and komodo_core_key.stat.mode == '0600'
+    quiet: true
+  when: not ansible_check_mode
+
+- name: Core's public key
+  ansible.builtin.slurp:
+    src: "{{ komodo_dir }}/keys/core.pub"
+  register: komodo_core_pub
+  when: not ansible_check_mode
+
+- name: Login
+  ansible.builtin.include_tasks: login.yml
+  when: not ansible_check_mode
+
+- name: Core's own idea of its key
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /read/GetCoreInfo
+  when: not ansible_check_mode
+
+- name: It is the key in core.pub
+  ansible.builtin.assert:
+    that: komodo_api.json.public_key == (komodo_core_pub.content | b64decode).splitlines() | reject('match', '^-----') | join
+    quiet: true
+  when: not ansible_check_mode
+
+- name: The main sync, then a run
+  ansible.builtin.include_tasks: sync.yml
+  vars:
+    sync_name: "{{ komodo_sync_main }}"
+    sync_paths: "{{ komodo_sync_main_paths }}"
+  when: komodo_sync | bool and not ansible_check_mode
+
+- name: The recovery gate holds
+  ansible.builtin.include_tasks: gate.yml
+  when: not ansible_check_mode
+
+- name: Agents' keys
+  ansible.builtin.include_tasks: enroll.yml
+  when: komodo_enrolled | bool and not ansible_check_mode
+
+- name: Open the gate
+  ansible.builtin.include_tasks: open_gate.yml
+  when: komodo_open_gate | bool and not ansible_check_mode
+
+- name: Close the gate
+  ansible.builtin.include_tasks: close_gate.yml
+  when: komodo_close_gate | bool and not ansible_check_mode

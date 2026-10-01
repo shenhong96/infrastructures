@@ -1,0 +1,25 @@
+# The scheduled deploy job. Read by the automation sync only, which Ansible creates when the
+# gate is opened (-e komodo_open_gate=true); the main sync never reads this file, so nothing
+# here can run on a rebuild before then. Keep schedule_enabled = false until the very end
+# of adoption (Phase 3 step 7), then true.
+
+[[procedure]]
+name = "reconcile"
+description = "Run the sync, then deploy the stacks that changed"
+config.schedule_format = "Cron"
+config.schedule = "0 */5 * * * *"
+config.schedule_enabled = false
+
+[[procedure.config.stage]]
+name = "Sync"
+enabled = true
+executions = [
+  { execution.type = "RunSync", execution.params.sync = "infrastructures", enabled = true },
+]
+
+[[procedure.config.stage]]
+name = "Deploy"
+enabled = true
+executions = [
+  { execution.type = "BatchDeployStackIfChanged", execution.params.pattern = "*", enabled = true },
+]

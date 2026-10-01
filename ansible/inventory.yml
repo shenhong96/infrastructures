@@ -20,6 +20,20 @@ all:
       hosts:
         proxy:
         vpn:
+    # The machine that runs Komodo Core and its database (the komodo role).
+    komodo:
+      hosts:
+        apps:
+    # Machines that run the Komodo agent (the periphery role). It is installed and enabled
+    # everywhere, and connects to Core only after enrollment (komodo_enrolled).
+    periphery:
+      hosts:
+        proxmox:
+        proxy:
+        apps:
+        nextcloud:
+        gitlab:
+        vpn:
     # Machines that join the tailnet (the tailscale role).
     tailscale:
       hosts:

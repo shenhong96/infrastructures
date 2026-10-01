@@ -57,6 +57,35 @@
   roles:
     - proxy
 
+# Komodo Core and its database, then the agents; enrollment (agents connect) is a separate
+# deliberate run: -e komodo_enrolled=true. Core goes first so a restored or rebuilt Core
+# has its servers and their keys in place before an agent ever connects.
+- name: Komodo Core
+  hosts: komodo
+  tags: komodo
+  gather_facts: false # nothing uses facts
+  roles:
+    - komodo
+
+- name: Komodo agents
+  hosts: periphery
+  tags: periphery
+  gather_facts: false # nothing uses facts
+  roles:
+    - periphery
+
+# After the agents were restarted: when enrolled, every one has to show Ok in Core.
+- name: Komodo agents are connected
+  hosts: komodo
+  tags: komodo
+  gather_facts: false # nothing uses facts
+  tasks:
+    - name: Agents connected
+      ansible.builtin.include_role:
+        name: komodo
+        tasks_from: connected
+      when: komodo_enrolled | bool and not ansible_check_mode
+
 # Prometheus node-exporter on the machines in the node_exporter group (proxy; vpn after its rebuild).
 - name: Node exporter
   hosts: node_exporter

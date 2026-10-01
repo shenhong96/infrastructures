@@ -1,2 +1,10 @@
 # Plain settings for every machine. Secrets are in secrets.sops.yml next to this file.
 timezone: Asia/Kuala_Lumpur
+
+# Komodo. Agents connect to Core only when this is true (Phase 3 step 2: enrollment is a
+# deliberate run, -e komodo_enrolled=true, after the install has been reviewed).
+komodo_enrolled: false
+# Replace the Core key every agent trusts. Only after Core's keys were really lost.
+komodo_replace_core_key: false
+# Core's LAN address, from its container config; agents connect to ws://<it>:9120.
+komodo_core_ip: "{{ hostvars[groups.komodo[0]].pct.net0 | regex_search('ip=([0-9.]+)/', '\\1') | first }}"

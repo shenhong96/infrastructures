@@ -1,0 +1,129 @@
+# Komodo Core and its MongoDB (stacks/komodo/compose.yaml) under /opt/komodo, and everything
+# that has to be true around them: secret files from SOPS, the nightly dump, Core's key
+# check and the recovery gate (see the persistence contract in the-homelab). Core belongs
+# to Ansible, never to Komodo. Not managed: the Mongo data folder's contents, Core's key
+# pair under keys/ (Core makes it when the folder is empty; that is why it is checked), and
+# the dumps themselves.
+
+- name: Komodo folders
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.owner | default('root') }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: "{{ komodo_dir }}", mode: "0755"}
+    - {path: "{{ komodo_dir }}/keys", mode: "0700"}
+    - {path: "{{ komodo_dir }}/secrets", mode: "0700"}
+    - {path: "{{ komodo_dir }}/mongo", mode: "0755"}
+    # The image's mongod runs as uid 999.
+    - {path: "{{ komodo_dir }}/mongo/data", mode: "0750", owner: "999"}
+    - {path: "{{ komodo_dir }}/mongo/configdb", mode: "0750", owner: "999"}
+    - {path: "{{ komodo_backup_dir }}", mode: "0700"}
+
+- name: Secrets from SOPS
+  ansible.builtin.set_fact:
+    komodo_secrets: "{{ lookup('community.sops.sops', komodo_secrets_file, input_type='dotenv', output_type='json') | from_json }}"
+  no_log: true
+
+- name: Secret files
+  ansible.builtin.copy:
+    content: "{{ komodo_secrets[item] }}"
+    dest: "{{ komodo_dir }}/secrets/{{ item }}"
+    # The image's entrypoint reads its own two after stepping down to uid 999.
+    owner: "{{ '999' if item in komodo_mongo_secrets else 'root' }}"
+    group: "{{ '999' if item in komodo_mongo_secrets else 'root' }}"
+    mode: "0400"
+  loop: "{{ komodo_secret_names }}"
+  no_log: true
+  diff: false
+  register: komodo_secret_files
+
+- name: Compose file
+  ansible.builtin.copy:
+    src: "{{ komodo_compose_src }}"
+    dest: "{{ komodo_dir }}/compose.yaml"
+    owner: root
+    group: root
+    mode: "0644"
+
+# A secret file is replaced, not edited, so a running container keeps seeing the old one (a
+# single-file bind mount follows the old inode) until it restarts. Core reads its values at
+# start; Mongo's health check and the backup read them from its container. So both restart
+# first, before anything below looks at them (a new install has nothing to restart yet).
+- name: Containers of the project
+  ansible.builtin.command: docker compose -p komodo -f {{ komodo_dir }}/compose.yaml ps -aq
+  environment: "{{ komodo_compose_env }}"
+  register: komodo_ps
+  check_mode: false # read-only
+  changed_when: false
+  failed_when: false # in --check the files may not be there yet
+
+- name: Restart for changed secrets
+  ansible.builtin.command: docker compose -p komodo -f {{ komodo_dir }}/compose.yaml restart
+  environment: "{{ komodo_compose_env }}"
+  when: komodo_secret_files is changed and komodo_ps.stdout | length > 0 and not ansible_check_mode
+  changed_when: true
+
+# Read-only: what `up` would do. Anything but "Running" lines means the project differs.
+- name: Project matches the compose file
+  ansible.builtin.command: docker compose -p komodo -f {{ komodo_dir }}/compose.yaml up -d --dry-run
+  environment: "{{ komodo_compose_env }}"
+  register: komodo_up_dry
+  check_mode: false # read-only
+  changed_when: komodo_up_dry.rc != 0 or komodo_up_dry.stderr is search('Creat|Recreat|Start|Pull')
+  failed_when: false # in --check the files may not be there yet
+
+# --wait fails the play if either container doesn't turn healthy.
+- name: Start the project
+  ansible.builtin.command: docker compose -p komodo -f {{ komodo_dir }}/compose.yaml up -d --wait --wait-timeout 300
+  environment: "{{ komodo_compose_env }}"
+  when: komodo_up_dry is changed and not ansible_check_mode
+  changed_when: true
+
+- name: Both containers are healthy
+  ansible.builtin.command: docker inspect -f '{% raw %}{{.State.Health.Status}}{% endraw %}' komodo-mongo komodo-core
+  register: komodo_health
+  check_mode: false # read-only
+  changed_when: false
+  until: komodo_health.stdout_lines == ['healthy', 'healthy']
+  retries: 24
+  delay: 5
+  when: not ansible_check_mode
+
+# The nightly dump (a timer, not a Komodo procedure: it must work while Core is down and it
+# is not under the recovery gate).
+- name: Backup script
+  ansible.builtin.template:
+    src: komodo-db-backup.j2
+    dest: /usr/local/sbin/komodo-db-backup
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Backup units
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: /etc/systemd/system/{{ item }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [komodo-db-backup.service, komodo-db-backup.timer]
+  register: komodo_units
+  notify: Reload systemd for the backup units
+
+- name: Reload systemd now, the timer needs the units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: komodo_units is changed and not ansible_check_mode
+
+- name: Backup timer
+  ansible.builtin.systemd:
+    name: komodo-db-backup.timer
+    enabled: true
+    state: started
+  when: not (komodo_units is changed and ansible_check_mode) # the unit isn't there yet in --check
+
+- name: Core's API, keys and gate
+  ansible.builtin.include_tasks: bootstrap.yml

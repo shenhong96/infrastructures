@@ -1,0 +1,23 @@
+# Waits for update_id (a started operation) to finish, and fails unless it succeeded. HTTP 200
+# from an execute call only means "started".
+- name: Wait for the update to finish
+  ansible.builtin.uri:
+    url: "{{ komodo_url }}/read/GetUpdate"
+    method: POST
+    body_format: json
+    body: {id: "{{ update_id }}"}
+    headers: {Authorization: "Bearer {{ komodo_jwt }}"}
+    return_content: true
+  register: komodo_update
+  check_mode: false
+  changed_when: false
+  no_log: true
+  until: komodo_update.json.status == 'Complete'
+  retries: 60
+  delay: 2
+
+- name: The update succeeded
+  ansible.builtin.assert:
+    that: komodo_update.json.success
+    fail_msg: "Core operation {{ komodo_update.json.operation }} failed: see update {{ update_id }} in Komodo."
+    quiet: true

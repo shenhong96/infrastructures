@@ -1,0 +1,64 @@
+komodo_dir: /opt/komodo
+# Core's LAN address, the one it publishes :9120 on; the API calls go to it too.
+komodo_ip: "{{ pct.net0 | regex_search('ip=([0-9.]+)/', '\\1') | first }}"
+komodo_url: http://{{ komodo_ip }}:9120
+
+komodo_compose_src: "{{ playbook_dir }}/../stacks/komodo/compose.yaml"
+# Admin-only in .sops.yaml; decrypted here on the Mac, never on a machine.
+komodo_secrets_file: "{{ playbook_dir }}/../stacks/komodo/secrets.sops.env"
+komodo_secret_names:
+  - KOMODO_DATABASE_USERNAME
+  - KOMODO_DATABASE_PASSWORD
+  - KOMODO_INIT_ADMIN_USERNAME
+  - KOMODO_INIT_ADMIN_PASSWORD
+  - KOMODO_JWT_SECRET
+  - KOMODO_WEBHOOK_SECRET
+# The two Mongo reads itself.
+komodo_mongo_secrets: [KOMODO_DATABASE_USERNAME, KOMODO_DATABASE_PASSWORD]
+
+# Nightly dumps: a bind mount outside the container's root disk, so they survive its rebuild.
+komodo_backup_dir: /mnt/appdata/komodo-backup
+komodo_backup_keep: 30
+
+# The sync source. Core clones it over https (a public repo needs no token).
+komodo_sync_repo: shenhong96/infrastructures
+komodo_sync_branch: main
+komodo_sync_git_provider: github.com
+komodo_sync_git_https: true
+
+# Off until komodo/servers.toml is pushed (the sync would fail on the missing file).
+komodo_sync: false
+# Opens the recovery gate: creates and runs the automation sync (procedures). Only ever
+# passed on the command line, never committed; a committed value would open a rebuild by itself.
+komodo_open_gate: false
+komodo_close_gate: false
+
+# What the compose file reads from the environment (it falls back to apps' values).
+komodo_compose_env:
+  KOMODO_LISTEN_IP: "{{ komodo_ip }}"
+  TZ: "{{ timezone }}"
+
+# The two syncs, both defined here and nowhere in git (see the persistence contract, the
+# recovery gate). The main one never reads komodo/procedures.toml; the automation one only
+# exists after -e komodo_open_gate=true. delete stays false: with true, the main sync would
+# delete the automation sync, which git doesn't declare.
+komodo_sync_main: infrastructures
+komodo_sync_automation: infrastructures-automation
+komodo_sync_main_paths: [komodo/servers.toml, stacks/]
+komodo_sync_automation_paths: [komodo/procedures.toml]
+komodo_sync_config:
+  git_provider: "{{ komodo_sync_git_provider }}"
+  git_https: "{{ komodo_sync_git_https }}"
+  repo: "{{ komodo_sync_repo }}"
+  branch: "{{ komodo_sync_branch }}"
+  git_account: ""
+  commit: ""
+  files_on_host: false
+  managed: false
+  delete: false
+  include_resources: true
+  include_variables: false
+  include_user_groups: false
+  match_tags: []
+  webhook_enabled: false
+  pending_alert: false

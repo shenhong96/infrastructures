@@ -1,0 +1,125 @@
+# Komodo Periphery, the agent Core deploys through: a pinned binary under systemd, as root
+# (it needs the Docker socket). Installed and enabled on every machine in the periphery
+# group, but it connects to no Core until komodo_enrolled is true (Phase 3 step 2).
+# Not managed: /etc/komodo/keys/periphery.key and .pub (the agent's identity: the agent
+# makes them on first start, a CT dump keeps them), /etc/komodo/stacks (Komodo's clones).
+
+- name: Git (Komodo clones the repo with it)
+  ansible.builtin.apt:
+    name: git
+    update_cache: true
+    cache_valid_time: 86400
+    state: present
+
+- name: Periphery folders
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - {path: /etc/komodo, mode: "0755"}
+    - {path: /etc/komodo/keys, mode: "0700"}
+
+# The checksum is checked after the download; a changed version and hash replace the binary.
+- name: Periphery binary
+  ansible.builtin.get_url:
+    url: "{{ periphery_url }}"
+    dest: /usr/local/bin/periphery
+    checksum: sha256:{{ periphery_sha256 }}
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart periphery
+
+- name: Sops binary
+  ansible.builtin.get_url:
+    url: "{{ periphery_sops_url }}"
+    dest: /usr/local/bin/sops
+    checksum: sha256:{{ periphery_sops_sha256 }}
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Config
+  ansible.builtin.template:
+    src: periphery.config.toml.j2
+    dest: /etc/komodo/periphery.config.toml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Restart periphery
+
+# The trust half of enrollment: what this agent accepts as Core. Written from Core's own key
+# file, only if missing. A different file already here means Core's key changed (lost keys,
+# or a restore): stop, so nobody ends up trusting a key by accident. -e komodo_replace_core_key=true
+# is the deliberate replacement.
+- name: Core's public key, as this agent trusts it
+  when: komodo_enrolled | bool
+  block:
+    - name: Core's key file
+      ansible.builtin.slurp:
+        src: /opt/komodo/keys/core.pub
+      delegate_to: "{{ groups.komodo[0] }}"
+      register: periphery_core_pub
+
+    - name: This agent's copy
+      ansible.builtin.slurp:
+        src: /etc/komodo/keys/core.pub
+      register: periphery_trusted_pub
+      failed_when: false
+
+    - name: Core's key is the one this agent already trusts
+      ansible.builtin.assert:
+        that: "'content' not in periphery_trusted_pub or periphery_trusted_pub.content == periphery_core_pub.content or komodo_replace_core_key | bool"
+        fail_msg: Core's public key differs from the one {{ inventory_hostname }} trusts. If Core's keys were really lost,
+          re-run with -e komodo_replace_core_key=true; otherwise find out why before anything else.
+        quiet: true
+
+    - name: Write it
+      ansible.builtin.copy:
+        content: "{{ periphery_core_pub.content | b64decode }}"
+        dest: /etc/komodo/keys/core.pub
+        owner: root
+        group: root
+        mode: "0600"
+      notify: Restart periphery
+
+- name: Unit file
+  ansible.builtin.template:
+    src: periphery.service.j2
+    dest: /etc/systemd/system/periphery.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: periphery_unit
+  notify: Restart periphery
+
+# A new or changed unit file needs a reload before the service module can see it (not in --check).
+- name: Reload systemd for the unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: periphery_unit is changed and not ansible_check_mode
+
+- name: Periphery enabled at boot and started
+  ansible.builtin.service:
+    name: periphery
+    enabled: true
+    state: started
+  when: not (periphery_unit is changed and ansible_check_mode) # the unit isn't there yet in --check
+
+# The first start makes the keys, then (not enrolled) exits.
+- name: The agent's keys exist
+  ansible.builtin.wait_for:
+    path: /etc/komodo/keys/periphery.pub
+    timeout: 30
+  when: not ansible_check_mode
+
+# Never a listener on :8120, enrolled or not.
+- name: No Periphery listener
+  ansible.builtin.command: ss -H -ltnp 'sport = :8120'
+  register: periphery_listen
+  check_mode: false # read-only
+  changed_when: false
+  failed_when: "'periphery' in periphery_listen.stdout"

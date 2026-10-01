@@ -1,0 +1,19 @@
+# Closes the gate again: the automation sync and every procedure it brought are deleted.
+# Only from the command line (-e komodo_close_gate=true).
+- name: Procedures
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /read/ListProcedures
+
+- name: Delete them
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /write/DeleteProcedure
+    api_body: {id: "{{ item }}"}
+  loop: "{{ komodo_api.json | map(attribute='name') | list }}"
+
+- name: Delete the automation sync
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /write/DeleteResourceSync
+    api_body: {id: "{{ komodo_sync_automation }}"}

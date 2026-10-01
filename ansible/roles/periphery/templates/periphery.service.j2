@@ -1,0 +1,17 @@
+# Managed by Ansible (roles/periphery).
+[Unit]
+Description=Komodo Periphery, the agent Komodo Core talks to
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/periphery --config-path /etc/komodo/periphery.config.toml
+# Before enrollment there is nothing to connect to, so the process makes its keys and exits
+# with 0; RemainAfterExit keeps the unit "active" so Ansible sees no change on every run.
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

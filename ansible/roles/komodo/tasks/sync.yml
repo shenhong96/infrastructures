@@ -1,0 +1,49 @@
+# Makes sure the sync sync_name exists with sync_paths and the common settings, then runs it.
+# A failed read is never taken for "absent": the task fails first.
+- name: Syncs as Core has them
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /read/ListFullResourceSyncs
+
+- name: This sync
+  ansible.builtin.set_fact:
+    komodo_sync_now: "{{ komodo_api.json | selectattr('name', 'eq', sync_name) | list }}"
+
+- name: Never two syncs of one name
+  ansible.builtin.assert:
+    that: komodo_sync_now | length <= 1
+    quiet: true
+
+- name: Create the sync
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /write/CreateResourceSync
+    api_body:
+      name: "{{ sync_name }}"
+      config: "{{ komodo_sync_config | combine({'resource_path': sync_paths}) }}"
+  when: komodo_sync_now | length == 0 and not ansible_check_mode
+
+- name: Correct the sync if it differs
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /write/UpdateResourceSync
+    api_body:
+      id: "{{ sync_name }}"
+      config: "{{ komodo_sync_config | combine({'resource_path': sync_paths}) }}"
+  when:
+    - komodo_sync_now | length == 1
+    - "komodo_sync_now[0].config != komodo_sync_now[0].config | combine(komodo_sync_config | combine({'resource_path': sync_paths}))"
+    - not ansible_check_mode
+
+- name: Run the sync
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /execute/RunSync
+    api_body: {sync: "{{ sync_name }}"}
+  when: not ansible_check_mode
+
+- name: Wait for it
+  ansible.builtin.include_tasks: await.yml
+  vars:
+    update_id: "{{ komodo_api.json._id['$oid'] }}"
+  when: not ansible_check_mode

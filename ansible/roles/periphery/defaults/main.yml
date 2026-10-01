@@ -1,0 +1,12 @@
+# Pinned, with sha256 values I computed from the downloads: upstream publishes no checksum
+# files for the Komodo binaries (GitHub's own asset digests agree). To upgrade, change the
+# version and hash together, and re-run the canary first (Phase 3 step 3).
+periphery_version: v2.2.0
+periphery_sha256: ace9007805dbfe75ad73c75c36bb26852fa909d825577f31f5d13eecd3c52660
+periphery_url: https://github.com/moghtech/komodo/releases/download/{{ periphery_version }}/periphery-x86_64
+
+# For the pre-deploy decryption of app secrets (the lab key itself arrives with Phase 3 step 3).
+# The sha256 is from upstream's sops-v3.12.2.checksums.txt.
+periphery_sops_version: v3.12.2
+periphery_sops_sha256: 14e2e1ba3bef31e74b70cf0b674f6443c80f6c5f3df15d05ffc57c34851b4998
+periphery_sops_url: https://github.com/getsops/sops/releases/download/{{ periphery_sops_version }}/sops-{{ periphery_sops_version }}.linux.amd64

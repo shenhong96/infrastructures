@@ -1,0 +1,38 @@
+# Core's half of enrollment: it trusts exactly the key Ansible read from each agent, over
+# the same channel it installs them through; a key an agent offers by itself is never
+# approved. The servers themselves come from the sync (komodo/servers.toml).
+- name: Servers as Core has them
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /read/ListServers
+
+- name: Each agent has a server entry
+  ansible.builtin.assert:
+    that: item in (komodo_api.json | map(attribute='name'))
+    fail_msg: "{{ item }} has no server in Komodo: run with -e komodo_sync=true first (komodo/servers.toml must list it)."
+    quiet: true
+  loop: "{{ groups.periphery }}"
+
+- name: Servers' keys
+  ansible.builtin.set_fact:
+    komodo_server_keys: "{{ komodo_api.json | items2dict(key_name='name', value_name='info') }}"
+  no_log: true
+
+- name: Each agent's public key
+  ansible.builtin.slurp:
+    src: /etc/komodo/keys/periphery.pub
+  delegate_to: "{{ item }}"
+  loop: "{{ groups.periphery }}"
+  register: komodo_agent_pubs
+
+- name: Register the keys that differ
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /write/UpdateServerPublicKey
+    api_body:
+      server: "{{ item.item }}"
+      public_key: "{{ (item.content | b64decode).splitlines() | reject('match', '^-----') | join }}"
+  loop: "{{ komodo_agent_pubs.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: komodo_server_keys[item.item].public_key != (item.content | b64decode).splitlines() | reject('match', '^-----') | join

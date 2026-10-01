@@ -1,0 +1,40 @@
+# One entry per machine that runs the Komodo agent (roles/periphery). The name is the
+# inventory name, which the agent connects as. An empty address means the agent connects to
+# Core (outbound), and Core trusts the public key Ansible registers for it.
+# auto_rotate_keys stays false: a rotation that fails half way would lock an agent out.
+
+[[server]]
+name = "proxmox"
+config.address = ""
+config.enabled = true
+config.auto_rotate_keys = false
+
+[[server]]
+name = "proxy"
+config.address = ""
+config.enabled = true
+config.auto_rotate_keys = false
+
+[[server]]
+name = "apps"
+config.address = ""
+config.enabled = true
+config.auto_rotate_keys = false
+
+[[server]]
+name = "nextcloud"
+config.address = ""
+config.enabled = true
+config.auto_rotate_keys = false
+
+[[server]]
+name = "gitlab"
+config.address = ""
+config.enabled = true
+config.auto_rotate_keys = false
+
+[[server]]
+name = "vpn"
+config.address = ""
+config.enabled = true
+config.auto_rotate_keys = false

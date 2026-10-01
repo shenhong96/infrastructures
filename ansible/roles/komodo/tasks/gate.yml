@@ -1,0 +1,53 @@
+# Recovery gate, the backstop (the structure is the real control: the main sync is not told
+# about komodo/procedures.toml, and a restore skips the Procedure and Action collections).
+# While the automation sync doesn't exist, nothing may be scheduled. If something is, it is
+# switched off and the run fails: a procedure got in through some other file.
+- name: Syncs as Core has them
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /read/ListFullResourceSyncs
+
+- name: Gate state
+  ansible.builtin.set_fact:
+    komodo_gate_is_open: "{{ komodo_sync_automation in (komodo_api.json | map(attribute='name')) }}"
+
+- name: Procedures
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /read/ListFullProcedures
+
+- name: Scheduled procedures
+  ansible.builtin.set_fact:
+    komodo_scheduled_procedures: "{{ komodo_api.json | selectattr('config.schedule_enabled') | map(attribute='name') | list }}"
+
+- name: Actions
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /read/ListFullActions
+
+- name: Scheduled actions
+  ansible.builtin.set_fact:
+    komodo_scheduled_actions: "{{ komodo_api.json | selectattr('config.schedule_enabled') | map(attribute='name') | list }}"
+
+- name: Switch off the procedures
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /write/UpdateProcedure
+    api_body: {id: "{{ item }}", config: {schedule_enabled: false}}
+  loop: "{{ komodo_scheduled_procedures }}"
+  when: not komodo_gate_is_open
+
+- name: Switch off the actions
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /write/UpdateAction
+    api_body: {id: "{{ item }}", config: {schedule_enabled: false}}
+  loop: "{{ komodo_scheduled_actions }}"
+  when: not komodo_gate_is_open
+
+- name: Nothing is scheduled while the gate is closed
+  ansible.builtin.assert:
+    that: komodo_gate_is_open or (komodo_scheduled_procedures + komodo_scheduled_actions) | length == 0
+    fail_msg: "A schedule was found with the gate closed ({{ komodo_scheduled_procedures + komodo_scheduled_actions }});
+      it is switched off. Find the file it came from."
+    quiet: true

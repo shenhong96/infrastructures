@@ -1,0 +1,9 @@
+# Managed by Ansible (roles/komodo).
+[Unit]
+Description=Dump Komodo's database
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/komodo-db-backup

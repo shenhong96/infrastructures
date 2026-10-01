@@ -1,0 +1,108 @@
+# Komodo Core and its MongoDB. Ansible deploys this one (roles/komodo), never Komodo itself:
+# there is no komodo.toml next to it, so no sync ever sees it.
+# Everything is pinned (tag and digest) and nothing secret is in this file: the secrets are
+# files under /opt/komodo/secrets, written from secrets.sops.env.
+# KOMODO_LISTEN_IP is the machine's LAN address; Ansible sets it, the default is apps.
+name: komodo
+
+services:
+  mongo:
+    image: mongo:8.0.32-noble@sha256:01354084d2ae665d2e79b79b0cdc50c2c0c98873618912d9a2c8c9cb5c3d24e6
+    container_name: komodo-mongo
+    labels:
+      komodo.skip: "true"
+    restart: unless-stopped
+    init: true
+    command: --quiet --wiredTigerCacheSizeGB 0.5
+    # Not published: Core reaches it as mongo:27017 on the project network.
+    # The credentials only create the root user on an empty data folder; after that they are ignored.
+    environment:
+      MONGO_INITDB_ROOT_USERNAME_FILE: /run/secrets/KOMODO_DATABASE_USERNAME
+      MONGO_INITDB_ROOT_PASSWORD_FILE: /run/secrets/KOMODO_DATABASE_PASSWORD
+    secrets: [KOMODO_DATABASE_USERNAME, KOMODO_DATABASE_PASSWORD]
+    volumes:
+      - /opt/komodo/mongo/data:/data/db
+      - /opt/komodo/mongo/configdb:/data/configdb
+    # Through the container's own address, not loopback: the image runs a temporary
+    # loopback-only mongod while it creates the root user, and that must not count as healthy.
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          mongosh --quiet --host "$$(hostname -i | cut -d' ' -f1)"
+          -u "$$(cat /run/secrets/KOMODO_DATABASE_USERNAME)"
+          -p "$$(cat /run/secrets/KOMODO_DATABASE_PASSWORD)"
+          --authenticationDatabase admin
+          --eval 'db.adminCommand({ping:1}).ok' | grep -qx 1
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 40s
+    stop_grace_period: 60s
+    logging: &logging
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+
+  core:
+    image: ghcr.io/moghtech/komodo-core:2.2.0@sha256:7afbcfa99674bf3f51539ec3aa7235795e9b994af9b7099a6c4c654d5d8a5b6b
+    container_name: komodo-core
+    labels:
+      komodo.skip: "true"
+    restart: unless-stopped
+    init: true
+    depends_on:
+      mongo:
+        condition: service_healthy
+    # The LAN address only, so Core is not on the tailnet interface this machine also has.
+    ports:
+      - "${KOMODO_LISTEN_IP:-192.168.9.151}:9120:9120"
+    environment:
+      KOMODO_HOST: http://${KOMODO_LISTEN_IP:-192.168.9.151}:9120
+      KOMODO_TITLE: Komodo
+      TZ: ${TZ:-Asia/Kuala_Lumpur}
+      KOMODO_DATABASE_ADDRESS: mongo:27017
+      KOMODO_DATABASE_USERNAME_FILE: /run/secrets/KOMODO_DATABASE_USERNAME
+      KOMODO_DATABASE_PASSWORD_FILE: /run/secrets/KOMODO_DATABASE_PASSWORD
+      # The first admin is made only while the database has no users; later changes are ignored.
+      KOMODO_LOCAL_AUTH: "true"
+      KOMODO_INIT_ADMIN_USERNAME_FILE: /run/secrets/KOMODO_INIT_ADMIN_USERNAME
+      KOMODO_INIT_ADMIN_PASSWORD_FILE: /run/secrets/KOMODO_INIT_ADMIN_PASSWORD
+      KOMODO_MIN_PASSWORD_LENGTH: "20"
+      KOMODO_DISABLE_USER_REGISTRATION: "true"
+      KOMODO_ENABLE_NEW_USERS: "false"
+      KOMODO_DISABLE_NON_ADMIN_CREATE: "true"
+      KOMODO_JWT_SECRET_FILE: /run/secrets/KOMODO_JWT_SECRET
+      KOMODO_WEBHOOK_SECRET_FILE: /run/secrets/KOMODO_WEBHOOK_SECRET
+      # Part of the recovery gate: without it Core creates three scheduled procedures
+      # itself on an empty database (a daily update, a backup and a daily key rotation).
+      KOMODO_DISABLE_INIT_RESOURCES: "true"
+      # Never set: KOMODO_FIRST_SERVER_*, KOMODO_PERIPHERY_PUBLIC_KEY, KOMODO_PASSKEY,
+      # KOMODO_PRIVATE_KEY (the default key file below is what we want).
+      KOMODO_MONITORING_INTERVAL: 1-min
+      KOMODO_KEEP_STATS_FOR_DAYS: "7"
+      KOMODO_RESOURCE_POLL_INTERVAL: 1-hr
+    secrets:
+      - KOMODO_DATABASE_USERNAME
+      - KOMODO_DATABASE_PASSWORD
+      - KOMODO_INIT_ADMIN_USERNAME
+      - KOMODO_INIT_ADMIN_PASSWORD
+      - KOMODO_JWT_SECRET
+      - KOMODO_WEBHOOK_SECRET
+    volumes:
+      # core.key and core.pub; Core makes them if the folder is empty, so Ansible checks first.
+      - /opt/komodo/keys:/config/keys
+    healthcheck:
+      test: [CMD-SHELL, "curl -fsS http://127.0.0.1:9120/version"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *logging
+
+secrets:
+  KOMODO_DATABASE_USERNAME: {file: /opt/komodo/secrets/KOMODO_DATABASE_USERNAME}
+  KOMODO_DATABASE_PASSWORD: {file: /opt/komodo/secrets/KOMODO_DATABASE_PASSWORD}
+  KOMODO_INIT_ADMIN_USERNAME: {file: /opt/komodo/secrets/KOMODO_INIT_ADMIN_USERNAME}
+  KOMODO_INIT_ADMIN_PASSWORD: {file: /opt/komodo/secrets/KOMODO_INIT_ADMIN_PASSWORD}
+  KOMODO_JWT_SECRET: {file: /opt/komodo/secrets/KOMODO_JWT_SECRET}
+  KOMODO_WEBHOOK_SECRET: {file: /opt/komodo/secrets/KOMODO_WEBHOOK_SECRET}

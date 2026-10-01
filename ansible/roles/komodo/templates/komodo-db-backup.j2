@@ -1,0 +1,22 @@
+#!/bin/bash
+# Managed by Ansible (roles/komodo). A dump of Komodo's database (the Stats collection left
+# out: samples that are worth nothing after a restore), checked before it counts, and the
+# newest {{ komodo_backup_keep }} kept. It works while Core is down, which is when it matters.
+set -euo pipefail
+dir={{ komodo_backup_dir }}
+uri='mongodb://$(cat /run/secrets/KOMODO_DATABASE_USERNAME):$(cat /run/secrets/KOMODO_DATABASE_PASSWORD)@127.0.0.1:27017/?authSource=admin'
+
+[ "$(docker inspect -f '{% raw %}{{.State.Health.Status}}{% endraw %}' komodo-mongo)" = healthy ] ||
+  { echo "komodo-mongo is not healthy; no dump" >&2; exit 1; }
+
+umask 077
+tmp=$dir/.dump.tmp
+trap 'rm -f "$tmp"' EXIT
+docker exec -i komodo-mongo sh -c "mongodump --uri \"$uri\" --db komodo --excludeCollection Stats --archive --gzip --quiet" > "$tmp"
+gzip -t "$tmp"
+docker exec -i komodo-mongo sh -c "mongorestore --uri \"$uri\" --archive --gzip --dryRun --nsInclude 'komodo.*' --quiet" < "$tmp"
+mv "$tmp" "$dir/komodo-$(date +%F_%H%M%S).archive.gz"
+trap - EXIT
+
+# Only after a good new dump.
+ls -1t "$dir"/komodo-*.archive.gz | tail -n +{{ komodo_backup_keep + 1 }} | xargs -r rm -f --

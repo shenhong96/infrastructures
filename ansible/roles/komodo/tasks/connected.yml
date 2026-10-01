@@ -1,0 +1,19 @@
+# After the agents were restarted with their connect settings: every one shows Ok in Core.
+- name: Login
+  ansible.builtin.include_tasks: login.yml
+
+- name: Every agent shows Ok in Komodo
+  ansible.builtin.uri:
+    url: "{{ komodo_url }}/read/ListServers"
+    method: POST
+    body_format: json
+    body: {}
+    headers: {Authorization: "Bearer {{ komodo_jwt }}"}
+    return_content: true
+  register: komodo_servers
+  check_mode: false
+  changed_when: false
+  no_log: true
+  until: komodo_servers.json | selectattr('name', 'in', groups.periphery) | rejectattr('info.state', 'eq', 'Ok') | list | length == 0
+  retries: 24
+  delay: 5

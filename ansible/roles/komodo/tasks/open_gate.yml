@@ -1,0 +1,34 @@
+# Opens the recovery gate: the automation sync is created and run once, so the scheduled
+# procedures arrive. Only from the command line (-e komodo_open_gate=true).
+# The stack and canary checks are added with Phase 3 step 5 (nothing is adopted yet).
+- name: Agents are enrolled
+  ansible.builtin.assert:
+    that: komodo_enrolled | bool
+    fail_msg: Open the gate only after enrollment (-e komodo_enrolled=true).
+    quiet: true
+
+- name: Servers as Core has them
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /read/ListServers
+
+- name: Every agent is connected and Ok
+  ansible.builtin.assert:
+    that: komodo_api.json | selectattr('name', 'in', groups.periphery) | rejectattr('info.state', 'eq', 'Ok') | list | length == 0
+    fail_msg: An agent isn't Ok in Komodo. Not opening the gate.
+    quiet: true
+
+- name: The automation sync, then a run
+  ansible.builtin.include_tasks: sync.yml
+  vars:
+    sync_name: "{{ komodo_sync_automation }}"
+    sync_paths: "{{ komodo_sync_automation_paths }}"
+
+- name: Procedures that arrived
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /read/ListProcedures
+
+- name: What is scheduled now
+  ansible.builtin.debug:
+    msg: "{{ komodo_api.json | selectattr('info.next_scheduled_run') | map(attribute='name') | list }} are scheduled."

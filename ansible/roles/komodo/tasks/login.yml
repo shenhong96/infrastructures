@@ -1,0 +1,21 @@
+# Core's admin login, with the first-admin credentials from SOPS. A 2FA answer is not a login.
+- name: Core API login
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /auth/login/LoginLocalUser
+    api_body:
+      username: "{{ komodo_secrets.KOMODO_INIT_ADMIN_USERNAME }}"
+      password: "{{ komodo_secrets.KOMODO_INIT_ADMIN_PASSWORD }}"
+    komodo_jwt: ""
+
+- name: The token
+  ansible.builtin.set_fact:
+    komodo_jwt: "{{ komodo_api.json.data.jwt }}"
+  no_log: true
+  when: komodo_api.json.type == 'Jwt'
+
+- name: The login was a real one
+  ansible.builtin.assert:
+    that: komodo_jwt is defined
+    fail_msg: Core didn't answer the login with a token (2FA on, or the admin's password was changed outside Ansible).
+    quiet: true
