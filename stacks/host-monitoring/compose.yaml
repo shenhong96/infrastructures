@@ -1,0 +1,124 @@
+# Captured 2026-10-01 from proxmox host /opt/docker-compose.yml (project opt).
+# Relative paths made absolute, Portainer's agent removed.
+---
+x-monitoring: &loki
+  labels:
+    logging: "promtail"
+    logging_jobname: "containerlogs"
+
+version: '3.5'
+networks:
+  monitoring:
+    name: main-monitoring-stack
+services:
+  scrutiny:
+    container_name: scrutiny
+    privileged: true
+    image: ghcr.io/analogj/scrutiny:master-omnibus
+    cap_add:
+      - SYS_RAWIO
+      - SYS_ADMIN
+    ports:
+      - "8080:8080" # webapp
+      - "8086:8086" # influxDB admin
+    environment:
+      - SCRUTINY_COLLECTOR=true
+      - COLLECTOR_CRON_SCHEDULE="0 0 * * *"
+      - DEBUG=true
+      - COLLECTOR_LOG_FILE=/tmp/collector.log
+    volumes:
+      - /run/udev:/run/udev:ro
+      - /opt/scrutiny/config:/opt/scrutiny/config
+      - /opt/scrutiny/influxdb:/opt/scrutiny/influxdb
+    devices:
+      - "/dev/sda"
+      - "/dev/sdb"
+      - "/dev/sdc"
+      - "/dev/sdd"
+      - "/dev/sde"
+      - "/dev/sdf"
+      - "/dev/sdg"
+      - "/dev/nvme0"
+      - "/dev/nvme1"
+      - "/dev/nvme2"
+    restart: always
+    <<: *loki
+
+  dash:
+    image: mauricenino/dashdot:latest
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - '3001:3001'
+    volumes:
+      - /:/mnt/host:ro
+    environment:
+      DASHDOT_ENABLE_CPU_TEMPS: 'true'
+
+  prometheus:
+    image: prom/prometheus:v3.4.1
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - 9090:9090
+    volumes:
+      - /opt/prometheus:/etc/prometheus
+      - /mnt/storage/appdata/monitoring/prometheus:/prometheus
+    command: 
+      - '--web.enable-lifecycle'  
+      - '--web.enable-remote-write-receiver'
+      - '--enable-feature=native-histograms' 
+      - '--enable-feature=remote-write-receiver'
+      - '--config.file=/etc/prometheus/prometheus.yml' 
+    networks:
+      - monitoring
+    <<: *loki
+
+  node-exporter:
+    image: quay.io/prometheus/node-exporter:latest
+    container_name: node-exporter
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+      - /:/host:ro,rslave
+    command:
+      - '--path.rootfs=/host'
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - --collector.filesystem.ignored-mount-points
+      - "^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns|rootfs/var/lib/docker/aufs)($$|/)"
+    ports:
+      - 9100:9100
+    restart: unless-stopped
+    networks:
+      - monitoring
+    <<: *loki
+
+  grafana:
+    image: grafana/grafana:12.0.1
+    container_name: grafana
+    user: root
+    ports:
+      - 3000:3000
+    restart: unless-stopped
+    volumes:
+      - /opt/grafana/datasources:/etc/grafana/provisioning/datasources
+      - /mnt/storage/appdata/monitoring/grafana:/var/lib/grafana
+    environment:
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+
+  loki:
+    image: grafana/loki:3.5
+    container_name: loki
+    user: root
+    volumes:
+      - /opt/loki:/etc/loki
+      - /mnt/storage/appdata/monitoring/loki:/tmp/loki # This is where loki stores all the data chunks, the logs.
+    ports:
+      - "3100:3100"
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yaml
+
