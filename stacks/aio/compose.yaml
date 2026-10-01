@@ -52,23 +52,6 @@ services:
       - /opt/aio/homer/config:/www/assets
     restart: always
 
-  homarr:
-    container_name: homarr
-    image: ghcr.io/ajnart/homarr:latest
-    restart: unless-stopped
-    volumes:
-      - /opt/aio/homarr/configs:/app/data/configs
-      - /opt/aio/homarr/icons:/app/public/icons
-    ports:
-      - "9999:7575"
-    labels:
-      gethomepage.enable: "true"
-      gethomepage.name: "Homarr"
-      gethomepage.description: "Alternative dashboard"
-      gethomepage.group: "Infrastructure"
-      gethomepage.icon: "homarr.png"
-      gethomepage.href: "http://192.168.9.151:9999"
-
   librespeed:
     image: ghcr.io/linuxserver/librespeed
     container_name: librespeed
