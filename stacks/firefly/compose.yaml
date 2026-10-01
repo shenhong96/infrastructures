@@ -1,0 +1,27 @@
+# Captured 2026-10-01 from CT 111 /opt/firefly/docker-compose.yml (project firefly; the app's .env is app.sops.env, the database's credentials are secrets.sops.env).
+# Relative paths made absolute, inline secrets moved to secrets.sops.env.
+version: '3.3'
+
+services:
+  firefly-app:
+    image: fireflyiii/core:latest
+    restart: always
+    volumes:
+      - /opt/firefly/firefly_iii_upload:/var/www/html/storage/upload
+      - /opt/firefly/logs:/var/www/html/storage/logs
+    env_file: app.env
+    ports:
+      - 8096:8080
+    depends_on:
+      - firefly-db
+  firefly-db:
+    image: mariadb    
+    hostname: fireflyiiidb
+    restart: always
+    environment:
+      - MYSQL_RANDOM_ROOT_PASSWORD=yes
+      - MYSQL_USER=${FIREFLY_DB_MYSQL_USER}
+      - MYSQL_PASSWORD=${FIREFLY_DB_MYSQL_PASSWORD}
+      - MYSQL_DATABASE=firefly
+    volumes:
+      - /opt/firefly/firefly_iii_db:/var/lib/mysql
