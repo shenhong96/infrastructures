@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Listening Sessions</title>
+<style>
+  :root {
+    --bg: #f7f7f8; --card: #ffffff; --text: #1a1a1a; --muted: #6b6b70;
+    --border: #e4e4e7; --accent: #4f7cff; --track: #e9e9ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16161a; --card: #1e1e23; --text: #f0f0f2; --muted: #97979f;
+             --border: #2c2c33; --accent: #7c9cff; --track: #2c2c33; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2rem 1.5rem 4rem; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  h1 { font-size: 1.3rem; margin: 0 0 .25rem; }
+  .meta { color: var(--muted); font-size: .85rem; margin-bottom: 1.5rem; }
+  .grid { display: grid; gap: .75rem; max-width: 720px; margin: 0 auto; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: .9rem 1.1rem;
+  }
+  .row1 { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+  .title { font-weight: 600; }
+  .when { color: var(--muted); font-size: .8rem; white-space: nowrap; }
+  .chapter { color: var(--muted); font-size: .88rem; margin-top: .15rem; }
+  .bar { height: 6px; background: var(--track); border-radius: 3px; margin-top: .6rem; overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: var(--accent); }
+  .stats { display: flex; justify-content: space-between; font-size: .78rem; color: var(--muted); margin-top: .35rem; }
+  .device { font-size: .78rem; color: var(--muted); margin-top: .5rem; border-top: 1px dashed var(--border); padding-top: .4rem; }
+  .err { color: #e5484d; padding: 1rem; text-align: center; }
+</style>
+</head>
+<body>
+  <h1>Listening Sessions</h1>
+  <div class="meta" id="meta">loading…</div>
+  <div class="grid" id="grid"></div>
+
+<script>
+function fmtTime(sec) {
+  sec = Math.round(sec);
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m ${s}s`;
+}
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function load() {
+  try {
+    const res = await fetch('/api');
+    const data = await res.json();
+    document.getElementById('meta').textContent =
+      `${data.count} sessions · cache age ${data.cacheAgeSeconds}s · updated ${new Date(data.generatedAt).toLocaleTimeString()}`;
+
+    const grid = document.getElementById('grid');
+    grid.innerHTML = data.sessions.map(s => `
+      <div class="card">
+        <div class="row1">
+          <div class="title">${esc(s.book.title)}</div>
+          <div class="when">${fmtWhen(s.startedAt)}</div>
+        </div>
+        <div class="chapter">${s.chapter ? `Ch. ${s.chapter.number} — ${esc(s.chapter.title)}` : 'no chapter data'}</div>
+        <div class="bar"><span style="width:${s.progress.percent}%"></span></div>
+        <div class="stats">
+          <span>${s.progress.percent}% · ${fmtTime(s.progress.currentTime)} / ${fmtTime(s.progress.duration)}</span>
+          <span>listened ${fmtTime(s.progress.timeListeningThisSession)}</span>
+        </div>
+        <div class="device">${esc(s.device.app)} · ${esc(s.device.os)} · ${esc(s.device.browser)} · ${esc(s.device.playMethod)} · ${esc(s.device.ip)}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('grid').innerHTML = `<div class="err">Failed to load: ${esc(e.message)}</div>`;
+  }
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>

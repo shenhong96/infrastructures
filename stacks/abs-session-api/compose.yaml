@@ -1,5 +1,5 @@
-# Captured 2026-10-01 from CT 111 /opt/aio/abs-session-api/docker-compose.yml (project abs-session-api; the app source and token file stay in that folder on the machine).
-# Relative paths made absolute, inline secrets moved to secrets.sops.env.
+# Captured 2026-10-01 from CT 111 /opt/aio/abs-session-api/docker-compose.yml (project abs-session-api).
+# The app code now lives next to this file in git; the API token comes from secrets.sops.env (ABS_TOKEN).
 services:
   abs-session-api:
     image: node:22-alpine
@@ -9,18 +9,17 @@ services:
     restart: unless-stopped
     ports:
       - 7778:7778
+    env_file: secrets.env
     environment:
       - ABS_BASE_URL=http://192.168.9.151:13378
-      - TOKEN_FILE=/app/abs.token
       - PORT=7778
       - SESSIONS_LIMIT=20
       - CACHE_TTL_SECONDS=30
       - ITEM_CACHE_TTL_SECONDS=3600
     volumes:
-      - /opt/aio/abs-session-api/server.js:/app/server.js:ro
-      - /opt/aio/abs-session-api/index.html:/app/index.html:ro
-      - /opt/aio/abs-session-api/widget.html:/app/widget.html:ro
-      - /opt/aio/abs-session-api/abs.token:/app/abs.token:ro
+      - ./server.js:/app/server.js:ro
+      - ./index.html:/app/index.html:ro
+      - ./widget.html:/app/widget.html:ro
     labels:
       gethomepage.enable: "true"
       gethomepage.name: "Audiobook Sessions"

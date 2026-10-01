@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sessions</title>
+<style>
+  :root {
+    --text: #e8e8ea; --muted: #9a9aa2; --border: #33333b; --accent: #7c9cff; --hover: #26262e;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --text: #1a1a1a; --muted: #6b6b70; --border: #e4e4e7; --accent: #4f7cff; --hover: #f0f0f2; }
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: transparent; color: var(--text);
+    font: 12.5px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  a { color: inherit; text-decoration: none; }
+  details { padding: 6px 8px; }
+  summary {
+    cursor: pointer; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 6px;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary .arrow { color: var(--muted); font-size: 10px; transition: transform 0.15s; margin-left: auto; }
+  details[open] summary .arrow { transform: rotate(90deg); }
+  .summary-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list { margin-top: 6px; max-height: 165px; overflow-y: auto; border-top: 1px solid var(--border); }
+  .row { display: block; padding: 5px 2px; border-bottom: 1px solid var(--border); }
+  .row:hover { background: var(--hover); }
+  .row-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row-chapter { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .viewall { display: block; text-align: center; padding: 5px; margin-top: 4px; color: var(--accent); font-size: 11px; }
+  .empty { color: var(--muted); padding: 4px 2px; }
+</style>
+</head>
+<body>
+  <details id="d">
+    <summary>
+      <span>🎧</span>
+      <span class="summary-text" id="summary-text">Loading…</span>
+      <span class="arrow">▶</span>
+    </summary>
+    <div class="list" id="list"></div>
+    <a class="viewall" href="http://192.168.9.151:7778/" target="_top">View all sessions →</a>
+  </details>
+
+<script>
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+async function load() {
+  try {
+    const res = await fetch('/api');
+    const data = await res.json();
+    const sessions = data.sessions.slice(0, 10);
+
+    const first = sessions[0];
+    document.getElementById('summary-text').textContent = first
+      ? `${first.book.title}${first.chapter ? ' — Ch. ' + first.chapter.number : ''}`
+      : 'No sessions yet';
+
+    const list = document.getElementById('list');
+    list.innerHTML = sessions.length
+      ? sessions.map(s => `
+          <a class="row" href="http://192.168.9.151:7778/" target="_top">
+            <div class="row-title">${esc(s.book.title)}</div>
+            <div class="row-chapter">${s.chapter ? `Ch. ${s.chapter.number} — ${esc(s.chapter.title)}` : 'no chapter data'} · ${s.progress.percent}% · ${fmtWhen(s.startedAt)}</div>
+          </a>
+        `).join('')
+      : '<div class="empty">No sessions yet</div>';
+  } catch (e) {
+    document.getElementById('summary-text').textContent = 'Failed to load';
+  }
+}
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>
