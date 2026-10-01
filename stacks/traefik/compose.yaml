@@ -1,0 +1,41 @@
+# Captured 2026-10-01 from CT 111 /opt/traefik/docker-compose.yml (project traefik).
+# Relative paths made absolute, inline secrets moved to secrets.sops.env.
+---
+x-monitoring: &loki
+  labels:
+    logging: "promtail"
+    logging_jobname: "containerlogs"
+    
+version: "2.3"
+services:
+  traefik:
+    image: traefik:v2.8
+    user: "1000"
+    environment:
+      - CF_DNS_API_TOKEN=${TRAEFIK_CF_DNS_API_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /tmp/traefik-logs:/var/log/traefik
+      - /opt/traefik/traefik:/etc/traefik
+    restart: unless-stopped
+    ports:
+      - 80:80
+      - 443:443
+      - 8080:8080
+    networks:
+      - default
+      - traefik
+    <<: *loki
+
+  certs:
+    image: slocomptech/traefik-cert-extract:latest
+    restart: unless-stopped
+    networks: []
+    volumes:
+      - /opt/traefik/traefik:/data:ro
+      - /opt/traefik/certs:/config/certs
+    <<: *loki
+
+networks:
+  traefik:
+    external: true
