@@ -1,0 +1,28 @@
+# Captured 2026-10-01 from CT 111 /opt/caldav2google/docker-compose.yml (project caldav2google; its source and data stay in that folder, and the image already exists, so a deploy never builds).
+# Relative paths made absolute, inline secrets moved to secrets.sops.env.
+services:
+  caldav2google:
+    build:
+      context: /opt/caldav2google
+    image: caldav2google:pinned
+    container_name: caldav2google
+    init: true
+    restart: unless-stopped
+    env_file: secrets.env
+    environment:
+      # Sync cadence (seconds). 600 = every 10 min.
+      SYNC_INTERVAL: "600"
+      # Optional: Uptime Kuma push monitor (uptime-kuma runs on this host:3001).
+      # KUMA_PUSH_URL: "http://192.168.9.151:3001/api/push/REPLACE_WITH_TOKEN"
+    volumes:
+      # Holds token.json (and the auto-managed calendar_sync.json state).
+      - /opt/caldav2google/data:/data
+    extra_hosts:
+      # Reach Nextcloud through Caddy (valid *.ahlooii.com TLS) instead of the
+      # bare LXC IP (which would fail cert verification). Caddy = CT104.
+      - "nextcloud.ahlooii.com:192.168.9.155"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,25 @@
+# Safety settings on every stack, enforced by tests/test_komodo_gate.py: a sync only creates
+# or updates the stack record. Nothing deploys until someone runs DeployStack on it.
+
+[[stack]]
+name = "caldav2google"
+[stack.config]
+server = "apps"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "caldav2google"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/caldav2google"
+file_paths = ["compose.yaml"]
+# Secrets: decrypted into secrets.env next to the compose file just before every deploy (the helper
+# roles/periphery installs; a failed decrypt stops the deploy). The encrypted files are tracked,
+# so a secret-only change counts as a changed stack; the plaintext is never tracked or stored.
+pre_deploy.command = "/usr/local/sbin/komodo-decrypt-env secrets.sops.env"
+config_files = [{ path = "secrets.sops.env", requires = "Redeploy" }]
+# `docker compose config` output is stored in Core: keep the secret values out of it.
+compose_cmd_wrapper = "set -o pipefail; [[COMPOSE_COMMAND]] | /usr/local/sbin/komodo-redact-config secrets.env"
+compose_cmd_wrapper_include = ["config"]
