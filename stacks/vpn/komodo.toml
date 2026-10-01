@@ -1,0 +1,20 @@
+# Safety settings on every stack, enforced by tests/test_komodo_gate.py: a sync only creates
+# or updates the stack record. Nothing deploys until someone runs DeployStack on it.
+# Files-on-server mode: the compose file stays on the vpn machine (/root/docker-compose.yml),
+# covered by that machine's backup, and is deliberately not in this repo. Komodo deploys and
+# watches it. env_file_path names a file that doesn't exist, so Komodo never writes or uses
+# /root/.env; Compose still reads it for interpolation, as it always has.
+
+[[stack]]
+name = "vpn"
+[stack.config]
+server = "vpn"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "root"
+files_on_host = true
+run_directory = "/root"
+file_paths = ["docker-compose.yml"]
+env_file_path = "komodo.env"
