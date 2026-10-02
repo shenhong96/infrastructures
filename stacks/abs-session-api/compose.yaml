@@ -2,7 +2,7 @@
 # The app code now lives next to this file in git; the API token comes from secrets.sops.env (ABS_TOKEN).
 services:
   abs-session-api:
-    image: node:22-alpine
+    image: node:26-alpine
     container_name: abs-session-api
     command: node /app/server.js
     working_dir: /app
