@@ -7,7 +7,7 @@ name: komodo
 
 services:
   mongo:
-    image: mongo:8.0.32-noble@sha256:01354084d2ae665d2e79b79b0cdc50c2c0c98873618912d9a2c8c9cb5c3d24e6
+    image: mongo:8.3.9-noble@sha256:1cd50aca58bb5f84ca6bb32b69a75ad67b23867fc8454bd1ff288822e4599219
     container_name: komodo-mongo
     labels:
       komodo.skip: "true"
@@ -44,7 +44,7 @@ services:
       options: {max-size: 10m, max-file: "3"}
 
   core:
-    image: ghcr.io/moghtech/komodo-core:2.2.0@sha256:7afbcfa99674bf3f51539ec3aa7235795e9b994af9b7099a6c4c654d5d8a5b6b
+    image: ghcr.io/moghtech/komodo-core:2.3.3@sha256:bca73d0eee143066228fb9b80c38a5a2726e573ad2758f7aa92b5c91a8aef1c7
     container_name: komodo-core
     labels:
       komodo.skip: "true"
