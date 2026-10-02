@@ -1,6 +1,10 @@
 # Plain settings for every machine. Secrets are in secrets.sops.yml next to this file.
 timezone: Asia/Kuala_Lumpur
 
+# The admin's (Mac's) public key: Ansible logs in to every container as root with it.
+# Placed by `base`. Public, so it is plain here.
+admin_ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINaW4+uZXr3Vx5XAqqefMUrOacOcp+hkRLtdQsD67ejp shenhongyee@Shens-MacBook-Air.local
+
 # Komodo. Agents connect to Core only when this is true (enrolled 2026-10-01, Phase 3 step 2;
 # it was a deliberate run after the install had been reviewed).
 komodo_enrolled: true

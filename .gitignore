@@ -45,3 +45,4 @@ ansible/collections/
 # Python
 __pycache__/
 *.pyc
+.ansible/

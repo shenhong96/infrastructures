@@ -1,6 +1,6 @@
 # OS basics on the host and inside each container Ansible can run in, adopted as found.
-# Not managed: users and SSH keys. One-off fixes (e.g. removing a stale key) run once as
-# ad-hoc commands; this role only declares the state to keep.
+# Not managed: users, and SSH keys other than Ansible's own login key. One-off fixes (e.g.
+# removing a stale key) run once as ad-hoc commands; this role only declares the state to keep.
 
 # ponytail: not the apt module; Ansible's Python on the 20.04 containers (3.9, deadsnakes)
 # has no apt bindings. Only a new container lacks these.
@@ -40,6 +40,38 @@
     - Port 2278
     - PermitRootLogin prohibit-password
   notify: Restart sshd
+
+# Ansible reaches containers over SSH (inventory `containers`), so root needs the admin key.
+# Not on the host: its authorized_keys is Proxmox's symlink into /etc/pve/priv, and the
+# key is already there.
+- name: Ansible's login key
+  when: inventory_hostname in groups.containers
+  block:
+    # sshd's StrictModes ignores the key if root's home is group- or world-writable (118 had 775).
+    - name: Root's home is not writable by others
+      ansible.builtin.file:
+        path: /root
+        mode: g-w,o-w
+
+    - name: Root's SSH folder
+      ansible.builtin.file:
+        path: /root/.ssh
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    # Matched by the key itself, so a copy with another comment is replaced, not duplicated.
+    # Other keys in the file are left alone.
+    - name: Root's authorized_keys has it
+      ansible.builtin.lineinfile:
+        path: /root/.ssh/authorized_keys
+        regexp: ^\S+ {{ admin_ssh_pubkey.split()[1] | regex_escape }}( |$)
+        line: "{{ admin_ssh_pubkey }}"
+        create: true
+        owner: root
+        group: root
+        mode: "0600"
 
 # Scripts are mirrored under files/common/ (every machine) and files/<machine>/, by
 # their path from /. Content only: existing files keep their modes (0600 or 0644).

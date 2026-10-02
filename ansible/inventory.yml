@@ -6,6 +6,9 @@ all:
   vars:
     ansible_user: root
     ansible_port: 2278
+    # Host keys are pinned in known_hosts next to this file (how to regenerate: its header), never
+    # learned on first use. ~/.ssh/known_hosts is not read.
+    ansible_ssh_common_args: -o UserKnownHostsFile={{ inventory_dir }}/known_hosts -o StrictHostKeyChecking=yes
   hosts:
     proxmox:
       ansible_host: 192.168.9.152
@@ -40,13 +43,17 @@ all:
         media:
         apps:
     containers:
-      # Commands run inside each container through `pct exec` on the host, so a container
-      # needs no SSH server. The system nc carries the SSH connection because macOS
-      # Local Network privacy blocks Homebrew's Python from the LAN. `pct` is
+      # Ansible logs in to each container's own sshd (port 2278, root, admin_ssh_pubkey)
+      # with the system ssh, which macOS Local Network privacy lets reach the LAN. That is
+      # about 3x faster per task than `pct exec` (Perl startup on every call).
+      # A new container has no key yet: bootstrap it with `-e container_connection=pct`,
+      # which runs commands through `pct exec` on the host instead (the system nc carries
+      # that SSH connection, as Homebrew's Python is blocked from the LAN). `pct` is
       # connection_plugins/pct.py: community.proxmox.proxmox_pct_remote plus a quoting fix.
       vars:
-        ansible_connection: pct
-        ansible_host: 192.168.9.152
+        container_connection: ssh
+        ansible_connection: "{{ container_connection }}"
+        ansible_host: "{{ '192.168.9.152' if container_connection == 'pct' else pct.net0 | regex_search('ip=([0-9.]+)/', '\\1') | first }}"
         ansible_paramiko_proxy_command: /usr/bin/nc 192.168.9.152 2278
         proxmox_vmid: '{{ vmid }}'
       hosts:
