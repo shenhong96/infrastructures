@@ -1,0 +1,21 @@
+# Opens PRs only; deploys stay manual through Komodo. No CI runs on these
+# PRs, so read the release notes before merging.
+version: 2
+updates:
+  - package-ecosystem: docker-compose
+    directories: ["/stacks/*"]
+    schedule: { interval: weekly }
+    ignore:
+      # Built locally, not on any registry.
+      - dependency-name: caddy-cf
+      - dependency-name: caldav2google
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories: ["/stacks/proxy", "/stacks/caldav2google/src"]
+    schedule: { interval: weekly }
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
