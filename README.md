@@ -96,12 +96,12 @@ The `proxy`, `node_exporter` and `base` roles put the files Caddy reads back; Ko
 | `healthchecks_ping_key` | job-heartbeat's ping key for every check in `heartbeat_checks` |
 | `healthchecks_api_key` *(optional)* | a read-write healthchecks.io API key; lets Ansible create/reconcile the checks by slug instead of someone doing it by hand |
 
-**New host root-crontab lines (pending; the crontab itself lives in SOPS's `secret_crontabs_b64`, which this agent doesn't edit):** schedules unchanged, each wrapped in `job-heartbeat` so a missed or failed run alerts externally:
+**New host root-crontab lines (now in SOPS's `secret_crontabs_b64`, no longer pending, but not deployed until `heartbeats_enabled` is flipped):** schedules unchanged, each wrapped in `job-heartbeat` so a missed or failed run alerts externally:
 ```
 0 0 * * 6 /usr/local/bin/job-heartbeat snapraid -- python3 /opt/snapraid-runner/snapraid-runner.py -c ~/.snapraid-runner.conf
 */5 * * * * /usr/local/bin/job-heartbeat sanoid -- bash /root/scripts/sanoid.sh
 ```
-Today's lines are the same commands without the wrapper; SnapRAID's also ends in `&& curl … <self-hosted ping URL>`. Only the `job-heartbeat` prefix is new (decision 6 also drops SnapRAID's existing ping to the self-hosted Healthchecks instance, which the hosted check replaces). The other three existing host cron jobs (`chmod`, `lxc_off.sh`, a Saturday `rename…` job) get no heartbeat (decision 16).
+Before this change the lines were the same commands without the wrapper, and SnapRAID's also ended in `&& curl … <self-hosted ping URL>`. Only the `job-heartbeat` prefix is new (decision 6 also drops SnapRAID's existing ping to the self-hosted Healthchecks instance, which the hosted check replaces). The other three existing host cron jobs (`chmod`, `lxc_off.sh`, a Saturday `rename…` job) get no heartbeat (decision 16). The `base` role asserts that a crontab mentioning `job-heartbeat` is only deployed when `heartbeats_enabled` is true, since otherwise the wrapper would be missing and these jobs would silently stop.
 
 ## Not working yet
 

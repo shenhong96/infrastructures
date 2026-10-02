@@ -80,6 +80,14 @@
     base_crontab_dir: "{{ role_path }}/files/crontabs/{{ inventory_hostname }}"
     base_secret_crontabs: "{{ secret_crontabs_b64 | default({}) }}"
   block:
+    - name: Crontabs that call job-heartbeat need it installed
+      ansible.builtin.assert:
+        that: heartbeats_enabled | default(false) | bool
+        fail_msg: a crontab calls job-heartbeat; enable heartbeats (and their secrets) first or those jobs silently stop
+        quiet: true
+      when: >-
+        base_secret_crontabs.values() | map('b64decode') | select('search', 'job-heartbeat') | list | length > 0
+
     - name: Crontabs match the repo
       ansible.builtin.command: crontab -l -u {{ item }}
       loop: "{{ query('fileglob', base_crontab_dir ~ '/*') | map('basename') | list + base_secret_crontabs | list }}"
