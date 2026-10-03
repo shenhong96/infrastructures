@@ -12,6 +12,8 @@ concurrency:
   group: gate-${{ github.event.pull_request.number }}
 jobs:
   policy:
+    # Other labels change nothing, so they don't rerun the gate (the earlier check stands).
+    if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'gate-change'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: gate # the App's key; only runs as main can read it
@@ -31,7 +33,6 @@ jobs:
           private-key: ${{ secrets.GATE_APP_KEY }}
           permission-checks: write
           permission-issues: write
-          permission-pull-requests: write
 
       # Opened before anything else runs, so any later failure leaves a failure, never an earlier
       # success. Only a failed token step posts nothing: without the credential, nothing can be.
@@ -69,6 +70,7 @@ jobs:
       # An ack counts only while the label is on, its last `labeled` event is yours, and that
       # event is later than the push (the earliest check suite of the head commit, which the
       # PR can't forge). Pushes and reopens also take the label off; the timing is the guard.
+      # (Not on opened: a new PR has no earlier push, and `gh pr create --label` would lose it.)
       - name: Your ack
         id: ack
         env:
@@ -76,7 +78,7 @@ jobs:
         run: |
           labels=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name')
           case "$ACTION" in
-            opened | reopened | synchronize)
+            reopened | synchronize)
               if grep -qx gate-change <<<"$labels"; then
                 gh api -X DELETE "repos/$REPO/issues/$PR/labels/gate-change" > /dev/null
                 labels=""
