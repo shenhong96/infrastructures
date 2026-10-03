@@ -56,21 +56,40 @@ jobs:
           permission-issues: write
           permission-pull-requests: write
 
-      # A new push takes the label off, so an ack covers only what you saw. It counts only
-      # while the label is on and its last `labeled` event is yours (the bot can label too).
+      # Opened first, so a crash from here on leaves a failure, never an earlier success.
+      - name: Start the gate check
+        id: start
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          id=$(gh api "repos/$REPO/check-runs" -f name=gate -f head_sha="$HEAD_SHA" -f status=in_progress --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+      # An ack counts only while the label is on, its last `labeled` event is yours, and that
+      # event is later than the push (the earliest check suite of the head commit, which the
+      # PR can't forge). Pushes and reopens also take the label off; the timing is the guard.
       - name: Your ack
         id: ack
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           labels=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name')
-          if [ "$ACTION" = synchronize ] && grep -qx gate-change <<<"$labels"; then
-            gh api -X DELETE "repos/$REPO/issues/$PR/labels/gate-change" > /dev/null
-            labels=""
-          fi
-          last=$(gh api --paginate "repos/$REPO/issues/$PR/events" \
-            --jq '.[] | select(.event == "labeled" and .label.name == "gate-change") | .actor.id' | tail -n 1)
-          if grep -qx gate-change <<<"$labels" && [ "$last" = "$OWNER_ID" ]; then
+          case "$ACTION" in
+            opened | reopened | synchronize)
+              if grep -qx gate-change <<<"$labels"; then
+                gh api -X DELETE "repos/$REPO/issues/$PR/labels/gate-change" > /dev/null
+                labels=""
+              fi
+              ;;
+          esac
+          pushed=$(gh api --paginate "repos/$REPO/commits/$HEAD_SHA/check-suites" \
+            --jq '.check_suites[].created_at' | sort | head -n 1)
+          event=$(gh api --paginate "repos/$REPO/issues/$PR/events" \
+            --jq '.[] | select(.event == "labeled" and .label.name == "gate-change") | "\(.actor.id) \(.created_at)"' | tail -n 1)
+          last=${event%% *}
+          at=${event#* }
+          if grep -qx gate-change <<<"$labels" && [ "$last" = "$OWNER_ID" ] \
+            && [ -n "$pushed" ] && [[ "$at" > "$pushed" ]]; then
             echo "flag=--ack" >> "$GITHUB_OUTPUT"
           fi
 
@@ -80,11 +99,18 @@ jobs:
           cat out/comment.md >> "$GITHUB_STEP_SUMMARY"
 
       # The check first: a failed comment must not keep the check from posting.
-      - name: Post the gate check and the summary
+      - name: Post the gate check
+        id: post
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          CHECK_ID: ${{ steps.start.outputs.id }}
+        run: |
+          jq 'del(.head_sha)' out/check.json | gh api -X PATCH "repos/$REPO/check-runs/$CHECK_ID" --input - > /dev/null
+
+      - name: Post the summary comment
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
-          gh api "repos/$REPO/check-runs" --input out/check.json > /dev/null
           id=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
             --jq ".[] | select(.performed_via_github_app.id == $APP_ID and (.body | startswith(\"<!-- gate -->\"))) | .id" | head -n 1)
           if [ -n "$id" ]; then
@@ -92,3 +118,13 @@ jobs:
           else
             gh api "repos/$REPO/issues/$PR/comments" -F body=@out/comment.md > /dev/null
           fi
+
+      # If the run died before the result was posted, the check says failure.
+      - name: Fail the check if the gate did not finish
+        if: failure() && steps.start.outputs.id != '' && steps.post.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          CHECK_ID: ${{ steps.start.outputs.id }}
+        run: |
+          gh api -X PATCH "repos/$REPO/check-runs/$CHECK_ID" -f status=completed -f conclusion=failure \
+            -f 'output[title]=gate did not finish' -f 'output[summary]=The gate run failed before it posted a result. See the workflow run.' > /dev/null
