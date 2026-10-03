@@ -244,6 +244,14 @@ class Blocks(GateTest):
                                                f'file_paths = ["compose.yaml", "{name}"]')
                 self.assertBlocks(pr, f"{name} is not a plain compose file")
 
+    def test_absolute_file_path_that_exists(self):
+        outside = Path(tempfile.mkdtemp()) / "evil.yaml"
+        self.addCleanup(shutil.rmtree, outside.parent, True)
+        outside.write_text(APP.format(extra="    privileged: true"))
+        pr = self.pr().stack().replace("stacks/newapp/komodo.toml", 'file_paths = ["compose.yaml"]',
+                                       f'file_paths = ["compose.yaml", "{outside}"]')
+        self.assertBlocks(pr, f"{outside} leaves the stack's folder")
+
     def test_gate_file_without_your_label(self):
         pr = self.pr().write(".github/workflows/x.yml", "on: push\n")
         self.assertBlocks(pr, "gate files changed without your gate-change label: .github/workflows/x.yml")
