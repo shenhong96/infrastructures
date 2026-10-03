@@ -1,0 +1,5 @@
+# ci runs `ansible-lint ansible/`. The encrypted files are one long line per value.
+exclude_paths:
+  - "**/*.sops.yml"
+  - ansible/collections/
+offline: true # ci installs requirements.yml itself

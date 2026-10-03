@@ -1,5 +1,5 @@
 # Opens PRs only, but a merge to main deploys within 5 minutes (Komodo's reconcile job).
-# No CI runs on these PRs, so read the release notes before merging.
+# ci and gate check these PRs, but neither reads release notes: read them before merging.
 version: 2
 updates:
   - package-ecosystem: docker-compose

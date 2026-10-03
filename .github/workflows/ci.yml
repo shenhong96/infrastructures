@@ -1,0 +1,44 @@
+# Mistakes, not security: runs the PR's own code, with a read-only token and no secrets. A PR
+# can edit this file, so it can only hide its own mistakes. The security check is gate.yml.
+name: ci
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  ci:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Tools
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install --quiet --require-hashes --only-binary :all: -r policy/requirements.txt
+          /tmp/venv/bin/pip install --quiet ansible-core==2.20.2 ansible-lint==26.1.1
+          echo /tmp/venv/bin >> "$GITHUB_PATH"
+          curl -sSfL -o /tmp/gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c -
+          sudo tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
+          cd ansible && /tmp/venv/bin/ansible-galaxy collection install -r requirements.yml -p collections
+
+      - name: Unit tests
+        run: python -m unittest discover -v tests
+
+      # No key here: nothing decrypts, and neither step needs to.
+      - name: ansible-lint and syntax check
+        run: |
+          ansible-lint ansible/
+          cd ansible && ansible-playbook site.yml --syntax-check
+
+      # --no-interpolate: the env files and variables only exist on the machines.
+      - name: docker compose config, per stack
+        run: |
+          for f in stacks/*/compose.yaml; do
+            (cd "$(dirname "$f")" && docker compose -f compose.yaml config -q --no-interpolate) ||
+              { echo "::error file=$f::docker compose config failed"; exit 1; }
+          done
