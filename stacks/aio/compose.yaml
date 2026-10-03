@@ -248,7 +248,7 @@ services:
       gethomepage.href: "http://192.168.9.151:1337"
 
   audiobookshelf:
-    image: ghcr.io/advplyr/audiobookshelf:2.36.0
+    image: ghcr.io/advplyr/audiobookshelf:2.37.1
     container_name: audiobookshelf
     ports:
       - 13378:80
@@ -374,7 +374,7 @@ services:
       logging_jobname: "containerlogs"
 
   syncthing:
-    image: ghcr.io/linuxserver/syncthing:2.0.9
+    image: ghcr.io/linuxserver/syncthing:2.1.5
     container_name: syncthing
     volumes:
       - /opt/aio/syncthing/config:/config
@@ -409,7 +409,7 @@ services:
       - /opt/aio/photoview/db_data:/var/lib/mysql
 
   photoview:
-    image: viktorstrate/photoview:2.3
+    image: viktorstrate/photoview:2.4
     container_name: photoview
     restart: always
     ports:

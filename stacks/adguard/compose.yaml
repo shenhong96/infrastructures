@@ -9,7 +9,7 @@ x-monitoring: &loki
 version: "3"
 services:
   adguardhome:
-    image: adguard/adguardhome:v0.107.59
+    image: adguard/adguardhome:v0.107.79
     container_name: adguard
     ports:
       - 53:53/tcp

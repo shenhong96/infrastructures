@@ -1,5 +1,5 @@
-# Opens PRs only; deploys stay manual through Komodo. No CI runs on these
-# PRs, so read the release notes before merging.
+# Opens PRs only, but a merge to main deploys within 5 minutes (Komodo's reconcile job).
+# No CI runs on these PRs, so read the release notes before merging.
 version: 2
 updates:
   - package-ecosystem: docker-compose
@@ -9,6 +9,9 @@ updates:
       # Built locally, not on any registry.
       - dependency-name: caddy-cf
       - dependency-name: caldav2google
+      # 2.x is a different API and storage format; speedtest-grafana reads InfluxQL 1.x.
+      - dependency-name: influxdb
+        update-types: [version-update:semver-major]
     groups:
       minor-and-patch:
         update-types: [minor, patch]
