@@ -1,7 +1,6 @@
 # The security check. pull_request_target runs this file and policy/ as they are on main,
 # never the PR's: the PR is checked out as data, and nothing from it runs. Never put
 # ${{ }} of PR-controlled fields (titles, branch names, bodies) into a run: script.
-# Reporting only, in the job summary, until the homelab-gate App posts the check.
 name: gate
 on:
   pull_request_target:
@@ -15,9 +14,35 @@ jobs:
   policy:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    environment: gate # the App's key; only runs as main can read it
     env:
+      APP_ID: "5173798" # homelab-gate's App ID (Task 5)
+      OWNER_ID: "58160889" # shenhong96: the only account whose gate-change label counts
+      REPO: ${{ github.repository }}
+      PR: ${{ github.event.pull_request.number }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      ACTION: ${{ github.event.action }}
     steps:
+      - name: The homelab-gate token
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: Iv23li1yalARGIjL6VCv # homelab-gate's Client ID (Task 5)
+          private-key: ${{ secrets.GATE_APP_KEY }}
+          permission-checks: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      # Opened before anything else runs, so any later failure leaves a failure, never an earlier
+      # success. Only a failed token step posts nothing: without the credential, nothing can be.
+      - name: Start the gate check
+        id: start
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          id=$(gh api "repos/$REPO/check-runs" -f name=gate -f head_sha="$HEAD_SHA" -f status=in_progress --jq .id)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
       - name: Main (the policy)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,7 +66,66 @@ jobs:
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c -
           sudo tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
 
+      # An ack counts only while the label is on, its last `labeled` event is yours, and that
+      # event is later than the push (the earliest check suite of the head commit, which the
+      # PR can't forge). Pushes and reopens also take the label off; the timing is the guard.
+      - name: Your ack
+        id: ack
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          labels=$(gh api "repos/$REPO/issues/$PR/labels" --jq '.[].name')
+          case "$ACTION" in
+            opened | reopened | synchronize)
+              if grep -qx gate-change <<<"$labels"; then
+                gh api -X DELETE "repos/$REPO/issues/$PR/labels/gate-change" > /dev/null
+                labels=""
+              fi
+              ;;
+          esac
+          pushed=$(gh api --paginate "repos/$REPO/commits/$HEAD_SHA/check-suites" \
+            --jq '.check_suites[].created_at' | sort | head -n 1)
+          event=$(gh api --paginate "repos/$REPO/issues/$PR/events" \
+            --jq '.[] | select(.event == "labeled" and .label.name == "gate-change") | "\(.actor.id) \(.created_at)"' | tail -n 1)
+          last=${event%% *}
+          at=${event#* }
+          if grep -qx gate-change <<<"$labels" && [ "$last" = "$OWNER_ID" ] \
+            && [ -n "$pushed" ] && [[ "$at" > "$pushed" ]]; then
+            echo "flag=--ack" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Main's policy on the PR's files
         run: |
-          /tmp/venv/bin/python main/policy/gate.py --pr pr --head-sha "$HEAD_SHA" --out out
+          /tmp/venv/bin/python main/policy/gate.py --pr pr --head-sha "$HEAD_SHA" --out out ${{ steps.ack.outputs.flag }}
           cat out/comment.md >> "$GITHUB_STEP_SUMMARY"
+
+      # The check first: a failed comment must not keep the check from posting.
+      - name: Post the gate check
+        id: post
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          CHECK_ID: ${{ steps.start.outputs.id }}
+        run: |
+          jq 'del(.head_sha)' out/check.json | gh api -X PATCH "repos/$REPO/check-runs/$CHECK_ID" --input - > /dev/null
+
+      - name: Post the summary comment
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          id=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq ".[] | select(.performed_via_github_app.id == $APP_ID and (.body | startswith(\"<!-- gate -->\"))) | .id" | head -n 1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$id" -F body=@out/comment.md > /dev/null
+          else
+            gh api "repos/$REPO/issues/$PR/comments" -F body=@out/comment.md > /dev/null
+          fi
+
+      # If the run died before the result was posted, the check says failure.
+      - name: Fail the check if the gate did not finish
+        if: failure() && steps.start.outputs.id != '' && steps.post.outcome != 'success'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          CHECK_ID: ${{ steps.start.outputs.id }}
+        run: |
+          gh api -X PATCH "repos/$REPO/check-runs/$CHECK_ID" -f status=completed -f conclusion=failure \
+            -f 'output[title]=gate did not finish' -f 'output[summary]=The gate run failed before it posted a result. See the workflow run.' > /dev/null
