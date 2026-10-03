@@ -486,7 +486,7 @@ services:
       gethomepage.href: "http://192.168.9.151:8444"
 
   pocket-id:
-    image: ghcr.io/pocket-id/pocket-id:v1.6.4
+    image: ghcr.io/pocket-id/pocket-id:v2.17.0
     container_name: pocket-id
     restart: unless-stopped
     environment:
