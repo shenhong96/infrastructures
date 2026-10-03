@@ -1,0 +1,4 @@
+services:
+  app:
+    image: busybox:1.38.0
+    privileged: true

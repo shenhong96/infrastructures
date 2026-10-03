@@ -1,0 +1,7 @@
+name: gate
+on: pull_request
+jobs:
+  gate:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: "true"
