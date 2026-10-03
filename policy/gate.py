@@ -34,10 +34,23 @@ GATE_FILES = (
 )
 CODE_DIRS = ("library", "module_utils")  # and any *_plugins folder: code Ansible loads
 
-# Host paths a container must not see: the host's own system, or Docker's socket.
-SYSTEM_PATHS = ("/etc", "/proc", "/sys", "/dev", "/run", "/var/run", "/root", "/boot", "/usr",
-                "/lib", "/bin", "/sbin", "/var/lib/docker")
-HARMLESS = {"/etc/localtime", "/etc/timezone"}
+# Compose: only the keys in use today. Anything else (volumes_from, post_start, pid: container:..,
+# extends, ...) needs a policy change first.
+SERVICE_KEYS = {
+    "build", "cap_add", "command", "container_name", "depends_on", "devices", "env_file", "environment",
+    "extra_hosts", "healthcheck", "hostname", "image", "init", "labels", "logging", "networks", "ports",
+    "privileged", "restart", "secrets", "security_opt", "shm_size", "stop_grace_period", "user",
+    "volumes", "working_dir",
+}
+TOP_KEYS = {"version", "name", "services", "volumes", "secrets", "networks", "configs"}  # and x-* blocks
+# The only fields where a "$" may stay unresolved: free text. Anywhere else it could expand to
+# something the checks would have blocked (host, unconfined, a path).
+DOLLAR_OK = {"environment", "labels", "command", "image", "healthcheck", "container_name", "hostname",
+             "ports", "extra_hosts"}
+VOLUME_TYPES = ("bind", "volume", "tmpfs")
+# A container may see host paths only strictly below /opt/<dir>/ or /mnt/<dir>/ (not Komodo's own
+# /opt/komodo) and /etc/localtime. Anything else is a policy exception.
+HOST_PATH = re.compile(r"/(opt|mnt)/(?!komodo(/|$))[^/]+/.+")
 HOST_NAMESPACES = ("network_mode", "pid", "ipc", "uts", "userns_mode", "cgroup")
 
 # Komodo: the only stack settings in use today. Anything else (post_deploy, extra_args, ...)
@@ -60,8 +73,14 @@ RISKY_TASK = re.compile(r"^\s*(?:-\s+)?(?:ansible\.(?:builtin|legacy)\.)?(shell|
 ON_CONTROL = re.compile(r"\b(delegate_to|local_action)\b|connection\s*:\s*local|\b(lookup|query)\(")
 
 
+# What a PR holds may not be UTF-8 (a PNG, Latin-1 text): decode losslessly, never raise on it.
+TEXT = {"encoding": "utf-8", "errors": "surrogateescape"}
+
+
 def git(repo, *args):
-    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout
+    # quotePath=false: git prints non-ASCII paths as they are, so added_lines can read them
+    return subprocess.run(["git", "-c", "core.quotePath=false", "-C", str(repo), *args],
+                          check=True, capture_output=True, **TEXT).stdout
 
 
 def stage_on_merge_base(pr, base_ref):
@@ -82,20 +101,22 @@ def force_text_diffs(pr):
     path.write_text("* diff\n")
 
 
-def symlinks(pr):
-    """Paths the PR adds or changes as symlinks: Docker would follow them on the host."""
+def special_files(pr):
+    """Findings for the symlinks (Docker would follow them on the host) and submodules the PR adds."""
+    kinds = {"120000": "symlinks", "160000": "submodules"}
     out = git(pr, "diff", "--cached", "--raw", "--no-renames", "-z").split("\0")
-    return [path for meta, path in zip(out[0::2], out[1::2]) if meta.split()[1] == "120000"]
+    return [f"{path}: {kinds[meta.split()[1]]} are not allowed" for meta, path in zip(out[0::2], out[1::2])
+            if meta.split()[1] in kinds]
 
 
 def base_text(pr, path):
-    r = subprocess.run(["git", "-C", str(pr), "show", f"HEAD:{path}"], capture_output=True, text=True)
+    r = subprocess.run(["git", "-C", str(pr), "show", f"HEAD:{path}"], capture_output=True, **TEXT)
     return r.stdout if r.returncode == 0 else None
 
 
 def head_text(pr, path):
     p = Path(pr) / path
-    return p.read_text() if p.is_file() else None
+    return p.read_text(**TEXT) if p.is_file() else None
 
 
 def added_lines(pr, *paths):
@@ -121,7 +142,7 @@ def secret_findings(pr):
     """Main's pre-commit hook on the PR's staged changes, with main's gitleaks config: a PR
     can't loosen either."""
     env = {**os.environ, "GITLEAKS_CONFIG": str(POLICY / "gitleaks.toml")}
-    r = subprocess.run(["bash", str(HOOK)], cwd=pr, env=env, capture_output=True, text=True)
+    r = subprocess.run(["bash", str(HOOK)], cwd=pr, env=env, capture_output=True, **TEXT)
     found = [l.removeprefix("pre-commit: ") for l in r.stderr.splitlines() if l.startswith("pre-commit: ")]
     found += [f"{f}: adds an inline {ALLOW} comment" for f, l in added_lines(pr) if ALLOW in l]
     return found or ([] if r.returncode == 0 else [f"the secret checks failed (exit {r.returncode})"])
@@ -154,16 +175,14 @@ def mount_finding(src):
         path = posixpath.normpath(src)
         return f"mount: {src}" if path == ".." or path.startswith("../") else None
     path = "/" + posixpath.normpath(src).lstrip("/")  # normpath keeps a leading //
-    if path in HARMLESS:
-        return None
-    if path == "/" or path.endswith("docker.sock") or any(path == p or path.startswith(p + "/") for p in SYSTEM_PATHS):
-        return f"mount: {path}"
-    return None
+    return None if path == "/etc/localtime" or HOST_PATH.fullmatch(path) else f"mount: {path}"
 
 
 def volume_source(v):
     if isinstance(v, dict):
-        return v.get("source") if v.get("type") == "bind" else None
+        source = v.get("source")  # a host path whatever the type says, unless it names a volume
+        named = v.get("type") == "volume" and not str(source).startswith((".", "/", "~", "$"))
+        return None if named or source is None else str(source)
     parts = str(v).split(":")
     return parts[0] if len(parts) > 1 and parts[0].startswith((".", "/", "~", "$")) else None
 
@@ -176,32 +195,75 @@ def listed(value):
     return [value] if isinstance(value, (str, dict)) else list(value or [])
 
 
-def service_findings(svc):
+def strings(value):
+    """Every string in a YAML value, the keys of its mappings too."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            yield str(k)
+            yield from strings(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            yield from strings(v)
+    elif value is not None:
+        yield str(value)
+
+
+def entry_strings(key, entry):
+    """The strings of a volumes or env_file entry, less its host path (mount_finding judges that)."""
+    own = volume_source(entry) if key == "volumes" else entry.get("path") if isinstance(entry, dict) else entry
+    parts = entry.split(":") if key == "volumes" and isinstance(entry, str) else list(strings(entry))
+    return [p for p in parts if p != own]
+
+
+def dollar_findings(svc):
     out = []
+    for key, value in svc.items():
+        if key not in DOLLAR_OK:
+            entries = listed(value) if key in ("volumes", "env_file") else [value]
+            parts = [p for e in entries for p in (entry_strings(key, e) if key in ("volumes", "env_file") else strings(e))]
+            out += [f"{key}: {p}" for p in parts if "$" in p]
+    return out
+
+
+def service_findings(svc):
+    out = [f"{key} is not allowed" for key in svc if key not in SERVICE_KEYS and key != "extends"]
     if svc.get("privileged"):
         out.append("privileged")
     out += [f"{key}: {v}" for key in ("cap_add", "devices", "device_cgroup_rules") for v in listed(svc.get(key))]
     out += ["extends"] if svc.get("extends") else []
-    # A "$" could expand to host (or unconfined): block it, like a mount path from a variable.
-    out += [f"{key}: {svc[key]}" for key in HOST_NAMESPACES if str(svc.get(key, "")) == "host" or "$" in str(svc.get(key, ""))]
-    out += [f"security_opt: {o}" for o in listed(svc.get("security_opt"))
-            if re.search(r"unconfined|label[:=]disable|\$", str(o))]
+    out += [f"{key}: host" for key in HOST_NAMESPACES if str(svc.get(key, "")) == "host"]
+    out += [f"security_opt: {o}" for o in listed(svc.get("security_opt")) if re.search(r"unconfined|label[:=]disable", str(o))]
     build = svc.get("build")
-    if isinstance(build, dict) and (build.get("privileged") or build.get("entitlements")
-                                    or str(build.get("network", "")) == "host" or "$" in str(build.get("network", ""))):
+    if isinstance(build, dict) and (build.get("privileged") or build.get("entitlements") or str(build.get("network", "")) == "host"):
         out.append("build: privileged, entitlements or host network")
     contexts = [build] if isinstance(build, str) else [build.get("context")] if isinstance(build, dict) else []
     if isinstance(build, dict):
         extra = build.get("additional_contexts")
         contexts += list(extra.values()) if isinstance(extra, dict) else [str(c).partition("=")[2] for c in listed(extra)]
     out += [f"build: {f}" for f in map(mount_finding, filter(None, contexts)) if f]
-    sources = [volume_source(v) for v in listed(svc.get("volumes"))]
+    volumes = listed(svc.get("volumes"))
+    out += [f"volumes: type: {v.get('type')}" for v in volumes if isinstance(v, dict) and v.get("type") not in VOLUME_TYPES]
+    sources = [volume_source(v) for v in volumes]
     sources += [e.get("path") if isinstance(e, dict) else e for e in listed(svc.get("env_file"))]
     out += [f for f in map(mount_finding, filter(None, sources)) if f]
+    return list(dict.fromkeys(out + dollar_findings(svc)))
+
+
+def network_findings(doc):
+    out = []
+    for key, net in (doc.get("networks") or {}).items() if isinstance(doc.get("networks"), dict) else []:
+        net = net if isinstance(net, dict) else {}
+        if net.get("external"):
+            out.append(f"networks: {key}: external")
+        name = net.get("name") or (key if net.get("external") else None)
+        if name in ("host", "none"):
+            out.append(f"networks: {key}: is the {name} network")
     return out
 
 
-def top_findings(doc):
+def top_findings(doc, compose=True):
+    """The rules for the top level of a YAML file under stacks/; compose also holds a compose
+    document to the allowed keys and to no unresolved variables."""
     out = ["include"] if doc.get("include") else []
     for vol in values(doc.get("volumes")):
         opts = vol.get("driver_opts") if isinstance(vol, dict) else None
@@ -212,23 +274,48 @@ def top_findings(doc):
         for item in values(doc.get(kind)):
             if isinstance(item, dict) and item.get("file") and (f := mount_finding(item["file"])):
                 out.append(f)
+    if compose:
+        out += [f"{key} is not allowed" for key in doc
+                if key not in TOP_KEYS and key != "include" and not str(key).startswith("x-")]
+        out += network_findings(doc)
+        out += [f"{key}: {p}" for key in sorted(TOP_KEYS - {"services"}) for p in strings(doc.get(key)) if "$" in p]
+    return list(dict.fromkeys(out))
+
+
+def named_compose_files(pr, tracked):
+    """The files the stacks' komodo.toml files name in file_paths: Komodo runs them as compose."""
+    out = set()
+    for rel in tracked:
+        if rel.endswith("/komodo.toml"):
+            try:
+                stacks = tomllib.loads((Path(pr) / rel).read_text()).get("stack", [])
+            except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+                continue
+            for stack in stacks if isinstance(stacks, list) else []:
+                paths = stack.get("config", {}).get("file_paths") if isinstance(stack, dict) else None
+                out |= {posixpath.normpath(posixpath.join(posixpath.dirname(rel), f)) for f in paths or [] if isinstance(f, str)}
     return out
 
 
 def compose_findings(pr, exceptions):
-    """Every compose file under stacks/ against the compose rules, less policy exceptions."""
+    """Every YAML file under stacks/ against the compose rules, less policy exceptions. A compose
+    document (it has services, or a komodo.toml names it) must also keep to the allowed keys."""
     import yaml
 
     out = []
-    for rel in sorted(filter(None, git(pr, "ls-files", "-z", "--", "stacks").split("\0"))):
-        if not re.search(r"\.ya?ml$", rel) or ".sops." in rel:
+    tracked = sorted(filter(None, git(pr, "ls-files", "-z", "--", "stacks").split("\0")))
+    named = named_compose_files(pr, tracked)
+    for rel in tracked:
+        if not re.search(r"\.ya?ml$", rel) or ".sops." in Path(rel).name:
             continue
         try:
             doc = load_yaml((Path(pr) / rel).read_text())
         except (yaml.YAMLError, UnicodeDecodeError) as e:
             out.append(f"{rel}: can't be read as YAML ({type(e).__name__})")
             continue
+        compose = rel in named or (isinstance(doc, dict) and "services" in doc)
         if not isinstance(doc, dict):
+            out += [f"{rel}: not a compose document"] if compose else []
             continue
         allowed = exceptions.get(rel, {})
         services = doc.get("services", {})
@@ -236,7 +323,7 @@ def compose_findings(pr, exceptions):
         for name, svc in services.items():
             out += [f"{rel}: {name}: {f}" for f in service_findings(svc if isinstance(svc, dict) else {})
                     if f not in allowed.get(name, [])]
-        out += [f"{rel}: (top level): {f}" for f in top_findings(doc) if f not in allowed.get("(top level)", [])]
+        out += [f"{rel}: (top level): {f}" for f in top_findings(doc, compose) if f not in allowed.get("(top level)", [])]
     return out
 
 
@@ -250,7 +337,7 @@ def stack_findings(stack, rel, root, exceptions):
         out.append("project_name is empty")
     if not c.get("server"):
         out.append("server is empty")
-    if c.get("server") == "proxmox" and name not in exceptions["proxmox_stacks"]:
+    if c.get("server") == "proxmox" and exceptions["proxmox_stacks"].get(name) != rel:
         out.append("a new stack on proxmox")
     paths = [c.get("env_file_path"), *c.get("file_paths", []),
              *(f.get("path") for f in c.get("config_files", []) + c.get("additional_env_files", []))]
@@ -268,8 +355,10 @@ def stack_findings(stack, rel, root, exceptions):
     if c.get("files_on_host"):
         # The compose file stays on the machine and is not in git (vpn): the folder holds only
         # komodo.toml, and Komodo never writes an env file there.
-        if name not in exceptions["files_on_host_stacks"]:
+        pin = exceptions["files_on_host"].get(name)
+        if pin is None:
             out.append("files_on_host: its compose file would not be in git")
+        out += [f"files_on_host: {k} must be {v}" for k, v in (pin or {}).items() if (rel if k == "path" else c.get(k)) != v]
         if [p.name for p in (root / rel).parent.iterdir()] != ["komodo.toml"]:
             out.append("a files_on_host folder holds only komodo.toml")
         if not str(c.get("run_directory", "")).startswith("/") or c.get("env_file_path") in (".env", "", None):
@@ -330,7 +419,7 @@ def services_images(text):
 def image_changes(pr, changed):
     out = []
     for rel in sorted(changed):
-        if rel.startswith("stacks/") and re.search(r"\.ya?ml$", rel) and ".sops." not in rel:
+        if rel.startswith("stacks/") and re.search(r"\.ya?ml$", rel) and ".sops." not in Path(rel).name:
             old, new = services_images(base_text(pr, rel)), services_images(head_text(pr, rel))
             for svc in sorted(set(old) | set(new)):
                 if old.get(svc) != new.get(svc):
@@ -386,7 +475,9 @@ def check(pr, base_ref="origin/main", ack=False):
     changed = stage_on_merge_base(pr, base_ref)
     exceptions = tomllib.loads((POLICY / "exceptions.toml").read_text())
     blocks = secret_findings(pr) + compose_findings(pr, exceptions["compose"]) + komodo_findings(pr, exceptions)
-    blocks += [f"{p}: symlinks are not allowed" for p in symlinks(pr)]
+    blocks += special_files(pr)
+    # git quotes these in a diff, where added_lines would skip them: not worth parsing, block.
+    blocks += [f"{p}: unusual file name" for p in changed if re.search(r'[\x00-\x1f\x7f"\\]', p)]
     gate = sorted(p for p in changed if is_gate_file(p))
     if gate and not ack:
         blocks.append("gate files changed without your gate-change label: " + ", ".join(gate))
@@ -407,18 +498,24 @@ def check(pr, base_ref="origin/main", ack=False):
 
 def esc(text, limit=160):
     """PR-controlled text, safe inside a Markdown list item."""
-    text = re.sub(r"[\x00-\x1f]", "?", str(text))[:limit]
+    text = re.sub(r"[\x00-\x1f]", "?", str(text).encode("utf-8", "replace").decode())[:limit]
     return re.sub(r"([\\`*_\[\]<>#|~@!])", r"\\\1", text)
+
+
+def listing(items, limit=50):
+    lines = [f"- {esc(i)}" for i in items[:limit]]
+    return lines + [f"- and {len(items) - limit} more"] * (len(items) > limit)
 
 
 def render(blocks, flags):
     lines = ["<!-- gate -->", f"### gate: {'blocked' if blocks else 'passes'}", ""]
     if blocks:
-        lines += ["**Blocks**", *[f"- {esc(b)}" for b in blocks], ""]
+        lines += ["**Blocks**", *listing(blocks), ""]
     for title, items in flags:
         if items:
-            lines += [f"**{title}**", *[f"- {esc(i)}" for i in items[:50]], ""]
-    return "\n".join(lines)
+            lines += [f"**{title}**", *listing(items), ""]
+    text = "\n".join(lines)
+    return text if len(text) <= 60000 else text[:59900] + "\n\n(cut: too long for a comment)"  # GitHub's limit is 65,536
 
 
 def main(argv=None):

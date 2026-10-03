@@ -3,6 +3,7 @@ and what the summary flags. Needs PyYAML (policy/requirements.txt); the PR tests
 gitleaks. Run from the repo root: python3 -m unittest discover tests"""
 import importlib.util
 import json
+import posixpath
 import shutil
 import subprocess
 import sys
@@ -252,6 +253,83 @@ class Blocks(GateTest):
                                        f'file_paths = ["compose.yaml", "{outside}"]')
         self.assertBlocks(pr, f"{outside} leaves the stack's folder")
 
+    def test_key_outside_the_service_allowlist(self):
+        for key, value in (("volumes_from", "[container:homepage]"), ("post_start", "[{command: id}]"),
+                           ("pid", "container:x"), ("label_file", "x.env"), ("gpus", "all")):
+            with self.subTest(key=key):
+                self.assertBlocks(self.pr().stack(compose=APP.format(extra=f"    {key}: {value}")), f"{key} is not allowed")
+
+    def test_top_level_key_outside_the_allowlist(self):
+        self.assertBlocks(self.pr().stack(compose=APP.format(extra="") + "weird: 1\n"), "(top level): weird is not allowed")
+
+    def test_unknown_key_in_a_file_with_no_services(self):
+        self.assertBlocks(self.pr().stack(compose="weird: 1\n"), "(top level): weird is not allowed")
+
+    def test_mount_outside_opt_and_mnt(self):
+        for path in ("/var", "/var/lib", "/home", "/var/spool/cron", "/opt", "/mnt", "/tmp", "/srv", "/media",
+                     "/opt/komodo", "/opt/komodo/keys", "/etc/localtime/x", "/opt/../etc"):
+            with self.subTest(path=path):
+                pr = self.pr().stack(compose=APP.format(extra=f"    volumes:\n      - {path}:/h"))
+                self.assertBlocks(pr, "mount: " + posixpath.normpath(path))
+
+    def test_variable_in_a_field_that_is_not_free_text(self):
+        for key, value in (("user", "${U}"), ("working_dir", "/a${B}"), ("depends_on", '["${D}"]')):
+            with self.subTest(key=key):
+                self.assertBlocks(self.pr().stack(compose=APP.format(extra=f"    {key}: {value}")), f"{key}: ")
+
+    def test_volume_type_from_a_variable(self):
+        extra = "    volumes:\n      - type: ${T:-bind}\n        source: /\n        target: /h"
+        self.assertBlocks(self.pr().stack(compose=APP.format(extra=extra)), "volumes: type: ${T:-bind}")
+
+    def test_dict_volume_source_is_a_host_path_whatever_its_type(self):
+        extra = "    volumes:\n      - type: tmpfs\n        source: /root\n        target: /h"
+        self.assertBlocks(self.pr().stack(compose=APP.format(extra=extra)), "mount: /root")
+
+    def test_network_named_host(self):
+        compose = APP.format(extra="    networks: [h]") + "networks:\n  h:\n    external: true\n    name: host\n"
+        self.assertBlocks(self.pr().stack(compose=compose), "networks: h: is the host network")
+
+    def test_external_network_not_in_policy(self):
+        compose = APP.format(extra="    networks: [h]") + "networks:\n  h:\n    external: true\n"
+        self.assertBlocks(self.pr().stack(compose=compose), "networks: h: external")
+
+    def test_files_on_host_stack_repointed(self):
+        pr = self.pr().replace("stacks/vpn/komodo.toml", 'server = "vpn"', 'server = "apps"')
+        pr.replace("stacks/vpn/komodo.toml", 'run_directory = "/root"', 'run_directory = "/opt/new"')
+        self.assertBlocks(pr, "files_on_host: server must be vpn")
+        self.assertBlocks(pr, "files_on_host: run_directory must be /root")
+
+    def test_files_on_host_stack_in_another_folder(self):
+        pr = self.pr()
+        shutil.move(pr.dir / "stacks/vpn", pr.dir / "stacks/vpn2")
+        self.assertBlocks(pr, "files_on_host: path must be stacks/vpn/komodo.toml")
+
+    def test_proxmox_name_in_another_folder(self):
+        pr = self.pr().stack(name="zzz", server="proxmox").replace("stacks/zzz/komodo.toml", 'name = "zzz"', 'name = "host-monitoring"')
+        shutil.rmtree(pr.dir / "stacks/host-monitoring")
+        self.assertBlocks(pr, "a new stack on proxmox")
+
+    def test_marker_in_a_path_git_would_quote(self):
+        pr = self.pr().write("stacks/canary/\u00e9.txt", "x # gitleaks:" + "allow\n")
+        self.assertBlocks(pr, "inline gitleaks")
+
+    def test_unusual_file_name(self):
+        for name in ('a"b.txt', "a\\b.txt", "a\tb.txt", "a\nb.txt"):
+            with self.subTest(name=name):
+                self.assertBlocks(self.pr().write(f"stacks/canary/{name}", "x\n"), "unusual file name")
+
+    def test_submodule(self):
+        pr = self.pr()
+        sub = pr.dir / "stacks/sub"
+        sub.mkdir()
+        for args in (["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "s"]):
+            subprocess.run([*GIT, "-C", str(sub), *args], check=True)
+        self.assertBlocks(pr, "stacks/sub: submodules are not allowed")
+
+    def test_compose_file_inside_a_sops_named_folder(self):
+        pr = self.pr().write("stacks/canary/a.sops.d/evil.yaml", APP.format(extra="    privileged: true"))
+        self.assertBlocks(pr, "stacks/canary/a.sops.d/evil.yaml: app: privileged")
+
     def test_gate_file_without_your_label(self):
         pr = self.pr().write(".github/workflows/x.yml", "on: push\n")
         self.assertBlocks(pr, "gate files changed without your gate-change label: .github/workflows/x.yml")
@@ -271,6 +349,20 @@ class Passes(GateTest):
         flags = self.assertPasses(self.pr().stack())
         self.assertEqual(flags["Stacks"], ["stacks/newapp: newapp on apps"])
         self.assertIn("(not pinned by digest)", flags["Images"][0])
+
+    def test_variables_in_free_text_and_a_named_volume(self):
+        extra = ("    environment:\n      A: ${X}\n    command: echo ${Y}\n    volumes:\n"
+                 "      - type: volume\n        source: data\n        target: /d\n      - /opt/newapp/data:/data")
+        self.assertPasses(self.pr().stack(compose=APP.format(extra=extra)))
+
+    def test_mount_below_a_second_level_directory(self):
+        pr = self.pr().stack(compose=APP.format(extra="    volumes:\n      - /opt/newapp/data:/data\n      - /mnt/ssd/x:/y"))
+        self.assertPasses(pr)
+
+    def test_binary_file_in_a_stack(self):
+        pr = self.pr()
+        (pr.dir / "stacks/canary/logo.png").write_bytes(bytes(range(256)))
+        self.assertPasses(pr)
 
     def test_gate_file_with_your_label(self):
         flags = self.assertPasses(self.pr().write(".github/workflows/x.yml", "on: push\n"), ack=True)
@@ -329,6 +421,11 @@ class Units(unittest.TestCase):
     def test_gitattributes_is_a_gate_file(self):
         for path in (".gitattributes", "stacks/x/.gitattributes", "ansible/roles/y/files/.gitattributes"):
             self.assertTrue(gate.is_gate_file(path), path)
+
+    def test_summary_is_capped(self):
+        text = gate.render([f"stacks/x/compose.yaml: finding number {i}" for i in range(2000)], [("Images", ["i"] * 2000)])
+        self.assertLess(len(text), 60000)
+        self.assertIn("- and 1950 more", text)
 
     def test_harmless_mounts(self):
         for src in ("./config", "/etc/localtime", "/mnt/storage/media", "/opt/caddy/conf", "data/../config"):
