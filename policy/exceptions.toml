@@ -23,8 +23,8 @@ calibre = ["security_opt: seccomp:unconfined"]
 audiobookshelf = ["mount: /mnt/books"]
 syncthing = ["mount: /mnt/ssd"]
 photoview = ["mount: /mnt/photos"]
-# An external network is a policy entry: the gate can't see what it is on the host.
-"(top level)" = ["networks: traefik: external"]
+# An external network is a policy entry, pinned to its whole definition: the gate can't see what it is on the host.
+"(top level)" = ['networks: traefik: external {"external": true}']
 
 [compose."stacks/host-monitoring/compose.yaml"]
 scrutiny = [
@@ -69,4 +69,4 @@ mariadb = ["security_opt: seccomp:unconfined", "security_opt: apparmor:unconfine
 
 [compose."stacks/traefik/compose.yaml"]
 traefik = ["mount: /var/run/docker.sock", "mount: /tmp/traefik-logs"]
-"(top level)" = ["networks: traefik: external"]
+"(top level)" = ['networks: traefik: external {"external": true}']

@@ -74,13 +74,14 @@ ON_CONTROL = re.compile(r"\b(delegate_to|local_action)\b|connection\s*:\s*local|
 
 
 # What a PR holds may not be UTF-8 (a PNG, Latin-1 text): decode losslessly, never raise on it.
-TEXT = {"encoding": "utf-8", "errors": "surrogateescape"}
+TEXT = {"encoding": "utf-8", "errors": "surrogateescape"}  # for decode() and subprocess alike
 
 
 def git(repo, *args):
     # quotePath=false: git prints non-ASCII paths as they are, so added_lines can read them
-    return subprocess.run(["git", "-c", "core.quotePath=false", "-C", str(repo), *args],
-                          check=True, capture_output=True, **TEXT).stdout
+    # bytes, decoded here: text mode would turn a bare \r in a diff into a line break
+    out = subprocess.run(["git", "-c", "core.quotePath=false", "-C", str(repo), *args], check=True, capture_output=True).stdout
+    return out.decode(**TEXT)
 
 
 def stage_on_merge_base(pr, base_ref):
@@ -121,13 +122,18 @@ def head_text(pr, path):
 
 def added_lines(pr, *paths):
     """(file, line) for every line the PR adds, under paths."""
-    out, f = [], None
+    out, f, in_hunk = [], None, False
     diff = git(pr, "diff", "--cached", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--", *paths)
-    for line in diff.splitlines():
-        if line.startswith("+++ "):
+    for line in diff.split("\n"):  # not splitlines: a bare \r in an added line is not a line break
+        if line.startswith("diff --git "):  # a hunk's lines all start with +, - or a space, never this
+            f, in_hunk = None, False
+        elif in_hunk:
+            if line.startswith("+") and f:
+                out.append((f, line[1:]))
+        elif line.startswith("+++ "):  # a header, only before the file's first hunk: an added "++ x" looks the same
             f = line[6:] if line.startswith("+++ b/") else None
-        elif line.startswith("+") and f:
-            out.append((f, line[1:]))
+        elif line.startswith("@@"):
+            in_hunk = True
     return out
 
 
@@ -254,7 +260,7 @@ def network_findings(doc):
     for key, net in (doc.get("networks") or {}).items() if isinstance(doc.get("networks"), dict) else []:
         net = net if isinstance(net, dict) else {}
         if net.get("external"):
-            out.append(f"networks: {key}: external")
+            out.append(f"networks: {key}: external {json.dumps(net, sort_keys=True, default=str)}")  # the whole definition
         name = net.get("name") or (key if net.get("external") else None)
         if name in ("host", "none"):
             out.append(f"networks: {key}: is the {name} network")
@@ -283,10 +289,11 @@ def top_findings(doc, compose=True):
 
 
 def named_compose_files(pr, tracked):
-    """The files the stacks' komodo.toml files name in file_paths: Komodo runs them as compose."""
+    """The files the stacks' TOML files (any name: komodo_findings reads them all) name in
+    file_paths: Komodo runs them as compose."""
     out = set()
     for rel in tracked:
-        if rel.endswith("/komodo.toml"):
+        if rel.endswith(".toml"):
             try:
                 stacks = tomllib.loads((Path(pr) / rel).read_text()).get("stack", [])
             except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
@@ -434,7 +441,7 @@ def stacks_touched(pr, changed):
     for folder in sorted({"/".join(p.split("/")[:2]) for p in changed if p.startswith("stacks/") and p.count("/") >= 2}):
         try:
             stacks = tomllib.loads((Path(pr) / folder / "komodo.toml").read_text()).get("stack", [])
-        except (OSError, tomllib.TOMLDecodeError):
+        except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
             stacks = []
         names = [f"{s.get('name')} on {s.get('config', {}).get('server')}" for s in stacks]
         out.append(f"{folder}: {', '.join(names) or 'no Komodo stack'}")

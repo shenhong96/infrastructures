@@ -330,6 +330,30 @@ class Blocks(GateTest):
         pr = self.pr().write("stacks/canary/a.sops.d/evil.yaml", APP.format(extra="    privileged: true"))
         self.assertBlocks(pr, "stacks/canary/a.sops.d/evil.yaml: app: privileged")
 
+    def test_compose_file_named_by_a_toml_that_is_not_komodo_toml(self):
+        pr = self.pr().stack(name="n2", compose=APP.format(extra="    networks: [h]"))
+        pr.write("stacks/n2/extra.yaml", "networks:\n  h:\n    external: true\n    name: host\n")
+        pr.write("stacks/n2/zz.toml", STACK.format(name="n2", server="apps", extra="").replace(
+            'file_paths = ["compose.yaml"]', 'file_paths = ["compose.yaml", "extra.yaml"]'))
+        self.assertBlocks(pr, "stacks/n2/extra.yaml: (top level): networks: h: is the host network")
+
+    def test_added_line_that_looks_like_a_file_header(self):
+        pr = self.pr().write("stacks/canary/n.txt", "++ x\nt # gitleaks:" + "allow\n")
+        self.assertBlocks(pr, "inline gitleaks")
+
+    def test_added_line_after_a_carriage_return(self):
+        pr = self.pr().write("stacks/canary/n.txt", "a\rt # gitleaks:" + "allow\r")
+        self.assertBlocks(pr, "inline gitleaks")
+
+    def test_komodo_toml_that_is_not_utf8(self):
+        pr = self.pr().stack()
+        (pr.dir / "stacks/newapp/komodo.toml").write_bytes(b"\xff\xfe")
+        self.assertBlocks(pr, "stacks/newapp/komodo.toml: not valid TOML")
+
+    def test_external_network_pinned_to_its_definition(self):
+        pr = self.pr().replace("stacks/aio/compose.yaml", "traefik:\n    external: true", "traefik:\n    external: true\n    name: immich_default")
+        self.assertBlocks(pr, "networks: traefik: external")
+
     def test_gate_file_without_your_label(self):
         pr = self.pr().write(".github/workflows/x.yml", "on: push\n")
         self.assertBlocks(pr, "gate files changed without your gate-change label: .github/workflows/x.yml")
