@@ -82,6 +82,9 @@ github_rulesets:
     enforcement: active
     conditions: { ref_name: { include: ["~DEFAULT_BRANCH"], exclude: [] } }
     bypass_actors:
-      - { actor_id: 5, actor_type: RepositoryRole, bypass_mode: pull_request } # 5: the admin role
+      - { actor_id: 5, actor_type: RepositoryRole, bypass_mode: always } # 5: the admin role
+    # always, not pull_request: with pull_request, GitHub's UI and gh show your green PRs as
+    # BLOCKED (no merge button), though the API merges them. main-checks still makes you use a
+    # PR with both checks green, so always adds no way around them.
     rules:
       - type: update # GitHub drops update_allows_fetch_and_merge: false, its default
