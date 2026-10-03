@@ -101,3 +101,12 @@
   gather_facts: false # nothing uses facts
   roles:
     - tailscale
+
+# This repo's GitHub settings and rulesets, with your token: laptop only, never Semaphore.
+- name: GitHub
+  hosts: localhost
+  connection: local
+  tags: github
+  gather_facts: false
+  roles:
+    - github

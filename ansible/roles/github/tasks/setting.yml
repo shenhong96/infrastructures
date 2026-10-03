@@ -1,0 +1,24 @@
+# One entry of github_settings: read it, show a difference (a change in --check), write it.
+- name: Read the setting
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: "{{ setting.path }}"
+    api_status: "{{ setting.status | default([200]) }}"
+
+- name: Compare the setting
+  ansible.builtin.set_fact:
+    github_have: "{{ github_api_result.json | dict2items | selectattr('key', 'in', setting.want.keys() | list) | items2dict }}"
+
+- name: Show the difference
+  ansible.builtin.debug:
+    msg: { setting: "{{ setting.label }}", have: "{{ github_have }}", want: "{{ setting.want }}" }
+  changed_when: true
+  when: github_have | combine(setting.want, recursive=True) != github_have
+
+- name: Write the setting
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: "{{ setting.path }}"
+    api_method: "{{ setting.method }}"
+    api_body: "{{ setting.want }}"
+  when: github_have | combine(setting.want, recursive=True) != github_have and not ansible_check_mode

@@ -1,0 +1,149 @@
+# This repo's settings and rulesets on GitHub (the desired state is in defaults/main.yml).
+# Laptop only: it runs on localhost with your token, which gh hands over at run time.
+- name: Your GitHub token, from gh (never stored)
+  ansible.builtin.set_fact:
+    github_token: "{{ lookup('ansible.builtin.pipe', 'gh auth token --user ' ~ github_admin) }}"
+  no_log: true
+
+- name: Settings
+  ansible.builtin.include_tasks: setting.yml
+  loop: "{{ github_settings }}"
+  loop_control:
+    loop_var: setting
+    label: "{{ setting.label }}"
+
+# The label that acks a change to the gate's own files; the gate checks that you added it.
+- name: Read the gate-change label
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: repos/{{ github_repo }}/labels/{{ github_label.name }}
+    api_status: [200, 404]
+
+- name: Create the gate-change label
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: repos/{{ github_repo }}/labels
+    api_method: POST
+    api_body: "{{ github_label }}"
+  when: github_api_result.status == 404 and not ansible_check_mode
+
+- name: The gate-change label is missing
+  ansible.builtin.debug:
+    msg: "{{ github_label.name }} would be created"
+  changed_when: true
+  when: github_api_result.status == 404 and ansible_check_mode
+
+# The environment that holds the App's key: only workflows running as main can read it.
+- name: Read the gate environment
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: repos/{{ github_repo }}/environments/gate
+    api_status: [200, 404]
+
+- name: Compare the gate environment
+  ansible.builtin.set_fact:
+    github_env_ok: >-
+      {{ github_api_result.status == 200
+         and github_api_result.json.deployment_branch_policy == {'protected_branches': false, 'custom_branch_policies': true} }}
+
+- name: The gate environment differs
+  ansible.builtin.debug:
+    msg: gate would be created or set to custom branch policies
+  changed_when: true
+  when: not github_env_ok
+
+- name: Write the gate environment
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: repos/{{ github_repo }}/environments/gate
+    api_method: PUT
+    api_body: { deployment_branch_policy: { protected_branches: false, custom_branch_policies: true } }
+  when: not github_env_ok and not ansible_check_mode
+
+- name: Read the gate environment's branches
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: repos/{{ github_repo }}/environments/gate/deployment-branch-policies
+    api_status: [200, 404]
+
+- name: Compare the gate environment's branches
+  ansible.builtin.set_fact:
+    github_env_branches: >-
+      {{ github_api_result.json.branch_policies | default([]) | map(attribute='name') | list
+         if github_api_result.status == 200 else [] }}
+
+- name: Only main may use the gate environment
+  ansible.builtin.assert:
+    that: github_env_branches in [[], ['main']]
+    fail_msg: "gate allows {{ github_env_branches }}: remove all but main in the repo settings"
+
+- name: The gate environment's branch rule is missing
+  ansible.builtin.debug:
+    msg: main would be added
+  changed_when: true
+  when: github_env_branches == []
+
+- name: Add main to the gate environment
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: repos/{{ github_repo }}/environments/gate/deployment-branch-policies
+    api_method: POST
+    api_body: { name: main, type: branch }
+  when: github_env_branches == [] and not ansible_check_mode
+
+# The bot: a collaborator with Write, or an invitation it hasn't accepted yet.
+- name: The bot's access
+  when: github_bot | length > 0
+  block:
+    - name: Read the bot's role
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: repos/{{ github_repo }}/collaborators/{{ github_bot }}/permission
+
+    - name: Keep the bot's role
+      ansible.builtin.set_fact:
+        github_bot_role: "{{ github_api_result.json.role_name }}"
+
+    - name: Read the open invitations
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: repos/{{ github_repo }}/invitations
+
+    - name: Compare the bot's access
+      ansible.builtin.set_fact:
+        github_bot_ok: >-
+          {{ github_bot_role == 'write'
+             or github_api_result.json | selectattr('invitee.login', 'eq', github_bot) | list | length > 0 }}
+
+    - name: The bot has no Write access or invitation
+      ansible.builtin.debug:
+        msg: "{{ github_bot }} is {{ github_bot_role }}: it would be invited with Write"
+      changed_when: true
+      when: not github_bot_ok
+
+    - name: Invite the bot with Write
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: repos/{{ github_repo }}/collaborators/{{ github_bot }}
+        api_method: PUT
+        api_body: { permission: push }
+      when: not github_bot_ok and not ansible_check_mode
+
+- name: Rulesets on main
+  when: github_gate_app_id | int > 0
+  block:
+    - name: Read the rulesets
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: repos/{{ github_repo }}/rulesets
+
+    - name: Keep their IDs
+      ansible.builtin.set_fact:
+        github_ruleset_ids: "{{ github_api_result.json | items2dict(key_name='name', value_name='id') }}"
+
+    - name: Each ruleset
+      ansible.builtin.include_tasks: ruleset.yml
+      loop: "{{ github_rulesets }}"
+      loop_control:
+        loop_var: ruleset
+        label: "{{ ruleset.name }}"

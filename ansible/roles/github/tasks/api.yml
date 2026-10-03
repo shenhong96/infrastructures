@@ -1,0 +1,19 @@
+# One call to GitHub's REST API: api_method (GET) on api_path with api_body, answer in
+# github_api_result. Never logged: the headers hold your token. Reads also run in --check;
+# every write is guarded by the caller.
+- name: GitHub API call
+  ansible.builtin.uri:
+    url: "{{ github_api }}{{ api_path }}"
+    method: "{{ api_method | default('GET') }}"
+    body_format: json
+    body: "{{ api_body | default(omit) }}"
+    headers:
+      Authorization: Bearer {{ github_token }}
+      Accept: application/vnd.github+json
+      X-GitHub-Api-Version: "2022-11-28"
+    status_code: "{{ api_status | default([200, 201, 204]) }}"
+    return_content: true
+  register: github_api_result
+  check_mode: false
+  changed_when: false
+  no_log: true

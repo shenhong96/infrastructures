@@ -1,0 +1,28 @@
+# One entry of github_rulesets, matched by name: create it, or replace it when it differs.
+- name: Read the ruleset
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: repos/{{ github_repo }}/rulesets/{{ github_ruleset_ids[ruleset.name] }}
+  when: ruleset.name in github_ruleset_ids
+
+- name: Compare the ruleset
+  ansible.builtin.set_fact:
+    github_have: >-
+      {{ (github_api_result.json | dict2items | selectattr('key', 'in', ruleset.keys() | list) | items2dict
+          | combine({'rules': github_api_result.json.rules | sort(attribute='type')}))
+         if ruleset.name in github_ruleset_ids else {} }}
+    github_want: "{{ ruleset | combine({'rules': ruleset.rules | sort(attribute='type')}) }}"
+
+- name: Show the difference
+  ansible.builtin.debug:
+    msg: { ruleset: "{{ ruleset.name }}", have: "{{ github_have }}", want: "{{ github_want }}" }
+  changed_when: true
+  when: github_have != github_want
+
+- name: Write the ruleset
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: repos/{{ github_repo }}/rulesets{{ ('/' ~ github_ruleset_ids[ruleset.name]) if ruleset.name in github_ruleset_ids else '' }}
+    api_method: "{{ 'PUT' if ruleset.name in github_ruleset_ids else 'POST' }}"
+    api_body: "{{ ruleset }}"
+  when: github_have != github_want and not ansible_check_mode

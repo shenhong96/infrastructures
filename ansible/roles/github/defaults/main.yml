@@ -1,0 +1,86 @@
+# This repo's GitHub settings and rulesets: the desired state. Laptop only, with your token
+# from gh at run time: ansible-playbook site.yml --tags github [--check --diff]
+github_admin: shenhong96
+github_repo: shenhong96/infrastructures
+github_api: https://api.github.com/
+
+# The account Claude's cloud sessions push as (Write). Empty until it exists.
+github_bot: ""
+# The homelab-gate App's numeric App ID: the required `gate` check must come from it.
+# 0 until the App exists; the rulesets wait for it.
+github_gate_app_id: 0
+github_actions_app_id: 15368 # GitHub Actions, which posts `ci`
+
+# Read, compare, write only on a difference. `want` holds only the fields this role owns.
+github_settings:
+  - label: repository settings
+    path: repos/{{ github_repo }}
+    method: PATCH
+    want:
+      allow_squash_merge: true
+      allow_merge_commit: false
+      allow_rebase_merge: false
+      allow_auto_merge: false # the bot could queue a merge
+      delete_branch_on_merge: true
+      security_and_analysis:
+        secret_scanning: { status: enabled }
+        secret_scanning_push_protection: { status: enabled }
+  - label: Actions, listed actions only
+    path: repos/{{ github_repo }}/actions/permissions
+    method: PUT
+    want: { enabled: true, allowed_actions: selected, sha_pinning_required: true }
+  - label: the list of allowed actions
+    path: repos/{{ github_repo }}/actions/permissions/selected-actions
+    method: PUT
+    status: [200, 409] # 409 until Actions are set to listed actions only
+    want:
+      github_owned_allowed: false
+      verified_allowed: false
+      patterns_allowed:
+        - actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        - actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+  - label: the default workflow token
+    path: repos/{{ github_repo }}/actions/permissions/workflow
+    method: PUT
+    want: { default_workflow_permissions: read, can_approve_pull_request_reviews: false }
+  - label: approval for outside contributors' workflows
+    path: repos/{{ github_repo }}/actions/permissions/fork-pr-contributor-approval
+    method: PUT
+    want: { approval_policy: all_external_contributors }
+
+github_label: { name: gate-change, color: d93f0b, description: "Owner's ack for a change to the gate's own files" }
+
+# Rulesets on main, written in full: a PUT replaces the whole ruleset.
+github_rulesets:
+  - name: main-checks
+    target: branch
+    enforcement: active
+    conditions: { ref_name: { include: ["~DEFAULT_BRANCH"], exclude: [] } }
+    bypass_actors: []
+    rules:
+      - type: deletion
+      - type: non_fast_forward
+      - type: pull_request
+        parameters:
+          required_approving_review_count: 0
+          dismiss_stale_reviews_on_push: false
+          require_code_owner_review: false
+          require_last_push_approval: false
+          required_review_thread_resolution: false
+          allowed_merge_methods: [squash]
+      - type: required_status_checks
+        parameters:
+          strict_required_status_checks_policy: true
+          do_not_enforce_on_create: false
+          required_status_checks:
+            - { context: ci, integration_id: "{{ github_actions_app_id | int }}" }
+            - { context: gate, integration_id: "{{ github_gate_app_id | int }}" }
+  - name: main-owner
+    target: branch
+    enforcement: active
+    conditions: { ref_name: { include: ["~DEFAULT_BRANCH"], exclude: [] } }
+    bypass_actors:
+      - { actor_id: 5, actor_type: RepositoryRole, bypass_mode: pull_request } # 5: the admin role
+    rules:
+      - type: update
+        parameters: { update_allows_fetch_and_merge: false }
