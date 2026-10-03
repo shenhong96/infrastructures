@@ -5,7 +5,7 @@ github_repo: shenhong96/infrastructures
 github_api: https://api.github.com/
 
 # The account Claude's cloud sessions push as (Write). Empty until it exists.
-github_bot: ""
+github_bot: shenhong96-bot
 # The homelab-gate App's numeric App ID: the required `gate` check must come from it.
 # 0 until the App exists; the rulesets wait for it.
 github_gate_app_id: 5173798
