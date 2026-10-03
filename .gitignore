@@ -46,3 +46,4 @@ ansible/collections/
 __pycache__/
 *.pyc
 .ansible/
+.venv/

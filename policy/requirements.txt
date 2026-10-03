@@ -1,0 +1,6 @@
+# The gate's only dependency, hash-pinned: wheels for ubuntu-24.04's Python 3.12 (the gate
+# job), 3.13, and the Mac's Homebrew 3.14.
+pyyaml==6.0.3 \
+    --hash=sha256:ba1cc08a7ccde2d2ec775841541641e4548226580ab850948cbfda66a1befcdc \
+    --hash=sha256:0f29edc409a6392443abf94b9cf89ce99889a1dd5376d94316ae5145dfedd5d6 \
+    --hash=sha256:34d5fcd24b8445fadc33f9cf348c1047101756fd760b4dacb5c3e99755703310
