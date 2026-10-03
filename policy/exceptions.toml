@@ -1,0 +1,72 @@
+# What the gate's compose and Komodo rules would block, allowed as it is today (2026-10-03).
+# policy/ is a gate file: a new entry passes only with your gate-change label.
+
+# Stacks Komodo may run on the hypervisor, each with its komodo.toml: the name alone isn't enough.
+[proxmox_stacks]
+canary-proxmox = "stacks/canary/komodo.toml"
+host-monitoring = "stacks/host-monitoring/komodo.toml"
+
+# Stacks whose compose file stays on the machine, out of git: every setting pinned as it is today.
+[files_on_host.vpn]
+path = "stacks/vpn/komodo.toml"
+server = "vpn"
+run_directory = "/root"
+file_paths = ["docker-compose.yml"]
+env_file_path = "komodo.env"
+
+# compose."<file>".<service> = the findings allowed, exactly as the gate prints them.
+[compose."stacks/aio/compose.yaml"]
+homepage = ["mount: /var/run/docker.sock", "mount: /mnt/appdata", "mount: /mnt/ssd"]
+webtop = ["security_opt: seccomp:unconfined", "mount: /var/run/docker.sock", "mount: /mnt/appdata", "mount: /mnt/ssd"]
+olivetin = ["mount: /var/run/docker.sock", "mount: /mnt/appdata", "mount: /mnt/ssd"]
+calibre = ["security_opt: seccomp:unconfined"]
+audiobookshelf = ["mount: /mnt/books"]
+syncthing = ["mount: /mnt/ssd"]
+photoview = ["mount: /mnt/photos"]
+# An external network is a policy entry, pinned to its whole definition: the gate can't see what it is on the host.
+"(top level)" = ['networks: traefik: external {"external": true}']
+
+[compose."stacks/host-monitoring/compose.yaml"]
+scrutiny = [
+  "privileged", "cap_add: SYS_RAWIO", "cap_add: SYS_ADMIN", "mount: /run/udev",
+  "devices: /dev/sda", "devices: /dev/sdb", "devices: /dev/sdc", "devices: /dev/sdd",
+  "devices: /dev/sde", "devices: /dev/sdf", "devices: /dev/sdg",
+  "devices: /dev/nvme0", "devices: /dev/nvme1", "devices: /dev/nvme2",
+]
+dash = ["privileged", "mount: /"]
+node-exporter = ["mount: /proc", "mount: /sys", "mount: /"]
+
+# The paths come from the stack's env file, so the gate can't see them.
+[compose."stacks/immich/compose.yaml"]
+immich-server = ["mount: ${UPLOAD_LOCATION}"]
+database = ["mount: ${DB_DATA_LOCATION}"]
+
+# Komodo's own data and secrets.
+[compose."stacks/komodo/compose.yaml"]
+mongo = ["mount: /opt/komodo/mongo/data", "mount: /opt/komodo/mongo/configdb"]
+core = ["mount: /opt/komodo/keys"]
+"(top level)" = [
+  "mount: /opt/komodo/secrets/KOMODO_DATABASE_USERNAME", "mount: /opt/komodo/secrets/KOMODO_DATABASE_PASSWORD",
+  "mount: /opt/komodo/secrets/KOMODO_INIT_ADMIN_USERNAME", "mount: /opt/komodo/secrets/KOMODO_INIT_ADMIN_PASSWORD",
+  "mount: /opt/komodo/secrets/KOMODO_JWT_SECRET", "mount: /opt/komodo/secrets/KOMODO_WEBHOOK_SECRET",
+]
+
+[compose."stacks/monitoring-apps/compose.yaml"]
+alloy = ["mount: /var/run/docker.sock"]
+
+[compose."stacks/monitoring-gitlab/compose.yaml"]
+promtail = ["mount: /var/run/docker.sock", "mount: /var/log"]
+
+[compose."stacks/monitoring-nextcloud/compose.yaml"]
+promtail = ["mount: /var/run/docker.sock", "mount: /var/log"]
+
+[compose."stacks/monitoring-vpn/compose.yaml"]
+alloy = ["mount: /var/run/docker.sock"]
+
+[compose."stacks/photoprism/compose.yaml"]
+photoprism = ["security_opt: seccomp:unconfined", "security_opt: apparmor:unconfined"]
+mariadb = ["security_opt: seccomp:unconfined", "security_opt: apparmor:unconfined"]
+
+[compose."stacks/traefik/compose.yaml"]
+traefik = ["mount: /var/run/docker.sock", "mount: /tmp/traefik-logs"]
+"(top level)" = ['networks: traefik: external {"external": true}']
