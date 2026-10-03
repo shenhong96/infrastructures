@@ -272,7 +272,7 @@ services:
 
   grafana:
     restart: always
-    image: grafana/grafana:6.7.2
+    image: grafana/grafana:13.2.3
     volumes:
       - "./speedtest-grafana/provisioning:/etc/grafana/provisioning:ro"
     ports:
