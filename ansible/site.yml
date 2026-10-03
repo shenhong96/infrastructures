@@ -106,7 +106,7 @@
 - name: GitHub
   hosts: localhost
   connection: local
-  tags: github
+  tags: [github, never] # only with --tags github
   gather_facts: false
   roles:
     - github
