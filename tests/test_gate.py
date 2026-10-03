@@ -104,6 +104,12 @@ class GateTest(unittest.TestCase):
 
 
 class Blocks(GateTest):
+    def key_text(self):
+        key = Path(tempfile.mkdtemp()) / "deploy_key"
+        self.addCleanup(shutil.rmtree, key.parent, True)
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)], check=True)
+        return key.read_text()
+
     def test_plaintext_sops_file(self):
         self.assertBlocks(self.pr().write("stacks/canary/extra.sops.env", "A=plain\n"), "not fully SOPS-encrypted")
 
@@ -194,6 +200,50 @@ class Blocks(GateTest):
         pr = self.pr().replace("stacks/adguard/komodo.toml", "auto_update = false", "auto_update = true")
         self.assertBlocks(pr, "auto_update must be false")
 
+    def test_gitattributes_and_nul_bytes_cant_hide_a_secret(self):
+        for attributes, nul in (("* -diff\n", ""), ("* binary\n", ""), (None, "\0")):
+            with self.subTest(attributes=attributes, nul=nul):
+                pr = self.pr().write("stacks/canary/deploy_key", self.key_text() + nul)
+                self.assertBlocks(pr if attributes is None else pr.write(".gitattributes", attributes), "gitleaks flagged")
+
+    def test_compose_file_with_only_an_include(self):
+        self.assertBlocks(self.pr().stack(compose="include:\n  - other.yaml\n"), "(top level): include")
+
+    def test_compose_file_with_only_a_bind_volume(self):
+        compose = "volumes:\n  data:\n    driver_opts: {type: none, o: bind, device: /}\n"
+        self.assertBlocks(self.pr().stack(compose=compose), "(top level): mount: /")
+
+    def test_host_namespace_from_a_variable(self):
+        for key, value in (("network_mode", "${N:-host}"), ("pid", "${P:-host}"), ("cgroup", "$C")):
+            with self.subTest(key=key):
+                self.assertBlocks(self.pr().stack(compose=APP.format(extra=f"    {key}: {value}")), f"{key}: {value}")
+
+    def test_security_opt_split_by_a_variable(self):
+        extra = '    security_opt: ["unconf${X:-ined}"]'
+        self.assertBlocks(self.pr().stack(compose=APP.format(extra=extra)), "security_opt: unconf${X:-ined}")
+
+    def test_symlink_to_the_host(self):
+        pr = self.pr().stack(name="b", compose=APP.format(extra="    volumes:\n      - ./link:/h"))
+        (pr.dir / "stacks/b/link").symlink_to("/")
+        self.assertBlocks(pr, "stacks/b/link: symlinks are not allowed")
+
+    def test_build_context_on_the_host(self):
+        for extra, finding in (("    build: /", "build: mount: /"),
+                               ("    build:\n      context: /root", "build: mount: /root"),
+                               ("    build:\n      context: .\n      additional_contexts:\n        x: /etc",
+                                "build: mount: /etc"),
+                               ("    build:\n      context: .\n      additional_contexts:\n        - x=/etc",
+                                "build: mount: /etc")):
+            with self.subTest(extra=extra):
+                self.assertBlocks(self.pr().stack(compose=APP.format(extra=extra)), finding)
+
+    def test_compose_file_from_a_decrypted_blob(self):
+        for name in (".decrypted/evil.yaml", "x.sops.yaml"):
+            with self.subTest(name=name):
+                pr = self.pr().stack().replace("stacks/newapp/komodo.toml", 'file_paths = ["compose.yaml"]',
+                                               f'file_paths = ["compose.yaml", "{name}"]')
+                self.assertBlocks(pr, f"{name} is not a plain compose file")
+
     def test_gate_file_without_your_label(self):
         pr = self.pr().write(".github/workflows/x.yml", "on: push\n")
         self.assertBlocks(pr, "gate files changed without your gate-change label: .github/workflows/x.yml")
@@ -267,6 +317,10 @@ class Units(unittest.TestCase):
             self.assertTrue(gate.is_gate_file(path), path)
         for path in ("ansible/site.yml", "ansible/roles/base/tasks/main.yml", "stacks/aio/compose.yaml", "README.md"):
             self.assertFalse(gate.is_gate_file(path), path)
+
+    def test_gitattributes_is_a_gate_file(self):
+        for path in (".gitattributes", "stacks/x/.gitattributes", "ansible/roles/y/files/.gitattributes"):
+            self.assertTrue(gate.is_gate_file(path), path)
 
     def test_harmless_mounts(self):
         for src in ("./config", "/etc/localtime", "/mnt/storage/media", "/opt/caddy/conf", "data/../config"):

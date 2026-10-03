@@ -28,6 +28,7 @@ ALLOW = "gitleaks:" + "allow"  # the marker that hides a line from gitleaks (spl
 # Files that decide what runs, or what this gate checks: they pass only with your ack.
 GATE_FILES = (
     ".github/*", "policy/*", ".githooks/*", ".sops.yaml", ".gitleaks.toml", ".gitleaksignore",
+    ".gitattributes", "**/.gitattributes",
     "komodo/*", "ansible/requirements.yml", "ansible/inventory.yml", "ansible/known_hosts",
     "ansible/collections/*",
 )
@@ -70,6 +71,21 @@ def stage_on_merge_base(pr, base_ref):
     git(pr, "reset", "-q", "--soft", base)
     out = git(pr, "diff", "--cached", "--name-status", "--no-renames", "-z").split("\0")
     return dict(zip(out[1::2], out[0::2]))
+
+
+def force_text_diffs(pr):
+    """Every file diffs as text for the checks below: a PR's .gitattributes (`* -diff`) or a NUL
+    byte would otherwise turn a secret into "Binary files differ". info/attributes beats any
+    .gitattributes in the tree."""
+    path = Path(git(pr, "rev-parse", "--path-format=absolute", "--git-path", "info/attributes").strip())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("* diff\n")
+
+
+def symlinks(pr):
+    """Paths the PR adds or changes as symlinks: Docker would follow them on the host."""
+    out = git(pr, "diff", "--cached", "--raw", "--no-renames", "-z").split("\0")
+    return [path for meta, path in zip(out[0::2], out[1::2]) if meta.split()[1] == "120000"]
 
 
 def base_text(pr, path):
@@ -152,6 +168,10 @@ def volume_source(v):
     return parts[0] if len(parts) > 1 and parts[0].startswith((".", "/", "~", "$")) else None
 
 
+def values(mapping):
+    return list(mapping.values()) if isinstance(mapping, dict) else []
+
+
 def listed(value):
     return [value] if isinstance(value, (str, dict)) else list(value or [])
 
@@ -162,11 +182,19 @@ def service_findings(svc):
         out.append("privileged")
     out += [f"{key}: {v}" for key in ("cap_add", "devices", "device_cgroup_rules") for v in listed(svc.get(key))]
     out += ["extends"] if svc.get("extends") else []
-    out += [f"{key}: host" for key in HOST_NAMESPACES if str(svc.get(key, "")) == "host"]
-    out += [f"security_opt: {o}" for o in listed(svc.get("security_opt")) if re.search(r"unconfined|label[:=]disable", str(o))]
+    # A "$" could expand to host (or unconfined): block it, like a mount path from a variable.
+    out += [f"{key}: {svc[key]}" for key in HOST_NAMESPACES if str(svc.get(key, "")) == "host" or "$" in str(svc.get(key, ""))]
+    out += [f"security_opt: {o}" for o in listed(svc.get("security_opt"))
+            if re.search(r"unconfined|label[:=]disable|\$", str(o))]
     build = svc.get("build")
-    if isinstance(build, dict) and (build.get("privileged") or build.get("entitlements") or str(build.get("network", "")) == "host"):
+    if isinstance(build, dict) and (build.get("privileged") or build.get("entitlements")
+                                    or str(build.get("network", "")) == "host" or "$" in str(build.get("network", ""))):
         out.append("build: privileged, entitlements or host network")
+    contexts = [build] if isinstance(build, str) else [build.get("context")] if isinstance(build, dict) else []
+    if isinstance(build, dict):
+        extra = build.get("additional_contexts")
+        contexts += list(extra.values()) if isinstance(extra, dict) else [str(c).partition("=")[2] for c in listed(extra)]
+    out += [f"build: {f}" for f in map(mount_finding, filter(None, contexts)) if f]
     sources = [volume_source(v) for v in listed(svc.get("volumes"))]
     sources += [e.get("path") if isinstance(e, dict) else e for e in listed(svc.get("env_file"))]
     out += [f for f in map(mount_finding, filter(None, sources)) if f]
@@ -175,13 +203,14 @@ def service_findings(svc):
 
 def top_findings(doc):
     out = ["include"] if doc.get("include") else []
-    for vol in (doc.get("volumes") or {}).values():
-        device = ((vol or {}).get("driver_opts") or {}).get("device")
+    for vol in values(doc.get("volumes")):
+        opts = vol.get("driver_opts") if isinstance(vol, dict) else None
+        device = opts.get("device") if isinstance(opts, dict) else None
         if device and (f := mount_finding(device)):
             out.append(f)
     for kind in ("secrets", "configs"):
-        for item in (doc.get(kind) or {}).values():
-            if (item or {}).get("file") and (f := mount_finding(item["file"])):
+        for item in values(doc.get(kind)):
+            if isinstance(item, dict) and item.get("file") and (f := mount_finding(item["file"])):
                 out.append(f)
     return out
 
@@ -199,10 +228,11 @@ def compose_findings(pr, exceptions):
         except (yaml.YAMLError, UnicodeDecodeError) as e:
             out.append(f"{rel}: can't be read as YAML ({type(e).__name__})")
             continue
-        if not isinstance(doc, dict) or "services" not in doc:
+        if not isinstance(doc, dict):
             continue
         allowed = exceptions.get(rel, {})
-        services = doc["services"] if isinstance(doc["services"], dict) else {"(services)": {"extends": True}}
+        services = doc.get("services", {})
+        services = services if isinstance(services, dict) else {"(services)": {"extends": True}}
         for name, svc in services.items():
             out += [f"{rel}: {name}: {f}" for f in service_findings(svc if isinstance(svc, dict) else {})
                     if f not in allowed.get(name, [])]
@@ -250,8 +280,12 @@ def stack_findings(stack, rel, root, exceptions):
     files = c.get("file_paths") or []
     if not files or not all(re.search(r"\.ya?ml$", f) for f in files):
         out.append("file_paths must name YAML compose files")
-    elif not (root / want["run_directory"] / files[0]).is_file():
-        out.append(f"{files[0]} is missing")
+    for f in files:
+        # Not .decrypted/...: pre_deploy writes those from a SOPS blob, so the gate never sees them.
+        if any(part.startswith(".") for part in f.split("/")) or ".sops." in f:
+            out.append(f"{f} is not a plain compose file")
+        elif not (root / want["run_directory"] / f).is_file():
+            out.append(f"{f} is missing")
     return out
 
 
@@ -348,9 +382,11 @@ def laptop_runs(pr, changed):
 def check(pr, base_ref="origin/main", ack=False):
     """(blocks, flags) for the PR checked out at pr."""
     pr = Path(pr)
+    force_text_diffs(pr)
     changed = stage_on_merge_base(pr, base_ref)
     exceptions = tomllib.loads((POLICY / "exceptions.toml").read_text())
     blocks = secret_findings(pr) + compose_findings(pr, exceptions["compose"]) + komodo_findings(pr, exceptions)
+    blocks += [f"{p}: symlinks are not allowed" for p in symlinks(pr)]
     gate = sorted(p for p in changed if is_gate_file(p))
     if gate and not ack:
         blocks.append("gate files changed without your gate-change label: " + ", ".join(gate))
