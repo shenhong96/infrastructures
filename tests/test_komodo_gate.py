@@ -63,11 +63,11 @@ class KomodoGate(unittest.TestCase):
                     compose = ROOT / config["run_directory"] / config["file_paths"][0]
                     self.assertTrue(compose.is_file(), f"{compose} is missing")
 
-    def test_procedures_stay_unscheduled_until_the_end_of_adoption(self):
-        # Flip this test, in the same commit, when Phase 3 step 7 turns the job on.
+    def test_procedures_are_scheduled_after_adoption(self):
+        # Phase 3 step 7 turned the job on.
         for proc in tomllib.loads((ROOT / "komodo/procedures.toml").read_text())["procedure"]:
             with self.subTest(proc["name"]):
-                self.assertFalse(proc["config"]["schedule_enabled"])
+                self.assertTrue(proc["config"]["schedule_enabled"])
 
 
 if __name__ == "__main__":

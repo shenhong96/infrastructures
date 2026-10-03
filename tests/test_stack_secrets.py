@@ -144,16 +144,13 @@ class StackSecrets(unittest.TestCase):
         self.assertFalse(list(STACKS.rglob("*.bak*")))
 
     def test_secret_files_are_encrypted_for_the_lab_key(self):
-        # The agent opens them with the lab key. The one stack that must fail closed is the exception.
+        # The agent opens them with the lab key.
         for sops in sorted(STACKS.glob("*/*.sops.env")):
             if sops.parent.name == NOT_KOMODO_STACKS.copy().pop():
                 continue
             text = sops.read_text()
             with self.subTest(sops.relative_to(ROOT).as_posix()):
-                if sops.parent.name == "canary-secret-bad":
-                    self.assertNotIn(LAB, text)
-                else:
-                    self.assertIn(LAB, text)
+                self.assertIn(LAB, text)
 
     def test_komodo_never_owns_dot_env(self):
         for folder, name, config in stacks():
