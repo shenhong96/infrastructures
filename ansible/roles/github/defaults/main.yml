@@ -8,7 +8,7 @@ github_api: https://api.github.com/
 github_bot: ""
 # The homelab-gate App's numeric App ID: the required `gate` check must come from it.
 # 0 until the App exists; the rulesets wait for it.
-github_gate_app_id: 0
+github_gate_app_id: 5173798
 github_actions_app_id: 15368 # GitHub Actions, which posts `ci`
 
 # Read, compare, write only on a difference. `want` holds only the fields this role owns.
@@ -68,6 +68,8 @@ github_rulesets:
           require_last_push_approval: false
           required_review_thread_resolution: false
           allowed_merge_methods: [squash]
+          required_reviewers: [] # GitHub's defaults, so --check stays quiet
+          require_extra_approval_for_unattributed_changes: true
       - type: required_status_checks
         parameters:
           strict_required_status_checks_policy: true
@@ -82,5 +84,4 @@ github_rulesets:
     bypass_actors:
       - { actor_id: 5, actor_type: RepositoryRole, bypass_mode: pull_request } # 5: the admin role
     rules:
-      - type: update
-        parameters: { update_allows_fetch_and_merge: false }
+      - type: update # GitHub drops update_allows_fetch_and_merge: false, its default
