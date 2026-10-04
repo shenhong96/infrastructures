@@ -1,7 +1,7 @@
 // Every Docker container's stdout and stderr, labelled with the same container, compose_project
-// and compose_service as its metrics (docker.alloy). Loki finds each line's level by itself
-// (detected_level), so nothing is parsed here. A container opts out with the label
-// homelab.logs=false (a chatty one, or one that logs secrets).
+// and compose_service as its metrics (docker.alloy), plus service_name and group. Loki finds each
+// line's level by itself (detected_level), so nothing is parsed here. A container opts out with
+// the label homelab.logs=false (a chatty one, or one that logs secrets).
 declare "docker_logs" {
 	argument "forward_to" {
 		comment = "Where the log lines go."
@@ -40,6 +40,25 @@ declare "docker_logs" {
 		rule {
 			source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
 			target_label  = "compose_service"
+		}
+
+		// What Grafana's Logs Drilldown lists lines by: the compose service, else the container.
+		rule {
+			source_labels = ["__meta_docker_container_name"]
+			regex         = "/(.*)"
+			target_label  = "service_name"
+		}
+
+		rule {
+			source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+			regex         = "(.+)"
+			target_label  = "service_name"
+		}
+
+		// An optional grouping of your own across stacks (media, infra, ...): the label homelab.group.
+		rule {
+			source_labels = ["__meta_docker_container_label_homelab_group"]
+			target_label  = "group"
 		}
 
 		rule {

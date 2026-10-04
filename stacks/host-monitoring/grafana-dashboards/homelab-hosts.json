@@ -8,7 +8,7 @@
   "editable": false,
   "graphTooltip": 1,
   "refresh": "5m",
-  "schemaVersion": 41,
+  "schemaVersion": 42,
   "version": 1,
   "time": {
     "from": "now-24h",
@@ -50,25 +50,13 @@
         "includeAll": false
       },
       {
-        "type": "query",
-        "name": "container",
-        "label": "Container",
-        "datasource": {
-          "type": "loki",
-          "uid": "ceofts4g1tkw0e"
-        },
-        "refresh": 2,
-        "sort": 1,
-        "query": {
-          "type": 1,
-          "label": "container",
-          "stream": "{host=\"$host\"}",
-          "refId": "container"
-        },
-        "definition": "label_values({host=\"$host\"}, container)",
+        "type": "custom",
+        "name": "level",
+        "label": "Level",
+        "query": "critical,error,warn,info,debug,trace,unknown",
         "multi": true,
         "includeAll": true,
-        "allValue": ".+",
+        "allValue": ".*",
         "current": {
           "text": [
             "All"
@@ -76,7 +64,49 @@
           "value": [
             "$__all"
           ]
-        }
+        },
+        "options": [
+          {
+            "text": "All",
+            "value": "$__all",
+            "selected": true
+          },
+          {
+            "text": "critical",
+            "value": "critical",
+            "selected": false
+          },
+          {
+            "text": "error",
+            "value": "error",
+            "selected": false
+          },
+          {
+            "text": "warn",
+            "value": "warn",
+            "selected": false
+          },
+          {
+            "text": "info",
+            "value": "info",
+            "selected": false
+          },
+          {
+            "text": "debug",
+            "value": "debug",
+            "selected": false
+          },
+          {
+            "text": "trace",
+            "value": "trace",
+            "selected": false
+          },
+          {
+            "text": "unknown",
+            "value": "unknown",
+            "selected": false
+          }
+        ]
       },
       {
         "type": "textbox",
@@ -87,6 +117,40 @@
           "text": "",
           "value": ""
         }
+      },
+      {
+        "type": "adhoc",
+        "name": "filters",
+        "label": "Filters",
+        "datasource": {
+          "type": "loki",
+          "uid": "ceofts4g1tkw0e"
+        },
+        "filters": [],
+        "baseFilters": [],
+        "defaultKeys": [
+          {
+            "text": "compose_project",
+            "value": "compose_project"
+          },
+          {
+            "text": "compose_service",
+            "value": "compose_service"
+          },
+          {
+            "text": "container",
+            "value": "container"
+          },
+          {
+            "text": "stream",
+            "value": "stream"
+          },
+          {
+            "text": "group",
+            "value": "group"
+          }
+        ],
+        "allowCustomValue": true
       }
     ]
   },
@@ -454,7 +518,7 @@
     {
       "type": "stat",
       "title": "Error log lines",
-      "description": "Lines Loki detected as error, fatal or critical, in the time range.",
+      "description": "Lines Loki detected as error, fatal or critical, in the time range, on every machine. Follows Filters.",
       "datasource": {
         "type": "loki",
         "uid": "ceofts4g1tkw0e"
@@ -2880,7 +2944,7 @@
                 "value": [
                   {
                     "title": "Logs of ${__value.raw}",
-                    "url": "/d/homelab-hosts?var-host=$host&var-container=${__value.raw}&${__url_time_range}"
+                    "url": "/d/homelab-hosts?var-host=$host&var-filters=container%7C%3D%7C${__value.raw}&${__url_time_range}"
                   }
                 ]
               }
@@ -3234,7 +3298,7 @@
             "uid": "ceofts4g1tkw0e"
           },
           "refId": "A",
-          "expr": "sum by (detected_level) (count_over_time({host=\"$host\", container=~\"$container\"} [$__auto]))",
+          "expr": "sum by (detected_level) (count_over_time({host=\"$host\"} |~ \"(?i)$search\" | detected_level=~\"$level\" [$__auto]))",
           "legendFormat": "{{detected_level}}",
           "editorMode": "code",
           "queryType": "range"
@@ -3429,7 +3493,7 @@
             "uid": "ceofts4g1tkw0e"
           },
           "refId": "A",
-          "expr": "sum by (container) (count_over_time({host=\"$host\", container=~\"$container\"} | detected_level=~\"error|fatal|critical\" [$__auto]))",
+          "expr": "sum by (container) (count_over_time({host=\"$host\"} |~ \"(?i)$search\" | detected_level=~\"$level\" | detected_level=~\"error|fatal|critical\" [$__auto]))",
           "legendFormat": "{{container}}",
           "editorMode": "code",
           "queryType": "range"
@@ -3490,7 +3554,6 @@
     {
       "type": "logs",
       "title": "Logs",
-      "description": "Filter with Container and Search above.",
       "datasource": {
         "type": "loki",
         "uid": "ceofts4g1tkw0e"
@@ -3502,10 +3565,17 @@
             "uid": "ceofts4g1tkw0e"
           },
           "refId": "A",
-          "expr": "{host=\"$host\", container=~\"$container\"} |~ \"(?i)$search\"",
+          "expr": "{host=\"$host\"} |~ \"(?i)$search\" | detected_level=~\"$level\"",
           "legendFormat": "",
           "editorMode": "code",
           "queryType": "range"
+        }
+      ],
+      "description": "Narrow with Filters, Level and Search above. In a line's details, the magnifier on a label adds it to Filters (the crossed one filters it out). The sidebar sorts, wraps and filters what's on screen; Logs Drilldown (the link) groups lines into patterns.",
+      "links": [
+        {
+          "title": "Open in Logs Drilldown",
+          "url": "/a/grafana-lokiexplore-app/explore/host/${host}/logs?var-ds=ceofts4g1tkw0e&var-filters=host%7C%3D%7C${host}&${filters:queryparam}&${__url_time_range}"
         }
       ],
       "options": {
@@ -3517,14 +3587,19 @@
         "enableLogDetails": true,
         "enableInfiniteScrolling": true,
         "dedupStrategy": "none",
-        "sortOrder": "Descending"
+        "sortOrder": "Descending",
+        "showControls": true,
+        "showLevel": true,
+        "syntaxHighlighting": true,
+        "detailsMode": "sidebar",
+        "fontSize": "default"
       },
       "id": 33,
       "gridPos": {
         "x": 0,
         "y": 81,
         "w": 24,
-        "h": 12
+        "h": 14
       }
     },
     {
@@ -3593,7 +3668,7 @@
           "id": 35,
           "gridPos": {
             "x": 0,
-            "y": 94,
+            "y": 96,
             "w": 6,
             "h": 4
           }
@@ -3662,7 +3737,7 @@
           "id": 36,
           "gridPos": {
             "x": 6,
-            "y": 94,
+            "y": 96,
             "w": 6,
             "h": 4
           }
@@ -3735,7 +3810,7 @@
           "id": 37,
           "gridPos": {
             "x": 12,
-            "y": 94,
+            "y": 96,
             "w": 6,
             "h": 4
           }
@@ -3801,7 +3876,7 @@
           "id": 38,
           "gridPos": {
             "x": 18,
-            "y": 94,
+            "y": 96,
             "w": 6,
             "h": 4
           }
@@ -3902,7 +3977,7 @@
           "id": 39,
           "gridPos": {
             "x": 0,
-            "y": 98,
+            "y": 100,
             "w": 12,
             "h": 7
           }
@@ -4003,7 +4078,7 @@
           "id": 40,
           "gridPos": {
             "x": 12,
-            "y": 98,
+            "y": 100,
             "w": 12,
             "h": 7
           }
@@ -4012,7 +4087,7 @@
       "id": 34,
       "gridPos": {
         "x": 0,
-        "y": 93,
+        "y": 95,
         "w": 24,
         "h": 1
       }
