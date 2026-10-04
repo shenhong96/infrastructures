@@ -1,0 +1,178 @@
+# The project as Semaphore's database holds it: what a merge applies, and how. It lives in the
+# database, not in git, so no PR changes it; this file is a gate file.
+
+- name: Projects
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /projects
+
+- name: The project's id
+  ansible.builtin.set_fact:
+    semaphore_project_id: "{{ (semaphore_api.json | selectattr('name', 'equalto', semaphore_project) | first | default({'id': 0})).id }}"
+
+- name: Create the project
+  when: semaphore_project_id | int == 0 and not ansible_check_mode
+  block:
+    - name: Create it
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: /projects
+        api_method: POST
+        api_body: {name: "{{ semaphore_project }}"}
+
+    - name: Its id
+      ansible.builtin.set_fact:
+        semaphore_project_id: "{{ semaphore_api.json.id }}"
+
+- name: Project resources (in --check, a new project has none to compare)
+  when: semaphore_project_id | int != 0
+  block:
+    # Ansible logs in with the runner's own key (/home/runner/.ssh/id_ed25519): Semaphore holds none.
+    - name: The key
+      ansible.builtin.include_tasks: resource.yml
+      vars:
+        res_path: keys
+        res_want: {name: runner's own, type: none}
+
+    - name: The repository (public, no credentials)
+      ansible.builtin.include_tasks: resource.yml
+      vars:
+        res_path: repositories
+        res_want:
+          name: infrastructures
+          git_url: https://github.com/shenhong96/infrastructures.git
+          git_branch: main
+          ssh_key_id: "{{ semaphore_ids['keys'] }}"
+
+    - name: The inventory, from the repo
+      ansible.builtin.include_tasks: resource.yml
+      vars:
+        res_path: inventory
+        res_want:
+          name: inventory.yml
+          type: file
+          inventory: ansible/inventory.yml
+          repository_id: "{{ semaphore_ids['repositories'] }}"
+          ssh_key_id: "{{ semaphore_ids['keys'] }}"
+
+    - name: An empty environment (the runner's config sets the variables)
+      ansible.builtin.include_tasks: resource.yml
+      vars:
+        res_path: environment
+        res_want: {name: empty, json: "{}", env: "{}"}
+
+    # main only; nothing a task asks for overrides it.
+    - name: The apply template
+      ansible.builtin.include_tasks: resource.yml
+      vars:
+        res_path: templates
+        res_want:
+          name: apply
+          app: ansible
+          playbook: ansible/site.yml
+          repository_id: "{{ semaphore_ids['repositories'] }}"
+          inventory_id: "{{ semaphore_ids['inventory'] }}"
+          environment_id: "{{ semaphore_ids['environment'] }}"
+          arguments: '["--diff"]'
+          allow_override_args_in_task: false
+          allow_override_branch_in_task: false
+          allow_parallel_tasks: false
+          task_params:
+            allow_debug: false
+            allow_override_inventory: false
+            allow_override_limit: false
+            allow_override_tags: false
+            allow_override_skip_tags: false
+            allow_override_skip_galaxy_install: false
+            limit: ["{{ semaphore_apply_limit }}"]
+            tags: "{{ semaphore_apply_tags }}"
+            skip_tags: []
+            skip_galaxy_install: true
+
+    # Every 5 minutes, Semaphore runs apply only if main's commit changed (repository_id).
+    - name: The schedule that applies each merge
+      ansible.builtin.include_tasks: resource.yml
+      vars:
+        res_path: schedules
+        res_want:
+          name: apply on merge
+          template_id: "{{ semaphore_ids['templates'] }}"
+          cron_format: "*/5 * * * *"
+          repository_id: "{{ semaphore_ids['repositories'] }}"
+          active: true
+      when: semaphore_apply_on_merge | bool
+
+    - name: Schedules
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: /project/{{ semaphore_project_id }}/schedules
+      when: not semaphore_apply_on_merge | bool
+
+    - name: No schedule while semaphore_apply_on_merge is false
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: /project/{{ semaphore_project_id }}/schedules/{{ item.id }}
+        api_method: DELETE
+      loop: "{{ semaphore_api.json | selectattr('name', 'equalto', 'apply on merge') | list
+        if not semaphore_apply_on_merge | bool else [] }}"
+      when: not ansible_check_mode
+
+    # Who can start a task is the boundary: a task's own extra variables can't be switched off
+    # (2.19.12 merges its `environment` into --extra-vars), and an admin can edit the template
+    # anyway. So: you are the only admin and the only member who can run tasks; the reporter
+    # only reads. Anyone else stops the run; the reporter's role is put back to guest.
+    - name: Users
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: /users
+
+    - name: Only you are an admin, and the reporter exists
+      ansible.builtin.assert:
+        that:
+          - semaphore_api.json | selectattr('admin') | map(attribute='username') | list == [semaphore_admin]
+          - semaphore_api.json | selectattr('username', 'equalto', 'reporter') | list | length == 1
+        fail_msg: Semaphore has an admin other than {{ semaphore_admin }}, or no reporter. Find out why before anything else.
+        quiet: true
+
+    - name: Your id and the reporter's
+      ansible.builtin.set_fact:
+        semaphore_admin_id: "{{ (semaphore_api.json | selectattr('username', 'equalto', semaphore_admin) | first).id }}"
+        semaphore_reporter_id: "{{ (semaphore_api.json | selectattr('username', 'equalto', 'reporter') | first).id }}"
+
+    - name: Project users
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: /project/{{ semaphore_project_id }}/users
+
+    - name: Nobody else is on the project
+      ansible.builtin.assert:
+        that: semaphore_api.json | map(attribute='id') | reject('in', [semaphore_admin_id | int, semaphore_reporter_id | int]) | list == []
+        fail_msg: The project has members other than you and the reporter. Find out why before anything else.
+        quiet: true
+
+    - name: The reporter's role
+      ansible.builtin.set_fact:
+        semaphore_reporter_role: >-
+          {{ (semaphore_api.json | selectattr('id', 'equalto', semaphore_reporter_id | int) | first | default({})).role | default('') }}
+
+    - name: "The reporter is a guest (now: {{ semaphore_reporter_role or 'not a member' }})"
+      ansible.builtin.debug:
+        msg: "{{ semaphore_reporter_role or 'not a member' }} -> guest"
+      changed_when: true
+      when: semaphore_reporter_role != 'guest'
+
+    - name: Add the reporter as a guest
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: /project/{{ semaphore_project_id }}/users
+        api_method: POST
+        api_body: {user_id: "{{ semaphore_reporter_id | int }}", role: guest}
+      when: semaphore_reporter_role == '' and not ansible_check_mode
+
+    - name: Put the reporter back to guest
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: /project/{{ semaphore_project_id }}/users/{{ semaphore_reporter_id }}
+        api_method: PUT
+        api_body: {role: guest}
+      when: semaphore_reporter_role not in ['', 'guest'] and not ansible_check_mode

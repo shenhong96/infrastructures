@@ -404,3 +404,6 @@
   ansible.builtin.set_fact:
     semaphore_token: "{{ semaphore_token_cmd.stdout | trim }}"
   no_log: true
+
+- name: The project
+  ansible.builtin.include_tasks: project.yml
