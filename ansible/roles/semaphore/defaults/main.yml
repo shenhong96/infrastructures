@@ -40,6 +40,9 @@ semaphore_runner_env:
   # The repo's collections folder is gitignored; these are the role's, from ansible/requirements.yml.
   ANSIBLE_COLLECTIONS_PATH: "{{ semaphore_runner_dir }}/collections"
   ANSIBLE_ANY_ERRORS_FATAL: "True"
+  # Its ssh sockets and temp files: runner's home is read-only to it, and tmp is wiped on a restart.
+  ANSIBLE_HOME: /home/runner/tmp/ansible
+  ANSIBLE_SSH_CONTROL_PATH_DIR: /home/runner/tmp/ansible/cp # its default is a literal ~/.ansible/cp
   SOPS_AGE_KEY_FILE: /home/runner/.config/sops/age/keys.txt
 
 # What a merge applies: every tag in site.yml but the laptop-only ones (policy/gate.py's
@@ -48,4 +51,4 @@ semaphore_apply_tags: [base, samba, gitlab, jellyfin, nextcloud, proxy, node_exp
 semaphore_apply_limit: all:!proxmox:!control
 # The schedule that applies each new commit on main; false deletes it. Switching it off in the
 # UI doesn't stop a schedule tied to the repository (2.19.12): the emergency stop is the runner.
-semaphore_apply_on_merge: false
+semaphore_apply_on_merge: true

@@ -11,16 +11,27 @@
     shell: /usr/sbin/nologin
   loop: [semaphore, runner, reporter]
 
-- name: Homes only their owner can read
+# Runner's home is root's: merged Ansible runs as runner, and anything it could write there (an
+# ssh config, a key) would outlive a revert. It writes only to tmp, which a restart wipes.
+- name: Homes only their owner can read (runner's, root owns)
   ansible.builtin.file:
-    path: /home/{{ item }}
+    path: /home/{{ item.user }}
     state: directory
-    owner: "{{ item }}"
-    group: "{{ item }}"
-    mode: "0700"
-  loop: [semaphore, runner, reporter]
+    owner: "{{ item.owner }}"
+    group: "{{ item.user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - {user: semaphore, owner: semaphore, mode: "0700"}
+    - {user: runner, owner: root, mode: "0750"}
+    - {user: reporter, owner: reporter, mode: "0700"}
 
-# sudo: become_user (the CLI runs as semaphore, the keys are made as runner).
+# Semaphore gives each template its own HOME and ANSIBLE_HOME under tmp; this one was a laptop proof's.
+- name: No Ansible folder in the runner's home
+  ansible.builtin.file:
+    path: /home/runner/.ansible
+    state: absent
+
+# sudo: become_user (the CLI runs as semaphore).
 - name: Packages
   ansible.builtin.apt:
     name: [python3-venv, sudo]
@@ -244,8 +255,6 @@
            --config, /etc/semaphore-runner/config.json]
     stdin: "{{ (semaphore_keys_file.content | b64decode | from_json).runner_registration_token }}"
     creates: /home/runner/token
-  become: true
-  become_user: runner
   no_log: true
   when: not ansible_check_mode
 
@@ -271,32 +280,39 @@
     state: started
   when: not (semaphore_runner_unit is changed and ansible_check_mode)
 
-# The ops keys: made as runner, in its home, never copied anywhere. Their public halves go into
-# the repo by hand (.sops.yaml, group_vars/all ops_ssh_pubkey).
+# The ops keys: made here, in runner's home, never copied anywhere; root's, so runner can only
+# read them. Their public halves go into the repo by hand (.sops.yaml, group_vars/all ops_ssh_pubkey).
 - name: The ops key folders
   ansible.builtin.file:
     path: "{{ item }}"
     state: directory
-    owner: runner
+    owner: root
     group: runner
-    mode: "0700"
+    mode: "0750"
   loop: [/home/runner/.ssh, /home/runner/.config, /home/runner/.config/sops, /home/runner/.config/sops/age]
 
 - name: The ops SSH key
   ansible.builtin.command: ssh-keygen -q -t ed25519 -N '' -C ops@control -f /home/runner/.ssh/id_ed25519
   args:
     creates: /home/runner/.ssh/id_ed25519
-  become: true
-  become_user: runner
   when: not ansible_check_mode
 
 - name: The ops age key
   ansible.builtin.command: age-keygen -o /home/runner/.config/sops/age/keys.txt
   args:
     creates: /home/runner/.config/sops/age/keys.txt
-  become: true
-  become_user: runner
   when: not ansible_check_mode
+
+# ssh accepts a root-owned private key that the group can read; it refuses only its own user's.
+- name: The runner's token and the ops keys, read-only to it
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: file
+    owner: root
+    group: runner
+    mode: "0440"
+  loop: [/home/runner/token, /home/runner/.ssh/id_ed25519, /home/runner/.ssh/id_ed25519.pub,
+         /home/runner/.config/sops/age/keys.txt]
 
 - name: The ops SSH key, public half
   ansible.builtin.command: cat /home/runner/.ssh/id_ed25519.pub

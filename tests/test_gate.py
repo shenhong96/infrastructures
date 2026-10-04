@@ -358,6 +358,12 @@ class Blocks(GateTest):
         pr = self.pr().write(".github/workflows/x.yml", "on: push\n")
         self.assertBlocks(pr, "gate files changed without your gate-change label: .github/workflows/x.yml")
 
+    def test_connection_setting_outside_the_inventory(self):
+        pr = self.pr()
+        f = "ansible/group_vars/all/main.yml"
+        pr.write(f, (pr.dir / f).read_text() + "ansible_host_key_checking: false\n")
+        self.assertBlocks(pr, f"SSH connection settings without your gate-change label: {f}: ansible_host_key_checking: false")
+
 
 class Passes(GateTest):
     def test_main_as_it_is(self):
@@ -391,6 +397,17 @@ class Passes(GateTest):
     def test_gate_file_with_your_label(self):
         flags = self.assertPasses(self.pr().write(".github/workflows/x.yml", "on: push\n"), ack=True)
         self.assertEqual(flags["Gate files"], [".github/workflows/x.yml"])
+
+    def test_connection_setting_with_your_label(self):
+        pr = self.pr().write("ansible/host_vars/media/main.yml", "ansible_ssh_common_args: -o StrictHostKeyChecking=no\n")
+        flags = self.assertPasses(pr, ack=True)
+        self.assertEqual(flags["SSH connection settings"], ["ansible/host_vars/media/main.yml: ansible_ssh_common_args: -o StrictHostKeyChecking=no"])
+
+    def test_reading_a_connection_variable(self):
+        pr = self.pr()
+        f = "ansible/roles/samba/tasks/main.yml"
+        pr.write(f, (pr.dir / f).read_text() + '\n- name: Where\n  ansible.builtin.debug:\n    msg: "{{ ansible_host }}"\n')
+        self.assertEqual(self.assertPasses(pr)["SSH connection settings"], [])
 
 
 class Flags(GateTest):
