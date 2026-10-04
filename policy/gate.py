@@ -71,6 +71,9 @@ WRAPPER = re.compile(r"set -o pipefail; \[\[COMPOSE_COMMAND\]\] \| /usr/local/sb
 
 LAPTOP_TAGS = {"host", "lxc", "komodo", "periphery", "tailscale", "control", "github"}
 RISKY_TASK = re.compile(r"^\s*(?:-\s+)?(?:ansible\.(?:builtin|legacy)\.)?(shell|command|raw|script|get_url)\s*:")
+# Setting these anywhere but the inventory (a gate file) can switch off the pinned host keys or
+# point a host elsewhere: a variable beats the runner's ANSIBLE_HOST_KEY_CHECKING=True.
+CONNECTION = re.compile(r"\b(ansible_(ssh_)?host_key_checking|ansible_ssh_(common_|extra_)?args|ansible_host|ansible_port)\s*(:|=(?!=))")
 ON_CONTROL = re.compile(r"\b(delegate_to|local_action)\b|connection\s*:\s*local|\b(lookup|query)\(")
 
 
@@ -490,6 +493,9 @@ def check(pr, base_ref="origin/main", ack=False):
     if gate and not ack:
         blocks.append("gate files changed without your gate-change label: " + ", ".join(gate))
     added = added_lines(pr, "ansible")
+    connection = [f"{f}: {l.strip()}" for f, l in added if CONNECTION.search(l) and f != "ansible/inventory.yml"]
+    if connection and not ack:
+        blocks.append("SSH connection settings without your gate-change label: " + "; ".join(connection))
     flags = [
         ("Stacks", stacks_touched(pr, changed)),
         ("Images", image_changes(pr, changed)),
@@ -499,6 +505,7 @@ def check(pr, base_ref="origin/main", ack=False):
         ("Tasks and lookups that run on control", [f"{f}: {l.strip()}" for f, l in added if ON_CONTROL.search(l)]),
         ("ansible/site.yml changed", ["a role may have moved to another tag or hosts"] if "ansible/site.yml" in changed else []),
         ("Needs a laptop run: merging won't apply it", laptop_runs(pr, changed)),
+        ("SSH connection settings", connection),
         ("Gate files", gate),
     ]
     return blocks, flags
