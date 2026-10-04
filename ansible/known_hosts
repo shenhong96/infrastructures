@@ -1,7 +1,7 @@
 # SSH host keys Ansible trusts (inventory: ansible_ssh_common_args). Read over the already
 # trusted channel, never learned on first use. After rebuilding a container (new host key),
 # regenerate from the infrastructures folder, check the diff, commit:
-#   ssh proxmox 'echo "[192.168.9.152]:2278 $(cut -d" " -f1,2 /etc/ssh/ssh_host_ed25519_key.pub)"; for id in 101 104 110 111 112 116 118; do ip=$(pct config $id | sed -n "s/^net0:.*ip=\([0-9.]*\)\/.*/\1/p"); echo "[$ip]:2278 $(pct exec $id -- cut -d" " -f1,2 /etc/ssh/ssh_host_ed25519_key.pub)"; done' | sort > known_hosts.new && sed -n '/^#/p' ansible/known_hosts | cat - known_hosts.new > ansible/known_hosts && rm known_hosts.new
+#   ssh proxmox 'echo "[192.168.9.152]:2278 $(cut -d" " -f1,2 /etc/ssh/ssh_host_ed25519_key.pub)"; for id in 101 104 110 111 112 116 118 120; do ip=$(pct config $id | sed -n "s/^net0:.*ip=\([0-9.]*\)\/.*/\1/p"); echo "[$ip]:2278 $(pct exec $id -- cut -d" " -f1,2 /etc/ssh/ssh_host_ed25519_key.pub)"; done' | sort > known_hosts.new && sed -n '/^#/p' ansible/known_hosts | cat - known_hosts.new > known_hosts.tmp && mv known_hosts.tmp ansible/known_hosts && rm known_hosts.new
 [192.168.9.151]:2278 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIF60clXs62+9ZEMIc/DwkchrZr8tfY30iPwdMA5QCNSM
 [192.168.9.152]:2278 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFTXizZVRcTMRBBfD9+kB5v7RCqqBytkvVtIP0IU3vTE
 [192.168.9.153]:2278 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGR2fjoZSwuj8j5YU1xZlWApv/mxRTL5RSnhA3GuloeL
@@ -10,3 +10,4 @@
 [192.168.9.156]:2278 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILoy3+yebfz1GS6ZcpHQuQFu4rO+J5NJBZ48XOH+osmb
 [192.168.9.157]:2278 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIABe/5qJi2sU5caAMQAF9U1u7e6WwXH4qHxFeyefa0Jd
 [192.168.9.159]:2278 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIONOFnjAODFkDj9UOY9EjqXNCAdcAHrRFbR8EjyR00eh
+[192.168.9.161]:2278 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM6i3il3BlNoz2o0QYs1xQi12Nrxln5L8YqkGQ1vUKL+
