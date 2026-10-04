@@ -33,6 +33,7 @@ jobs:
           private-key: ${{ secrets.GATE_APP_KEY }}
           permission-checks: write
           permission-issues: write
+          permission-pull-requests: write # commenting on a PR needs it, not only issues
 
       # Opened before anything else runs, so any later failure leaves a failure, never an earlier
       # success. Only a failed token step posts nothing: without the credential, nothing can be.
