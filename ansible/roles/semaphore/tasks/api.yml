@@ -1,0 +1,17 @@
+# One call to Semaphore's API from control (it listens on the LAN address only), with this run's
+# admin token: api_method (GET) on api_path with api_body, answer in semaphore_api. Never logged:
+# the header holds the token. Reads also run in --check; every write is guarded by the caller.
+- name: Semaphore API call {{ api_path }}
+  ansible.builtin.uri:
+    url: "{{ semaphore_url }}/api{{ api_path }}"
+    method: "{{ api_method | default('GET') }}"
+    body_format: json
+    body: "{{ api_body | default(omit) }}"
+    headers:
+      Authorization: Bearer {{ semaphore_token }}
+    status_code: [200, 201, 204]
+    return_content: true
+  register: semaphore_api
+  check_mode: false
+  changed_when: false
+  no_log: true
