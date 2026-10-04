@@ -9,15 +9,6 @@ declare "docker_metrics" {
 		comment = "Where the samples go."
 	}
 
-	argument "host" {
-		comment = "The machine's inventory name, set as instance."
-	}
-
-	argument "scrape_interval" {
-		optional = true
-		default  = "60s"
-	}
-
 	prometheus.exporter.cadvisor "docker" {
 		docker_host                  = "unix:///var/run/docker.sock"
 		docker_only                  = true
@@ -28,24 +19,9 @@ declare "docker_metrics" {
 		storage_duration             = "2m"
 	}
 
-	discovery.relabel "docker" {
-		targets = prometheus.exporter.cadvisor.docker.targets
-
-		rule {
-			target_label = "instance"
-			replacement  = argument.host.value
-		}
-
-		// The exporter would call it integrations/cadvisor: the logs and dashboards say docker.
-		rule {
-			target_label = "job"
-			replacement  = "integrations/docker"
-		}
-	}
-
 	prometheus.scrape "docker" {
-		targets         = discovery.relabel.docker.output
-		scrape_interval = argument.scrape_interval.value
+		targets         = prometheus.exporter.cadvisor.docker.targets
+		scrape_interval = "60s"
 		forward_to      = [prometheus.relabel.docker.receiver]
 	}
 

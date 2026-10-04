@@ -5,35 +5,11 @@ declare "agent_metrics" {
 		comment = "Where the samples go."
 	}
 
-	argument "host" {
-		comment = "The machine's inventory name, set as instance."
-	}
-
-	argument "scrape_interval" {
-		optional = true
-		default  = "60s"
-	}
-
 	prometheus.exporter.self "alloy" { }
 
-	discovery.relabel "alloy" {
-		targets = prometheus.exporter.self.alloy.targets
-
-		rule {
-			target_label = "instance"
-			replacement  = argument.host.value
-		}
-
-		// The exporter would call it integrations/self.
-		rule {
-			target_label = "job"
-			replacement  = "integrations/alloy"
-		}
-	}
-
 	prometheus.scrape "alloy" {
-		targets         = discovery.relabel.alloy.output
-		scrape_interval = argument.scrape_interval.value
+		targets         = prometheus.exporter.self.alloy.targets
+		scrape_interval = "60s"
 		forward_to      = [prometheus.relabel.alloy.receiver]
 	}
 

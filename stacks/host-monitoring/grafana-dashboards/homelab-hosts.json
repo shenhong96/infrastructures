@@ -2552,7 +2552,7 @@
             "uid": "ceog2753mbr40d"
           },
           "refId": "A",
-          "expr": "max by (container, compose_project, image) (container_start_time_seconds{job=\"integrations/docker\", host=\"$host\"})",
+          "expr": "max by (container, compose_project, image) (container_start_time_seconds{job=\"integrations/cadvisor\", host=\"$host\"})",
           "legendFormat": "__auto",
           "editorMode": "code",
           "instant": true,
@@ -2565,7 +2565,7 @@
             "uid": "ceog2753mbr40d"
           },
           "refId": "B",
-          "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{job=\"integrations/docker\", host=\"$host\"}[5m]))",
+          "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{job=\"integrations/cadvisor\", host=\"$host\"}[5m]))",
           "legendFormat": "__auto",
           "editorMode": "code",
           "instant": true,
@@ -2578,7 +2578,7 @@
             "uid": "ceog2753mbr40d"
           },
           "refId": "C",
-          "expr": "max by (container) (container_memory_working_set_bytes{job=\"integrations/docker\", host=\"$host\"})",
+          "expr": "max by (container) (container_memory_working_set_bytes{job=\"integrations/cadvisor\", host=\"$host\"})",
           "legendFormat": "__auto",
           "editorMode": "code",
           "instant": true,
@@ -2591,7 +2591,7 @@
             "uid": "ceog2753mbr40d"
           },
           "refId": "D",
-          "expr": "max by (container) (container_memory_working_set_bytes{job=\"integrations/docker\", host=\"$host\"}) / max by (container) (container_spec_memory_limit_bytes{job=\"integrations/docker\", host=\"$host\"} > 0)",
+          "expr": "max by (container) (container_memory_working_set_bytes{job=\"integrations/cadvisor\", host=\"$host\"}) / max by (container) (container_spec_memory_limit_bytes{job=\"integrations/cadvisor\", host=\"$host\"} > 0)",
           "legendFormat": "__auto",
           "editorMode": "code",
           "instant": true,
@@ -2604,7 +2604,7 @@
             "uid": "ceog2753mbr40d"
           },
           "refId": "E",
-          "expr": "sum by (container) (rate(container_network_receive_bytes_total{job=\"integrations/docker\", host=\"$host\"}[5m])) * 8",
+          "expr": "sum by (container) (rate(container_network_receive_bytes_total{job=\"integrations/cadvisor\", host=\"$host\"}[5m])) * 8",
           "legendFormat": "__auto",
           "editorMode": "code",
           "instant": true,
@@ -2617,7 +2617,7 @@
             "uid": "ceog2753mbr40d"
           },
           "refId": "F",
-          "expr": "sum by (container) (rate(container_network_transmit_bytes_total{job=\"integrations/docker\", host=\"$host\"}[5m])) * 8",
+          "expr": "sum by (container) (rate(container_network_transmit_bytes_total{job=\"integrations/cadvisor\", host=\"$host\"}[5m])) * 8",
           "legendFormat": "__auto",
           "editorMode": "code",
           "instant": true,
@@ -2630,7 +2630,7 @@
             "uid": "ceog2753mbr40d"
           },
           "refId": "G",
-          "expr": "time() - max by (container) (container_start_time_seconds{job=\"integrations/docker\", host=\"$host\"})",
+          "expr": "time() - max by (container) (container_start_time_seconds{job=\"integrations/cadvisor\", host=\"$host\"})",
           "legendFormat": "__auto",
           "editorMode": "code",
           "instant": true,
@@ -2643,7 +2643,7 @@
             "uid": "ceog2753mbr40d"
           },
           "refId": "H",
-          "expr": "max by (container) (increase(container_oom_events_total{job=\"integrations/docker\", host=\"$host\"}[$__range]))",
+          "expr": "max by (container) (increase(container_oom_events_total{job=\"integrations/cadvisor\", host=\"$host\"}[$__range]))",
           "legendFormat": "__auto",
           "editorMode": "code",
           "instant": true,
@@ -2999,7 +2999,7 @@
             "uid": "ceog2753mbr40d"
           },
           "refId": "A",
-          "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{job=\"integrations/docker\", host=\"$host\"}[$__rate_interval])) and on(container) topk(5, sum by (container) (avg_over_time((sum by (container) (rate(container_cpu_usage_seconds_total{job=\"integrations/docker\", host=\"$host\"}[$__rate_interval])))[$__range:5m] @ end())))",
+          "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{job=\"integrations/cadvisor\", host=\"$host\"}[$__rate_interval])) and on(container) topk(5, sum by (container) (avg_over_time((sum by (container) (rate(container_cpu_usage_seconds_total{job=\"integrations/cadvisor\", host=\"$host\"}[$__rate_interval])))[$__range:5m] @ end())))",
           "legendFormat": "{{container}}",
           "editorMode": "code"
         }
@@ -3073,7 +3073,7 @@
             "uid": "ceog2753mbr40d"
           },
           "refId": "A",
-          "expr": "max by (container) (container_memory_working_set_bytes{job=\"integrations/docker\", host=\"$host\"}) and on(container) topk(5, sum by (container) (avg_over_time((max by (container) (container_memory_working_set_bytes{job=\"integrations/docker\", host=\"$host\"}))[$__range:5m] @ end())))",
+          "expr": "max by (container) (container_memory_working_set_bytes{job=\"integrations/cadvisor\", host=\"$host\"}) and on(container) topk(5, sum by (container) (avg_over_time((max by (container) (container_memory_working_set_bytes{job=\"integrations/cadvisor\", host=\"$host\"}))[$__range:5m] @ end())))",
           "legendFormat": "{{container}}",
           "editorMode": "code"
         }
@@ -3147,7 +3147,7 @@
             "uid": "ceog2753mbr40d"
           },
           "refId": "A",
-          "expr": "sum by (container) (rate(container_network_receive_bytes_total{job=\"integrations/docker\", host=\"$host\"}[$__rate_interval]) + rate(container_network_transmit_bytes_total{job=\"integrations/docker\", host=\"$host\"}[$__rate_interval])) * 8 and on(container) topk(5, sum by (container) (avg_over_time((sum by (container) (rate(container_network_receive_bytes_total{job=\"integrations/docker\", host=\"$host\"}[$__rate_interval]) + rate(container_network_transmit_bytes_total{job=\"integrations/docker\", host=\"$host\"}[$__rate_interval])) * 8)[$__range:5m] @ end())))",
+          "expr": "sum by (container) (rate(container_network_receive_bytes_total{job=\"integrations/cadvisor\", host=\"$host\"}[$__rate_interval]) + rate(container_network_transmit_bytes_total{job=\"integrations/cadvisor\", host=\"$host\"}[$__rate_interval])) * 8 and on(container) topk(5, sum by (container) (avg_over_time((sum by (container) (rate(container_network_receive_bytes_total{job=\"integrations/cadvisor\", host=\"$host\"}[$__rate_interval]) + rate(container_network_transmit_bytes_total{job=\"integrations/cadvisor\", host=\"$host\"}[$__rate_interval])) * 8)[$__range:5m] @ end())))",
           "legendFormat": "{{container}}",
           "editorMode": "code"
         }
@@ -3547,7 +3547,7 @@
                 "uid": "ceog2753mbr40d"
               },
               "refId": "A",
-              "expr": "max by (version) (alloy_build_info{job=\"integrations/alloy\", host=\"$host\"})",
+              "expr": "max by (version) (alloy_build_info{job=\"integrations/self\", host=\"$host\"})",
               "legendFormat": "{{version}}",
               "editorMode": "code",
               "instant": true,
@@ -3613,7 +3613,7 @@
                 "uid": "ceog2753mbr40d"
               },
               "refId": "A",
-              "expr": "min(alloy_config_last_load_successful{job=\"integrations/alloy\", host=\"$host\"})",
+              "expr": "min(alloy_config_last_load_successful{job=\"integrations/self\", host=\"$host\"})",
               "legendFormat": "__auto",
               "editorMode": "code",
               "instant": true,
@@ -3682,7 +3682,7 @@
                 "uid": "ceog2753mbr40d"
               },
               "refId": "A",
-              "expr": "time() - max(max_over_time(prometheus_remote_storage_queue_highest_sent_timestamp_seconds{job=\"integrations/alloy\", host=\"$host\"}[1d]))",
+              "expr": "time() - max(max_over_time(prometheus_remote_storage_queue_highest_sent_timestamp_seconds{job=\"integrations/self\", host=\"$host\"}[1d]))",
               "legendFormat": "__auto",
               "editorMode": "code",
               "instant": true,
@@ -3755,7 +3755,7 @@
                 "uid": "ceog2753mbr40d"
               },
               "refId": "A",
-              "expr": "max(process_resident_memory_bytes{job=\"integrations/alloy\", host=\"$host\"})",
+              "expr": "max(process_resident_memory_bytes{job=\"integrations/self\", host=\"$host\"})",
               "legendFormat": "__auto",
               "editorMode": "code",
               "instant": true,
@@ -3822,7 +3822,7 @@
                 "uid": "ceog2753mbr40d"
               },
               "refId": "A",
-              "expr": "sum(rate(prometheus_remote_storage_samples_total{job=\"integrations/alloy\", host=\"$host\"}[$__rate_interval]))",
+              "expr": "sum(rate(prometheus_remote_storage_samples_total{job=\"integrations/self\", host=\"$host\"}[$__rate_interval]))",
               "legendFormat": "Sent",
               "editorMode": "code"
             },
@@ -3832,7 +3832,7 @@
                 "uid": "ceog2753mbr40d"
               },
               "refId": "B",
-              "expr": "sum(rate(prometheus_remote_storage_samples_failed_total{job=\"integrations/alloy\", host=\"$host\"}[$__rate_interval]))",
+              "expr": "sum(rate(prometheus_remote_storage_samples_failed_total{job=\"integrations/self\", host=\"$host\"}[$__rate_interval]))",
               "legendFormat": "Failed",
               "editorMode": "code"
             }
@@ -3923,7 +3923,7 @@
                 "uid": "ceog2753mbr40d"
               },
               "refId": "A",
-              "expr": "sum(rate(loki_write_sent_entries_total{job=\"integrations/alloy\", host=\"$host\"}[$__rate_interval]))",
+              "expr": "sum(rate(loki_write_sent_entries_total{job=\"integrations/self\", host=\"$host\"}[$__rate_interval]))",
               "legendFormat": "Sent",
               "editorMode": "code"
             },
@@ -3933,7 +3933,7 @@
                 "uid": "ceog2753mbr40d"
               },
               "refId": "B",
-              "expr": "sum(rate(loki_write_dropped_entries_total{job=\"integrations/alloy\", host=\"$host\"}[$__rate_interval]))",
+              "expr": "sum(rate(loki_write_dropped_entries_total{job=\"integrations/self\", host=\"$host\"}[$__rate_interval]))",
               "legendFormat": "Dropped",
               "editorMode": "code"
             }

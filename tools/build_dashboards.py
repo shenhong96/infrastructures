@@ -6,8 +6,9 @@ after a change, and commit the JSON it writes (tests/test_monitoring.py fails if
     python3 tools/build_dashboards.py
 
 The data comes from the Alloy agent in stacks/monitoring: every series and log line carries host,
-host_kind and vmid, and the jobs are integrations/node_exporter, integrations/docker and
-integrations/alloy. Collection is every 60s; panels draw at no finer than 5 minutes."""
+host_kind and vmid. Metrics come as jobs integrations/node_exporter, integrations/cadvisor and
+integrations/self, logs as integrations/docker. Collection is every 60s; panels draw at no finer
+than 5 minutes."""
 import json
 from pathlib import Path
 
@@ -29,8 +30,8 @@ INTERVAL = "5m"  # the finest step a panel draws
 # Labels every panel filters on.
 H = 'host="$host"'
 NODE = f'job="integrations/node_exporter", {H}'
-DOCKER = f'job="integrations/docker", {H}'
-ALLOY = f'job="integrations/alloy", {H}'
+DOCKER = f'job="integrations/cadvisor", {H}'
+ALLOY = f'job="integrations/self", {H}'
 ERRORS = 'detected_level=~"error|fatal|critical"'
 
 

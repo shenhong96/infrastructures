@@ -7,12 +7,7 @@ declare "host_metrics" {
 	}
 
 	argument "host" {
-		comment = "The machine's inventory name, set as instance."
-	}
-
-	argument "scrape_interval" {
-		optional = true
-		default  = "60s"
+		comment = "The machine's inventory name, set as instance: Grafana's Linux dashboards key a machine on it."
 	}
 
 	prometheus.exporter.unix "node" {
@@ -52,7 +47,7 @@ declare "host_metrics" {
 
 	prometheus.scrape "node" {
 		targets         = discovery.relabel.node.output
-		scrape_interval = argument.scrape_interval.value
+		scrape_interval = "60s"
 		forward_to      = [prometheus.relabel.node.receiver]
 	}
 

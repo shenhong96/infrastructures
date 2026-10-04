@@ -1,6 +1,4 @@
-# Metrics on :9100 for Prometheus, from Ubuntu's package (not a hand-copied binary), on the machines
-# in the node_exporter group. Every other container has it removed: the Alloy agent
-# (stacks/monitoring) has node_exporter built in, so a second exporter would only cost memory.
+# Metrics on :9100 for Prometheus, from Ubuntu's package (not a hand-copied binary).
 # ponytail: same port as the old hand-copied 1.2.2 binaries (CT 104, CT 114); collector defaults
 # and some metric names differ between 1.2 and 1.7.
 - name: Node exporter package
@@ -9,19 +7,9 @@
     update_cache: true
     cache_valid_time: 86400
     state: present
-  when: inventory_hostname in groups['node_exporter']
 
 - name: Node exporter running and enabled at boot
   ansible.builtin.service:
     name: prometheus-node-exporter
     enabled: true
     state: started
-  when: inventory_hostname in groups['node_exporter']
-
-# Its textfile collectors come with it (a Recommends) and go with it.
-- name: Node exporter removed elsewhere
-  ansible.builtin.apt:
-    name: [prometheus-node-exporter, prometheus-node-exporter-collectors]
-    state: absent
-    purge: true
-  when: inventory_hostname not in groups['node_exporter']

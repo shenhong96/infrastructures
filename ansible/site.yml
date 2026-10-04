@@ -86,10 +86,9 @@
         tasks_from: connected
       when: komodo_enrolled | bool and not ansible_check_mode
 
-# Prometheus node-exporter on the machines in the node_exporter group (proxy), and removed from
-# every other container: the Alloy agent covers them.
+# Prometheus node-exporter on the machines in the node_exporter group (proxy; the Alloy agent covers the rest).
 - name: Node exporter
-  hosts: containers:!skip_inside
+  hosts: node_exporter
   tags: node_exporter
   gather_facts: false # nothing uses facts
   roles:

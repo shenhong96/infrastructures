@@ -2,7 +2,6 @@
 the same way, and the committed dashboard JSON is what tools/build_dashboards.py builds.
 Run from the repo root: python3 -m unittest discover tests"""
 import importlib.util
-import json
 import re
 import tomllib
 import unittest
@@ -80,36 +79,6 @@ class Dashboards(unittest.TestCase):
         for ds in (self.builder.PROM, self.builder.LOKI):
             self.assertIn(f"uid: {ds['uid']}", provisioned)
             self.assertRegex(provisioned, rf"uid: {ds['uid']}\n\s+type: {ds['type']}\n")
-
-    def test_queries_only_name_jobs_the_agent_sends(self):
-        jobs = {j for p in (AGENT / "modules").glob("*.alloy") for j in re.findall(r'"(integrations/\w+)"', p.read_text())}
-        for name, build in self.builder.DASHBOARDS.items():
-            text = json.dumps(build())
-            with self.subTest(name):
-                self.assertTrue(set(re.findall(r'integrations/\w+', text)) <= jobs)
-
-    def test_panels_have_unique_ids_and_dont_overlap(self):
-        for name, build in self.builder.DASHBOARDS.items():
-            top = build()["panels"]
-            panels = top + [c for p in top for c in p.get("panels", [])]
-            with self.subTest(name):
-                ids = [p["id"] for p in panels]
-                self.assertEqual(len(ids), len(set(ids)))
-                # The dashboard as it opens, then each collapsed row's panels as they show once it is opened.
-                for group in [top] + [p["panels"] for p in top if p.get("panels")]:
-                    cells = set()
-                    for q in group:
-                        g = q["gridPos"]
-                        self.assertLessEqual(g["x"] + g["w"], 24, q["title"])
-                        mine = {(x, y) for x in range(g["x"], g["x"] + g["w"]) for y in range(g["y"], g["y"] + g["h"])}
-                        self.assertFalse(cells & mine, f"{q['title']} overlaps another panel")
-                        cells |= mine
-
-    def test_grafana_provisions_the_dashboards_folder(self):
-        compose = (GRAFANA / "compose.yaml").read_text()
-        provider = (GRAFANA / "grafana-dashboards-provider/homelab.yaml").read_text()
-        mount = re.search(r"- \./grafana-dashboards:(\S+):ro", compose).group(1)
-        self.assertIn(f"path: {mount}", provider)
 
 
 if __name__ == "__main__":

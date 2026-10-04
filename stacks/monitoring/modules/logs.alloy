@@ -8,8 +8,7 @@ declare "docker_logs" {
 	}
 
 	discovery.docker "containers" {
-		host             = "unix:///var/run/docker.sock"
-		refresh_interval = "30s"
+		host = "unix:///var/run/docker.sock"
 	}
 
 	// Dropped here, before tailing starts: a drop in relabel_rules below would only strip the
@@ -55,10 +54,9 @@ declare "docker_logs" {
 	}
 
 	loki.source.docker "containers" {
-		host             = "unix:///var/run/docker.sock"
-		targets          = discovery.relabel.opted_in.output
-		relabel_rules    = discovery.relabel.containers.rules
-		refresh_interval = "30s"
-		forward_to       = argument.forward_to.value
+		host          = "unix:///var/run/docker.sock"
+		targets       = discovery.relabel.opted_in.output
+		relabel_rules = discovery.relabel.containers.rules
+		forward_to    = argument.forward_to.value
 	}
 }

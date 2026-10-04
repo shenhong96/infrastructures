@@ -37,7 +37,6 @@ homelab.host_metrics "default" {
 }
 
 homelab.docker_metrics "default" {
-	host       = sys.env("HOST")
 	forward_to = [prometheus.remote_write.default.receiver]
 }
 
@@ -46,6 +45,5 @@ homelab.docker_logs "default" {
 }
 
 homelab.agent_metrics "default" {
-	host       = sys.env("HOST")
 	forward_to = [prometheus.remote_write.default.receiver]
 }
