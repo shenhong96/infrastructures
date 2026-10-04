@@ -75,6 +75,19 @@ The `proxy`, `node_exporter` and `base` roles put the files Caddy reads back; Ko
 - **Secrets:** the two keys in `.env` are `CF_API_TOKEN` and `ACME_EMAIL`. Caddy's certificate and ACME account (`/opt/caddy/data`) are not in the repo; they are re-issued on their own.
 - **Container:** Ubuntu 24.04 with Docker 29 needs the raw key `lxc.mount.entry: /dev/null sys/module/apparmor/parameters/enabled none bind 0 0` in the inventory, as on `apps`, or `docker run` fails on the AppArmor check.
 
+## Monitoring: the telemetry agent
+
+Every machine runs the same Grafana Alloy agent from `stacks/monitoring/`; it sends to Prometheus and Loki on the Proxmox host (`stacks/host-monitoring/`), and the Grafana there shows the **Homelab · Machines & containers** dashboard. So far on `vpn`.
+
+- **What it collects:** the machine (CPU, memory, disks, network, load, pressure, from the node_exporter built into Alloy: no separate exporter), each Docker container (CPU, memory against its limit, network, uptime, OOM kills), every container's logs, and its own health. Every series and log line carries `host`, `host_kind` and `vmid`.
+- **Why it runs with the machine's network, processes, `/proc`, `/sys` and `/`:** so the numbers are the machine's, not the Alloy container's. Inside an LXC the `/proc` bind carries lxcfs, so memory and CPU are the LXC's share. Containers that share a network (host, or another container's) each show that network's total.
+- **Why every 60s when the panels draw at 5 minutes:** Prometheus forgets a series 5 minutes after its last sample, so a 5-minute scrape would leave gaps.
+- **Adding a machine:** add `stacks/monitoring/hosts/<name>.yaml` and a `[[stack]]` named `monitoring-<name>` in `stacks/monitoring/komodo.toml`; `tests/test_monitoring.py` checks the two match. If the machine is in the `node_exporter` group, take it out and remove the package once: `ansible <name> -m apt -a "name=prometheus-node-exporter,prometheus-node-exporter-collectors state=absent purge=true"` (from `ansible/`).
+- **Adding a signal:** a new file in `stacks/monitoring/modules/` with one `declare` block, one block in `config.alloy`, and its `config_files` entry on every stack.
+- **Changing a dashboard:** edit `tools/build_dashboards.py`, run it, commit the JSON. Grafana won't save an edit made in its UI.
+- **Keeping a container's logs out:** give it the label `homelab.logs=false`.
+- **Next, roughly in order:** the other machines (`apps` replaces `monitoring-apps`, `gitlab` and `nextcloud` replace Promtail, then `proxy` and the `node_exporter` role with it); the Proxmox host with `prometheus-pve-exporter` for every guest; machine logs from the journal; per-container disk I/O; Grafana alerts (an agent stale for 10 minutes, a disk over 90%, an OOM kill). Each but the first needs a policy exception.
+
 ## Not working yet
 
 Deploying anything (the Ansible roles, Komodo), rebuilding from scratch, and backups and restores. Each section is added here once it has been shown to work.

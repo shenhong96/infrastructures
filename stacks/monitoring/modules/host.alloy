@@ -1,0 +1,64 @@
+// The machine itself (an LXC, a VM or the Proxmox host): CPU, memory, disks, network, load,
+// pressure and uptime, from the node_exporter built into Alloy. It reads the machine's /proc, /sys
+// and / mounted under /host (compose.yaml).
+declare "host_metrics" {
+	argument "forward_to" {
+		comment = "Where the samples go."
+	}
+
+	argument "host" {
+		comment = "The machine's inventory name, set as instance: Grafana's Linux dashboards key a machine on it."
+	}
+
+	prometheus.exporter.unix "node" {
+		procfs_path    = "/host/proc"
+		sysfs_path     = "/host/sys"
+		rootfs_path    = "/host/root"
+		udev_data_path = "/host/root/run/udev/data"
+		set_collectors = ["cpu", "diskstats", "filesystem", "loadavg", "meminfo", "netdev", "os", "pressure", "stat", "time", "uname"]
+
+		filesystem {
+			fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fuse\\.lxcfs|fusectl|hugetlbfs|mqueue|nsfs|overlay|proc|procfs|pstore|ramfs|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tmpfs|tracefs)$"
+			mount_points_exclude = "^/(dev|proc|run|sys|var/lib/docker)($|/)"
+		}
+
+		// Docker's bridges and veth pairs, and traffic-shaping devices: the containers' traffic is
+		// counted per container.
+		netdev {
+			device_exclude = "^(lo|veth.*|docker\\d+|br-.*|ifb\\d+)$"
+		}
+	}
+
+	discovery.relabel "node" {
+		targets = prometheus.exporter.unix.node.targets
+
+		rule {
+			target_label = "instance"
+			replacement  = argument.host.value
+		}
+
+		// The exporter would call it integrations/unix: node_exporter is the name Grafana's
+		// Linux dashboards and mixins look for.
+		rule {
+			target_label = "job"
+			replacement  = "integrations/node_exporter"
+		}
+	}
+
+	prometheus.scrape "node" {
+		targets         = discovery.relabel.node.output
+		scrape_interval = "60s"
+		forward_to      = [prometheus.relabel.node.receiver]
+	}
+
+	prometheus.relabel "node" {
+		forward_to = argument.forward_to.value
+
+		// Only what the dashboards use: a new panel that needs more adds its metric here.
+		rule {
+			source_labels = ["__name__"]
+			regex         = "up|node_uname_info|node_os_info|node_boot_time_seconds|node_time_seconds|node_load(1|5|15)|node_cpu_seconds_total|node_memory_(MemTotal|MemAvailable|SwapTotal|SwapFree)_bytes|node_filesystem_(size|avail)_bytes|node_disk_(read|written)_bytes_total|node_network_(receive|transmit)_bytes_total|node_pressure_(cpu|memory|io)_(waiting|stalled)_seconds_total"
+			action        = "keep"
+		}
+	}
+}

@@ -1,0 +1,29 @@
+# Safety settings on every stack, enforced by tests/test_komodo_gate.py: a sync only creates
+# or updates the stack record. Nothing deploys until someone runs DeployStack on it.
+# The telemetry agent, one [[stack]] per machine, all from this folder: compose.yaml plus the
+# machine's hosts/<name>.yaml. A new machine is a hosts file and a block here (tests/test_monitoring.py
+# checks they match). The name is monitoring-<machine> and the project "monitoring", as the
+# per-machine stacks before it had: Komodo updates that record and Compose replaces that container.
+# Every file Alloy reads is a config_files entry: a change restarts Alloy only.
+
+[[stack]]
+name = "monitoring-vpn"
+[stack.config]
+server = "vpn"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "monitoring"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/monitoring"
+file_paths = ["compose.yaml", "hosts/vpn.yaml"]
+config_files = [
+  { path = "config.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/agent.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/docker.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/host.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/logs.alloy", services = ["alloy"], requires = "Restart" },
+]

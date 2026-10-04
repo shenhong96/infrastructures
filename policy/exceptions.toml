@@ -70,8 +70,6 @@ promtail = ["mount: /var/run/docker.sock", "mount: /var/log"]
 [compose."stacks/monitoring-nextcloud/compose.yaml"]
 promtail = ["mount: /var/run/docker.sock", "mount: /var/log"]
 
-[compose."stacks/monitoring-vpn/compose.yaml"]
-alloy = ["mount: /var/run/docker.sock"]
 
 [compose."stacks/photoprism/compose.yaml"]
 photoprism = ["security_opt: seccomp:unconfined", "security_opt: apparmor:unconfined"]

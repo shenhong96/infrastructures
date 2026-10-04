@@ -1,0 +1,63 @@
+// Every Docker container on the machine: CPU, memory against its limit, network, start time and
+// OOM kills, from the cAdvisor built into Alloy. It finds the containers through docker.sock and
+// containerd.sock (it registers none without both), reads their usage from /sys/fs/cgroup, and
+// their network through the machine's processes (pid: host). Containers that share a network
+// (host, or another container's) each report that network's total. Per-container disk I/O would
+// also need the machine's devices; the machine's own totals (host.alloy) cover it for now.
+declare "docker_metrics" {
+	argument "forward_to" {
+		comment = "Where the samples go."
+	}
+
+	prometheus.exporter.cadvisor "docker" {
+		docker_host                  = "unix:///var/run/docker.sock"
+		docker_only                  = true
+		disable_root_cgroup_stats    = true
+		store_container_labels       = false
+		allowlisted_container_labels = ["com.docker.compose.project", "com.docker.compose.service"]
+		enabled_metrics              = ["cpu", "memory", "network", "oom_event"]
+		storage_duration             = "2m"
+	}
+
+	prometheus.scrape "docker" {
+		targets         = prometheus.exporter.cadvisor.docker.targets
+		scrape_interval = "60s"
+		forward_to      = [prometheus.relabel.docker.receiver]
+	}
+
+	prometheus.relabel "docker" {
+		forward_to = argument.forward_to.value
+
+		rule {
+			source_labels = ["__name__"]
+			regex         = "up|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_spec_memory_limit_bytes|container_start_time_seconds|container_last_seen|container_oom_events_total|container_network_(receive|transmit)_bytes_total"
+			action        = "keep"
+		}
+		// A series without a container name is a cgroup that is not a container.
+		rule {
+			source_labels = ["__name__", "name"]
+			regex         = "container_.+;"
+			action        = "drop"
+		}
+		// The same names the logs carry (logs.alloy), so a panel can go from one to the other.
+		rule {
+			source_labels = ["name"]
+			target_label  = "container"
+		}
+
+		rule {
+			source_labels = ["container_label_com_docker_compose_project"]
+			target_label  = "compose_project"
+		}
+
+		rule {
+			source_labels = ["container_label_com_docker_compose_service"]
+			target_label  = "compose_service"
+		}
+		// id changes on every recreate: without it a container keeps one series across updates.
+		rule {
+			regex  = "id|name|container_label_com_docker_compose_(project|service)"
+			action = "labeldrop"
+		}
+	}
+}

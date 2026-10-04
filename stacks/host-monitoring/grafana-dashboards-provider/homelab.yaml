@@ -1,0 +1,14 @@
+# Dashboards from grafana-dashboards/ next to this file (built by tools/build_dashboards.py), in a
+# Homelab folder. They are code: an edit in the UI can't be saved, change the builder instead.
+apiVersion: 1
+
+providers:
+  - name: homelab
+    folder: Homelab
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 60
+    options:
+      path: /etc/grafana/dashboards/homelab
+      foldersFromFilesStructure: false

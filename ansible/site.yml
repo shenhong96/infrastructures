@@ -86,7 +86,7 @@
         tasks_from: connected
       when: komodo_enrolled | bool and not ansible_check_mode
 
-# Prometheus node-exporter on the machines in the node_exporter group (proxy; vpn after its rebuild).
+# Prometheus node-exporter on the machines in the node_exporter group (proxy; the Alloy agent covers the rest).
 - name: Node exporter
   hosts: node_exporter
   tags: node_exporter
