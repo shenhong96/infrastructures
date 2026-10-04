@@ -54,6 +54,16 @@ core = ["mount: /opt/komodo/keys"]
 [compose."stacks/monitoring-apps/compose.yaml"]
 alloy = ["mount: /var/run/docker.sock"]
 
+# The telemetry agent on every machine, as its node agent (it replaces node-exporter): the machine's
+# network and processes, its /proc, /sys and / read-only, and the container list (Docker and the
+# containerd under it). docker.sock already gives it root's reach; nothing here adds to that.
+[compose."stacks/monitoring/compose.yaml"]
+alloy = [
+  "network_mode is not allowed", "network_mode: host", "pid is not allowed", "pid: host",
+  "mount: /proc", "mount: /sys", "mount: /", "mount: /sys/fs/cgroup",
+  "mount: /var/run/docker.sock", "mount: /run/containerd/containerd.sock",
+]
+
 [compose."stacks/monitoring-gitlab/compose.yaml"]
 promtail = ["mount: /var/run/docker.sock", "mount: /var/log"]
 
