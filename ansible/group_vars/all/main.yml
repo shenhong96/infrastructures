@@ -5,6 +5,10 @@ timezone: Asia/Kuala_Lumpur
 # Placed by `base`. Public, so it is plain here.
 admin_ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINaW4+uZXr3Vx5XAqqefMUrOacOcp+hkRLtdQsD67ejp shenhongyee@Shens-MacBook-Air.local
 
+# Semaphore's runner on control logs in with it (a merge's Ansible). Placed by `base` on every
+# container but control; never on the host. Public, so it is plain here.
+ops_ssh_pubkey: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOTnpC8KTDbryed1y3H7lGYZSI0nHA69IBWWGPvnyOWs ops@control
+
 # Komodo. Agents connect to Core only when this is true (enrolled 2026-10-01, Phase 3 step 2;
 # it was a deliberate run after the install had been reviewed).
 komodo_enrolled: true

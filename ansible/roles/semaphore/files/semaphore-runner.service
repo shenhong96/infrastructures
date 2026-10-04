@@ -1,0 +1,20 @@
+# Managed by Ansible (roles/semaphore).
+# Every task runs here, as runner: merged Ansible holds the ops keys and this runner's token,
+# and nothing that changes what runs.
+[Unit]
+Description=Semaphore runner, runs every task as runner
+After=semaphore.service
+Wants=semaphore.service
+
+[Service]
+User=runner
+Group=runner
+# Tasks get this PATH (Semaphore forwards it): the runner's own Ansible first.
+Environment=PATH=/opt/semaphore-runner/venv/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/semaphore runner start --config /etc/semaphore-runner/config.json
+NoNewPrivileges=yes
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

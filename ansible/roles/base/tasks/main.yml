@@ -73,6 +73,16 @@
         group: root
         mode: "0600"
 
+    - name: Root's authorized_keys has the ops key (not on control)
+      ansible.builtin.lineinfile:
+        path: /root/.ssh/authorized_keys
+        regexp: ^\S+ {{ ops_ssh_pubkey.split()[1] | regex_escape }}( |$)
+        line: "{{ ops_ssh_pubkey }}"
+        owner: root
+        group: root
+        mode: "0600"
+      when: inventory_hostname != 'control'
+
 # Scripts are mirrored under files/common/ (every machine) and files/<machine>/, by
 # their path from /. Content only: existing files keep their modes (0600 or 0644).
 - name: Scripts every machine has # noqa: risky-file-permissions

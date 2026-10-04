@@ -437,7 +437,8 @@ class Units(unittest.TestCase):
         for path in (".github/workflows/ci.yml", "policy/gate.py", ".sops.yaml", "komodo/servers.toml",
                      "ansible/ansible.cfg", "ansible.cfg", "ansible/connection_plugins/pct.py",
                      "ansible/roles/x/library/m.py", "ansible/roles/x/filter_plugins/f.py",
-                     "ansible/collections/ansible_collections/a/b/plugins/vars/v.py", ".gitleaksignore"):
+                     "ansible/collections/ansible_collections/a/b/plugins/vars/v.py", ".gitleaksignore",
+                     "ansible/roles/semaphore/defaults/main.yml", "ansible/roles/github/tasks/main.yml"):
             self.assertTrue(gate.is_gate_file(path), path)
         for path in ("ansible/site.yml", "ansible/roles/base/tasks/main.yml", "stacks/aio/compose.yaml", "README.md"):
             self.assertFalse(gate.is_gate_file(path), path)

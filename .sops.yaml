@@ -1,9 +1,15 @@
 # Which age key encrypts which files. The first matching rule wins.
 #   admin  age1wk8x…udrhc  your Mac, Bitwarden, one offline copy; decrypts everything
 #   lab    age1206d…2hyvt  every machine running the Komodo agent; app files only
+#   ops    age1h823…x3tas  control's runner (made there, never leaves it); what a merge's Ansible needs
 creation_rules:
   - path_regex: stacks/komodo/ # Ansible deploys Komodo: admin only
     age: age1wk8xfnvlt0avl0m9pnwd4f0q64qezvlh6d60yzcsm7yjj34mjyjs7udrhc
   - path_regex: stacks/.*\.sops\.[^/]+$ # app secrets and encrypted app config
     age: age1wk8xfnvlt0avl0m9pnwd4f0q64qezvlh6d60yzcsm7yjj34mjyjs7udrhc,age1206d97xd5zwyhd4dnwd9tw6rqwn9uc2ssxxxgdta3k5rrqlanfxs02hyvt
+  # What a merge's Ansible (Semaphore's runner on control) decrypts. Not host_vars/proxmox (the
+  # disk key), host_vars/control or stacks/. group_vars/all holds the lab key: ops reaches app
+  # secrets through it until isolation step 5.
+  - path_regex: ansible/(group_vars/all|host_vars/(fileserver|gitlab|proxy|vpn))/secrets\.sops\.yml$
+    age: age1wk8xfnvlt0avl0m9pnwd4f0q64qezvlh6d60yzcsm7yjj34mjyjs7udrhc,age1h823nynnv9a60re4ymedk6qdxlpeuk3akvqzvw6chxg08h0dqshswx3tas
   - age: age1wk8xfnvlt0avl0m9pnwd4f0q64qezvlh6d60yzcsm7yjj34mjyjs7udrhc # everything else: machine secrets, disk key

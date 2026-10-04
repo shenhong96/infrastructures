@@ -1,0 +1,51 @@
+# Semaphore UI on control (deploy-from-anywhere plan 2): the server as `semaphore`, the one
+# runner that runs every task as `runner`, and the reporter's login as `reporter`. Laptop only:
+#   ansible-playbook site.yml --tags control [--check --diff]
+# --check needs an installed control: the first run is a real one.
+# Semaphore's settings live in its database, set here through its API, so no PR changes them.
+
+# The community (MIT) build; semaphore_<v>_linux_amd64.deb is the Pro one. The sha256 values
+# are GitHub's asset digests. To upgrade, change the version and hash together.
+semaphore_version: 2.19.12
+semaphore_deb_sha256: 3858f6bc6eaef3a6223e55fc03eebf69fec89bcf802afb48449321de2964d170
+semaphore_deb_url: "https://github.com/semaphoreui/semaphore/releases/download/v{{ semaphore_version }}/\
+  semaphore_community_{{ semaphore_version }}_linux_amd64.deb"
+
+# age-keygen makes the ops key once. sops: the same pin as the Komodo agents (roles/periphery).
+semaphore_age_version: v1.3.2
+semaphore_age_sha256: cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
+semaphore_age_url: https://github.com/FiloSottile/age/releases/download/{{ semaphore_age_version }}/age-{{ semaphore_age_version }}-linux-amd64.tar.gz
+semaphore_sops_version: v3.12.2
+semaphore_sops_sha256: 14e2e1ba3bef31e74b70cf0b674f6443c80f6c5f3df15d05ffc57c34851b4998
+semaphore_sops_url: https://github.com/getsops/sops/releases/download/{{ semaphore_sops_version }}/sops-{{ semaphore_sops_version }}.linux.amd64
+
+# The LAN address only; you reach it over the Tailscale subnet route.
+semaphore_ip: "{{ pct.net0 | regex_search('ip=([0-9.]+)/', '\\1') | first }}"
+semaphore_url: http://{{ semaphore_ip }}:3000
+semaphore_config: /home/semaphore/config.json
+# Your login (admin, TOTP). Its first password is semaphore_admin_password in
+# host_vars/control/secrets.sops.yml.
+semaphore_admin: shenhong96
+semaphore_project: homelab
+
+# Root-owned, read-only to the runner: its Ansible and the collections it loads.
+semaphore_runner_dir: /opt/semaphore-runner
+# Set for every task, after Semaphore's own variables: the last value of a name wins.
+semaphore_runner_env:
+  # Semaphore sets False for every run, and ssh keeps the first StrictHostKeyChecking it is
+  # given: without this, the pinned known_hosts would not be enforced.
+  ANSIBLE_HOST_KEY_CHECKING: "True"
+  # Tasks run from the checkout's root; the repo's config is in ansible/.
+  ANSIBLE_CONFIG: ansible/ansible.cfg
+  # The repo's collections folder is gitignored; these are the role's, from ansible/requirements.yml.
+  ANSIBLE_COLLECTIONS_PATH: "{{ semaphore_runner_dir }}/collections"
+  ANSIBLE_ANY_ERRORS_FATAL: "True"
+  SOPS_AGE_KEY_FILE: /home/runner/.config/sops/age/keys.txt
+
+# What a merge applies: every tag in site.yml but the laptop-only ones (policy/gate.py's
+# LAPTOP_TAGS). tests/test_apply_scope.py keeps the three in step.
+semaphore_apply_tags: [base, samba, gitlab, jellyfin, nextcloud, proxy, node_exporter]
+semaphore_apply_limit: all:!proxmox:!control
+# The schedule that applies each new commit on main; false deletes it. Switching it off in the
+# UI doesn't stop a schedule tied to the repository (2.19.12): the emergency stop is the runner.
+semaphore_apply_on_merge: false
