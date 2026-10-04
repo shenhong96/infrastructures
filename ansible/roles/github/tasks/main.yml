@@ -113,7 +113,7 @@
       ansible.builtin.set_fact:
         github_bot_ok: >-
           {{ github_bot_role == 'write'
-             or github_api_result.json | selectattr('invitee.login', 'eq', github_bot) | list | length > 0 }}
+             or github_api_result.json | selectattr('invitee.login', 'eq', github_bot) | selectattr('permissions', 'eq', 'write') | list | length > 0 }}
 
     - name: The bot has no Write access or invitation
       ansible.builtin.debug:
