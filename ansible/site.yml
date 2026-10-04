@@ -102,6 +102,15 @@
   roles:
     - tailscale
 
+# Semaphore, its runner and the ops keys on control: laptop only. A merge's Ansible runs there
+# but with --limit all:!proxmox:!control, so it never reaches this play's host.
+- name: Semaphore
+  hosts: control
+  tags: control
+  gather_facts: false # nothing uses facts
+  roles:
+    - semaphore
+
 # This repo's GitHub settings and rulesets, with your token: laptop only, never Semaphore.
 - name: GitHub
   hosts: localhost
