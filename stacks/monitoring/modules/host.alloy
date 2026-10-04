@@ -1,0 +1,59 @@
+// The machine itself (an LXC, a VM or the Proxmox host): CPU, memory, disks, network, load and
+// uptime, from the prometheus-node-exporter Ansible installs on it (roles/node_exporter). Inside an
+// LXC, lxcfs makes /proc show the container's own share, so these are the container's numbers.
+declare "host_metrics" {
+	argument "forward_to" {
+		comment = "Where the samples go."
+	}
+
+	argument "host" {
+		comment = "The machine's inventory name, set as instance."
+	}
+
+	argument "address" {
+		comment  = "node-exporter, seen from the Alloy container."
+		optional = true
+		default  = "host.docker.internal:9100"
+	}
+
+	argument "scrape_interval" {
+		optional = true
+		default  = "60s"
+	}
+
+	prometheus.scrape "node" {
+		targets         = [{"__address__" = argument.address.value, "instance" = argument.host.value}]
+		job_name        = "integrations/node_exporter"
+		scrape_interval = argument.scrape_interval.value
+		forward_to      = [prometheus.relabel.node.receiver]
+	}
+
+	prometheus.relabel "node" {
+		forward_to = argument.forward_to.value
+
+		// Only what the dashboards use: a new panel that needs more adds its metric here.
+		rule {
+			source_labels = ["__name__"]
+			regex         = "up|node_uname_info|node_os_info|node_boot_time_seconds|node_time_seconds|node_load(1|5|15)|node_cpu_seconds_total|node_memory_(MemTotal|MemAvailable|SwapTotal|SwapFree)_bytes|node_filesystem_(size|avail)_bytes|node_disk_(read|written)_bytes_total|node_network_(receive|transmit)_bytes_total|node_pressure_(cpu|memory|io)_(waiting|stalled)_seconds_total"
+			action        = "keep"
+		}
+		// Pseudo filesystems and Docker's own mounts say nothing about free space.
+		rule {
+			source_labels = ["fstype"]
+			regex         = "tmpfs|devtmpfs|overlay|squashfs|nsfs|proc|sysfs|fuse\\.lxcfs|ramfs|autofs"
+			action        = "drop"
+		}
+
+		rule {
+			source_labels = ["mountpoint"]
+			regex         = "/(run|dev|sys|proc|var/lib/docker)(/.*)?"
+			action        = "drop"
+		}
+		// Docker's bridges and veth pairs: the containers' traffic is counted per container already.
+		rule {
+			source_labels = ["device"]
+			regex         = "lo|veth.*|docker\\d+|br-.*"
+			action        = "drop"
+		}
+	}
+}

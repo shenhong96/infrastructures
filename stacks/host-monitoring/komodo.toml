@@ -20,4 +20,6 @@ config_files = [
   { path = "prometheus.yml", services = ["prometheus"], requires = "Restart" },
   { path = "loki-config.yaml", services = ["loki"], requires = "Restart" },
   { path = "grafana-datasources/datasources.yaml", services = ["grafana"], requires = "Restart" },
+  { path = "grafana-dashboards-provider/homelab.yaml", services = ["grafana"], requires = "Restart" },
+  { path = "grafana-dashboards/homelab-hosts.json", services = ["grafana"], requires = "Restart" },
 ]

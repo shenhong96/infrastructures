@@ -75,6 +75,16 @@ The `proxy`, `node_exporter` and `base` roles put the files Caddy reads back; Ko
 - **Secrets:** the two keys in `.env` are `CF_API_TOKEN` and `ACME_EMAIL`. Caddy's certificate and ACME account (`/opt/caddy/data`) are not in the repo; they are re-issued on their own.
 - **Container:** Ubuntu 24.04 with Docker 29 needs the raw key `lxc.mount.entry: /dev/null sys/module/apparmor/parameters/enabled none bind 0 0` in the inventory, as on `apps`, or `docker run` fails on the AppArmor check.
 
+## Monitoring: the telemetry agent
+
+Every machine runs the same Grafana Alloy agent from `stacks/monitoring/`; it sends to Prometheus and Loki on the Proxmox host (`stacks/host-monitoring/`), and the Grafana there shows the **Homelab · Machines & containers** dashboard. Design and roadmap: `docs/plans/2026-10-04-telemetry-design.md`.
+
+- **What it collects:** the machine (CPU, memory, disks, network, load, pressure, from the `node_exporter` role's exporter), each Docker container (CPU, memory against its limit, uptime, OOM kills), every container's logs, and its own health. Every series and log line carries `host`, `host_kind` and `vmid`.
+- **Adding a machine:** put it in the `node_exporter` group (a laptop run), add `stacks/monitoring/hosts/<name>.yaml` and a `[[stack]]` named `monitoring-<name>` in `stacks/monitoring/komodo.toml`. `tests/test_monitoring.py` checks the two match.
+- **Adding a signal:** a new file in `stacks/monitoring/modules/` with one `declare` block, one block in `config.alloy`, and its `config_files` entry on every stack.
+- **Changing a dashboard:** edit `tools/build_dashboards.py`, run it, commit the JSON. Grafana won't save an edit made in its UI.
+- **Keeping a container's logs out:** give it the label `homelab.logs=false`.
+
 ## Not working yet
 
 Deploying anything (the Ansible roles, Komodo), rebuilding from scratch, and backups and restores. Each section is added here once it has been shown to work.

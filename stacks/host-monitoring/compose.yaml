@@ -105,6 +105,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./grafana-datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana-dashboards-provider:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana-dashboards:/etc/grafana/dashboards/homelab:ro
       - /mnt/storage/appdata/monitoring/grafana:/var/lib/grafana
     environment:
       - GF_PATHS_PROVISIONING=/etc/grafana/provisioning

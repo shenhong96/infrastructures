@@ -1,0 +1,8 @@
+# vpn: CT 118 (PrivateVPN), Ubuntu 24.04 LXC. Its labels on every series and log line.
+services:
+  alloy:
+    hostname: vpn
+    environment:
+      HOST: vpn
+      HOST_KIND: lxc
+      VMID: "118"

@@ -1,0 +1,64 @@
+// Every Docker container's stdout and stderr, labelled with the same container, compose_project
+// and compose_service as its metrics (docker.alloy). Loki finds each line's level by itself
+// (detected_level), so nothing is parsed here. A container opts out with the label
+// homelab.logs=false (a chatty one, or one that logs secrets).
+declare "docker_logs" {
+	argument "forward_to" {
+		comment = "Where the log lines go."
+	}
+
+	discovery.docker "containers" {
+		host             = "unix:///var/run/docker.sock"
+		refresh_interval = "30s"
+	}
+
+	// Dropped here, before tailing starts: a drop in relabel_rules below would only strip the
+	// labels and still ship the lines.
+	discovery.relabel "opted_in" {
+		targets = discovery.docker.containers.targets
+
+		rule {
+			source_labels = ["__meta_docker_container_label_homelab_logs"]
+			regex         = "false"
+			action        = "drop"
+		}
+	}
+
+	discovery.relabel "containers" {
+		targets = []
+
+		rule {
+			source_labels = ["__meta_docker_container_name"]
+			regex         = "/(.*)"
+			target_label  = "container"
+		}
+
+		rule {
+			source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+			target_label  = "compose_project"
+		}
+
+		rule {
+			source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+			target_label  = "compose_service"
+		}
+
+		rule {
+			source_labels = ["__meta_docker_container_log_stream"]
+			target_label  = "stream"
+		}
+
+		rule {
+			target_label = "job"
+			replacement  = "integrations/docker"
+		}
+	}
+
+	loki.source.docker "containers" {
+		host             = "unix:///var/run/docker.sock"
+		targets          = discovery.relabel.opted_in.output
+		relabel_rules    = discovery.relabel.containers.rules
+		refresh_interval = "30s"
+		forward_to       = argument.forward_to.value
+	}
+}

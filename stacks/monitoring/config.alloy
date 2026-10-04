@@ -1,0 +1,51 @@
+// The telemetry agent, the same on every machine. What it collects lives in modules/, one file
+// per signal; this file only wires them to Prometheus and Loki on the Proxmox host. A new signal
+// is a new module plus one block here.
+//
+// Who the machine is comes from its hosts/<name>.yaml (HOST, HOST_KIND, VMID). Every series and
+// every log line carries them as host, host_kind and vmid, which is what the dashboards filter on.
+
+import.file "homelab" {
+	filename = "/etc/alloy/modules"
+}
+
+prometheus.remote_write "default" {
+	endpoint {
+		url = "http://192.168.9.152:9090/api/v1/write"
+	}
+	external_labels = {
+		host      = sys.env("HOST"),
+		host_kind = sys.env("HOST_KIND"),
+		vmid      = sys.env("VMID"),
+	}
+}
+
+loki.write "default" {
+	endpoint {
+		url = "http://192.168.9.152:3100/loki/api/v1/push"
+	}
+	external_labels = {
+		host      = sys.env("HOST"),
+		host_kind = sys.env("HOST_KIND"),
+		vmid      = sys.env("VMID"),
+	}
+}
+
+homelab.host_metrics "default" {
+	host       = sys.env("HOST")
+	forward_to = [prometheus.remote_write.default.receiver]
+}
+
+homelab.docker_metrics "default" {
+	host       = sys.env("HOST")
+	forward_to = [prometheus.remote_write.default.receiver]
+}
+
+homelab.docker_logs "default" {
+	forward_to = [loki.write.default.receiver]
+}
+
+homelab.agent_metrics "default" {
+	host       = sys.env("HOST")
+	forward_to = [prometheus.remote_write.default.receiver]
+}

@@ -1,0 +1,61 @@
+// Alloy watching itself: is it running, which version, and is it getting its samples and log
+// lines through to Prometheus and Loki. The dashboard's "Last data" comes from here.
+declare "agent_metrics" {
+	argument "forward_to" {
+		comment = "Where the samples go."
+	}
+
+	argument "host" {
+		comment = "The machine's inventory name, set as instance."
+	}
+
+	argument "scrape_interval" {
+		optional = true
+		default  = "60s"
+	}
+
+	prometheus.exporter.self "alloy" { }
+
+	discovery.relabel "alloy" {
+		targets = prometheus.exporter.self.alloy.targets
+
+		rule {
+			target_label = "instance"
+			replacement  = argument.host.value
+		}
+
+		// The exporter would call it integrations/self.
+		rule {
+			target_label = "job"
+			replacement  = "integrations/alloy"
+		}
+	}
+
+	prometheus.scrape "alloy" {
+		targets         = discovery.relabel.alloy.output
+		scrape_interval = argument.scrape_interval.value
+		forward_to      = [prometheus.relabel.alloy.receiver]
+	}
+
+	prometheus.relabel "alloy" {
+		forward_to = argument.forward_to.value
+
+		rule {
+			source_labels = ["__name__"]
+			regex         = "up|alloy_build_info|alloy_config_last_load_successful|alloy_component_controller_running_components|process_resident_memory_bytes|process_cpu_seconds_total|prometheus_remote_storage_samples_(total|failed_total|retried_total)|prometheus_remote_storage_queue_highest_sent_timestamp_seconds|loki_write_(sent_entries_total|dropped_entries_total|sent_bytes_total)"
+			action        = "keep"
+		}
+
+		// Some of Alloy's own metrics name the server they write to as host, which would win over
+		// the machine's host label (an external label never replaces one a series already has).
+		rule {
+			source_labels = ["host"]
+			target_label  = "endpoint"
+		}
+
+		rule {
+			regex  = "host"
+			action = "labeldrop"
+		}
+	}
+}
