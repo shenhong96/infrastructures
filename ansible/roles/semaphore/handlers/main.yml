@@ -1,0 +1,7 @@
+# The server restarts in tasks/main.yml, before the runner registers.
+- name: Restart semaphore-runner
+  ansible.builtin.systemd:
+    name: semaphore-runner
+    state: restarted
+    daemon_reload: true
+  when: not ansible_check_mode # on a new machine the unit isn't there yet in --check

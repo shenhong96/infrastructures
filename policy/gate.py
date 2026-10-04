@@ -31,6 +31,7 @@ GATE_FILES = (
     ".gitattributes", "**/.gitattributes",
     "komodo/*", "ansible/requirements.yml", "ansible/inventory.yml", "ansible/known_hosts",
     "ansible/collections/*",
+    "ansible/roles/semaphore/*", "ansible/roles/github/*",  # what runs on a merge, and who merges
 )
 CODE_DIRS = ("library", "module_utils")  # and any *_plugins folder: code Ansible loads
 

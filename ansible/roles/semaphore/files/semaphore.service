@@ -1,0 +1,15 @@
+# Managed by Ansible (roles/semaphore).
+[Unit]
+Description=Semaphore UI, the server (runs no task itself: use_remote_runner)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=semaphore
+Group=semaphore
+ExecStart=/usr/bin/semaphore server --config /home/semaphore/config.json
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

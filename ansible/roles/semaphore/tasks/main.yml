@@ -1,0 +1,403 @@
+# Semaphore on control: three users that can't read each other's homes, the server, the runner
+# (every task runs there, as `runner`), the ops keys (made here, never leave control), and the
+# logins. Not managed: Semaphore's database beyond what project.yml sets (task history, your TOTP).
+
+- name: Users
+  ansible.builtin.user:
+    name: "{{ item }}"
+    system: true
+    home: /home/{{ item }}
+    create_home: true
+    shell: /usr/sbin/nologin
+  loop: [semaphore, runner, reporter]
+
+- name: Homes only their owner can read
+  ansible.builtin.file:
+    path: /home/{{ item }}
+    state: directory
+    owner: "{{ item }}"
+    group: "{{ item }}"
+    mode: "0700"
+  loop: [semaphore, runner, reporter]
+
+# sudo: become_user (the CLI runs as semaphore, the keys are made as runner).
+- name: Packages
+  ansible.builtin.apt:
+    name: [python3-venv, sudo]
+    update_cache: true
+    cache_valid_time: 86400
+
+# The checksum is checked after the download.
+- name: Semaphore package file
+  ansible.builtin.get_url:
+    url: "{{ semaphore_deb_url }}"
+    dest: /root/semaphore_community_{{ semaphore_version }}.deb
+    checksum: sha256:{{ semaphore_deb_sha256 }}
+    mode: "0644"
+  register: semaphore_deb
+
+# The server restarts below; the runner at the end of the play (its unit comes later).
+- name: Semaphore installed (git comes with it)
+  ansible.builtin.apt:
+    deb: /root/semaphore_community_{{ semaphore_version }}.deb
+  when: not (semaphore_deb is changed and ansible_check_mode)
+  register: semaphore_pkg
+  notify: Restart semaphore-runner
+
+- name: Sops binary
+  ansible.builtin.get_url:
+    url: "{{ semaphore_sops_url }}"
+    dest: /usr/local/bin/sops
+    checksum: sha256:{{ semaphore_sops_sha256 }}
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Age release
+  ansible.builtin.get_url:
+    url: "{{ semaphore_age_url }}"
+    dest: /root/age-{{ semaphore_age_version }}.tar.gz
+    checksum: sha256:{{ semaphore_age_sha256 }}
+    mode: "0644"
+
+# ponytail: installed once (creates:); it only ever makes the ops key.
+- name: Age-keygen binary
+  ansible.builtin.unarchive:
+    src: /root/age-{{ semaphore_age_version }}.tar.gz
+    dest: /usr/local/bin
+    remote_src: true
+    extra_opts: [--strip-components=1]
+    include: [age/age-keygen]
+    creates: /usr/local/bin/age-keygen
+  when: not ansible_check_mode
+
+- name: The runner's folder (root's; the runner only reads it)
+  ansible.builtin.file:
+    path: "{{ semaphore_runner_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: The runner's Ansible, its pins
+  ansible.builtin.copy:
+    src: runner-requirements.txt
+    dest: "{{ semaphore_runner_dir }}/requirements.txt"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: The runner's Ansible, hash-pinned
+  ansible.builtin.pip:
+    requirements: "{{ semaphore_runner_dir }}/requirements.txt"
+    virtualenv: "{{ semaphore_runner_dir }}/venv"
+    virtualenv_command: python3 -m venv
+    extra_args: "--require-hashes --only-binary :all:"
+
+# The collections from the laptop's ansible/requirements.yml, never from a task: Semaphore's
+# per-run Galaxy install is off (project.yml), so a PR's requirements.yml waits for a laptop run.
+- name: The collections list
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/requirements.yml"
+    dest: "{{ semaphore_runner_dir }}/requirements.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  register: semaphore_collections
+
+- name: The collections
+  ansible.builtin.command: >-
+    {{ semaphore_runner_dir }}/venv/bin/ansible-galaxy collection install --force
+    -r {{ semaphore_runner_dir }}/requirements.yml -p {{ semaphore_runner_dir }}/collections
+  when: semaphore_collections is changed and not ansible_check_mode
+  changed_when: true
+
+# Made here once, never leave control; made even in --check (random, and nothing else changes).
+# Semaphore's key store holds no secret (its key is "none"), so losing this file costs a new
+# runner registration and new logins, nothing more.
+- name: Server keys
+  ansible.builtin.shell: |
+    set -euo pipefail
+    umask 077
+    r() { head -c 32 /dev/urandom | base64; }
+    printf '{"cookie_hash": "%s", "cookie_encryption": "%s", "access_key_encryption": "%s", "runner_registration_token": "%s"}\n' \
+      "$(r)" "$(r)" "$(r)" "$(head -c 24 /dev/urandom | base64 | tr -d '/+=')" > /home/semaphore/keys.json
+    chown semaphore:semaphore /home/semaphore/keys.json
+  args:
+    creates: /home/semaphore/keys.json
+    executable: /bin/bash
+  check_mode: false
+
+- name: Read them
+  ansible.builtin.slurp:
+    src: /home/semaphore/keys.json
+  register: semaphore_keys_file
+  no_log: true
+
+- name: Server and runner folders
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.owner }}"
+    mode: "0700"
+  loop:
+    - {path: /home/semaphore/tmp, owner: semaphore}
+    - {path: /home/runner/tmp, owner: runner}
+
+# Listens on the LAN address only. use_remote_runner: the server never runs a task itself.
+- name: Server config
+  ansible.builtin.copy:
+    content: "{{ config | to_nice_json }}\n"
+    dest: "{{ semaphore_config }}"
+    owner: semaphore
+    group: semaphore
+    mode: "0600"
+  vars:
+    keys: "{{ semaphore_keys_file.content | b64decode | from_json }}"
+    config:
+      dialect: sqlite
+      sqlite: {host: /home/semaphore/database.sqlite}
+      interface: "{{ semaphore_ip }}"
+      port: ":3000"
+      web_host: "{{ semaphore_url }}"
+      tmp_path: /home/semaphore/tmp
+      cookie_hash: "{{ keys.cookie_hash }}"
+      cookie_encryption: "{{ keys.cookie_encryption }}"
+      access_key_encryption: "{{ keys.access_key_encryption }}"
+      runner_registration_token: "{{ keys.runner_registration_token }}"
+      use_remote_runner: true
+      mfa: {totp: {enabled: true, allow_recovery: false}}
+  no_log: true
+  diff: false
+  register: semaphore_conf
+
+- name: Server unit
+  ansible.builtin.copy:
+    src: semaphore.service
+    dest: /etc/systemd/system/semaphore.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: semaphore_unit
+
+- name: Reload systemd for the server unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: semaphore_unit is changed and not ansible_check_mode
+
+- name: Server enabled at boot and started
+  ansible.builtin.service:
+    name: semaphore
+    enabled: true
+    state: started
+  when: not (semaphore_unit is changed and ansible_check_mode) # the unit isn't there yet in --check
+
+# Now, not in a handler: the runner registers and the API is used next. (A handler flush here
+# would also restart the runner, whose unit a first run hasn't written yet.)
+- name: Restart the server for a new package, config or unit
+  ansible.builtin.systemd:
+    name: semaphore
+    state: restarted
+  when: (semaphore_pkg is changed or semaphore_conf is changed or semaphore_unit is changed) and not ansible_check_mode
+
+- name: Server answers
+  ansible.builtin.wait_for:
+    host: "{{ semaphore_ip }}"
+    port: 3000
+    timeout: 60
+  when: not ansible_check_mode
+
+# The runner reads its config but can't change it. It holds no secret: the runner's token is
+# in its own home, written by the registration below.
+- name: Runner config folder
+  ansible.builtin.file:
+    path: /etc/semaphore-runner
+    state: directory
+    owner: root
+    group: runner
+    mode: "0750"
+
+- name: Runner config
+  ansible.builtin.copy:
+    content: "{{ config | to_nice_json }}\n"
+    dest: /etc/semaphore-runner/config.json
+    owner: root
+    group: runner
+    mode: "0640"
+  vars:
+    config:
+      web_host: "{{ semaphore_url }}"
+      tmp_path: /home/runner/tmp
+      runner: {token_file: /home/runner/token, max_parallel_tasks: 1}
+      env_vars: "{{ semaphore_runner_env }}"
+  notify: Restart semaphore-runner
+
+# --enabled=true: without the flag, the config's missing `enabled` registers the runner inactive.
+# Only at registration: a later run never switches it back on (the emergency stop is that switch).
+- name: Register the runner (once; its token stays in its home)
+  ansible.builtin.command:
+    argv: [semaphore, runner, register, --stdin-registration-token, --name, control, --enabled=true,
+           --config, /etc/semaphore-runner/config.json]
+    stdin: "{{ (semaphore_keys_file.content | b64decode | from_json).runner_registration_token }}"
+    creates: /home/runner/token
+  become: true
+  become_user: runner
+  no_log: true
+  when: not ansible_check_mode
+
+- name: Runner unit
+  ansible.builtin.copy:
+    src: semaphore-runner.service
+    dest: /etc/systemd/system/semaphore-runner.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: semaphore_runner_unit
+  notify: Restart semaphore-runner
+
+- name: Reload systemd for the runner unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: semaphore_runner_unit is changed and not ansible_check_mode
+
+- name: Runner enabled at boot and started
+  ansible.builtin.service:
+    name: semaphore-runner
+    enabled: true
+    state: started
+  when: not (semaphore_runner_unit is changed and ansible_check_mode)
+
+# The ops keys: made as runner, in its home, never copied anywhere. Their public halves go into
+# the repo by hand (.sops.yaml, group_vars/all ops_ssh_pubkey).
+- name: The ops key folders
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: runner
+    group: runner
+    mode: "0700"
+  loop: [/home/runner/.ssh, /home/runner/.config, /home/runner/.config/sops, /home/runner/.config/sops/age]
+
+- name: The ops SSH key
+  ansible.builtin.command: ssh-keygen -q -t ed25519 -N '' -C ops@control -f /home/runner/.ssh/id_ed25519
+  args:
+    creates: /home/runner/.ssh/id_ed25519
+  become: true
+  become_user: runner
+  when: not ansible_check_mode
+
+- name: The ops age key
+  ansible.builtin.command: age-keygen -o /home/runner/.config/sops/age/keys.txt
+  args:
+    creates: /home/runner/.config/sops/age/keys.txt
+  become: true
+  become_user: runner
+  when: not ansible_check_mode
+
+- name: The ops SSH key, public half
+  ansible.builtin.command: cat /home/runner/.ssh/id_ed25519.pub
+  register: semaphore_ops_ssh
+  check_mode: false
+  changed_when: false
+  failed_when: false
+
+- name: The ops age key, public half
+  ansible.builtin.command: age-keygen -y /home/runner/.config/sops/age/keys.txt
+  register: semaphore_ops_age
+  check_mode: false
+  changed_when: false
+  failed_when: false
+
+- name: Public halves (Task 4 commits them)
+  ansible.builtin.debug:
+    msg: ["{{ semaphore_ops_ssh.stdout }}", "{{ semaphore_ops_age.stdout }}"]
+
+# Logins, through Semaphore's CLI (straight to its database, as semaphore: files it makes must
+# stay its own).
+- name: Your login exists
+  ansible.builtin.command:
+    argv: [semaphore, user, get, --login, "{{ semaphore_admin }}", --config, "{{ semaphore_config }}"]
+  become: true
+  become_user: semaphore
+  register: semaphore_admin_user
+  check_mode: false
+  changed_when: false
+  failed_when: semaphore_admin_user.rc != 0 and 'not found' not in semaphore_admin_user.stdout
+
+- name: Your login, with its first password (then turn on TOTP in the UI)
+  ansible.builtin.command:
+    argv: [semaphore, user, add, --admin, --login, "{{ semaphore_admin }}", --name, "{{ semaphore_admin }}",
+           --email, "{{ semaphore_admin }}@localhost", --password, "{{ semaphore_admin_password }}",
+           --config, "{{ semaphore_config }}"]
+  become: true
+  become_user: semaphore
+  when: semaphore_admin_user.rc != 0 and not ansible_check_mode
+  changed_when: true
+  no_log: true
+
+- name: The reporter's login exists
+  ansible.builtin.command:
+    argv: [semaphore, user, get, --login, reporter, --config, "{{ semaphore_config }}"]
+  become: true
+  become_user: semaphore
+  register: semaphore_reporter_user
+  check_mode: false
+  changed_when: false
+  failed_when: semaphore_reporter_user.rc != 0 and 'not found' not in semaphore_reporter_user.stdout
+
+# Not admin; `guest` on the project (project.yml). Its password is thrown away: API token only.
+- name: The reporter's login
+  ansible.builtin.command:
+    argv: [semaphore, user, add, --login, reporter, --name, reporter, --email, reporter@localhost,
+           --password, "{{ lookup('ansible.builtin.password', '/dev/null', length=32) }}",
+           --config, "{{ semaphore_config }}"]
+  become: true
+  become_user: semaphore
+  when: semaphore_reporter_user.rc != 0 and not ansible_check_mode
+  changed_when: true
+  no_log: true
+
+- name: The reporter's token file
+  ansible.builtin.stat:
+    path: /home/reporter/semaphore-token
+  register: semaphore_reporter_token_file
+
+- name: The reporter's token (made once, kept in its home)
+  when: not semaphore_reporter_token_file.stat.exists and not ansible_check_mode
+  block:
+    - name: Make it
+      ansible.builtin.command:
+        argv: [semaphore, user, token, create, --login, reporter, --name, reporter, --config, "{{ semaphore_config }}"]
+      become: true
+      become_user: semaphore
+      register: semaphore_reporter_token
+      changed_when: true
+      no_log: true
+
+    - name: Keep it
+      ansible.builtin.copy:
+        content: "{{ semaphore_reporter_token.stdout | trim }}\n"
+        dest: /home/reporter/semaphore-token
+        owner: reporter
+        group: reporter
+        mode: "0400"
+      no_log: true
+      diff: false
+
+# ponytail: each run leaves one expired token row behind.
+- name: An admin token for this run (15 minutes, never stored)
+  ansible.builtin.command:
+    argv: [semaphore, user, token, create, --login, "{{ semaphore_admin }}", --name, ansible, --ttl, 15m,
+           --config, "{{ semaphore_config }}"]
+  become: true
+  become_user: semaphore
+  register: semaphore_token_cmd
+  check_mode: false
+  changed_when: false
+  no_log: true
+
+- name: Keep it for the API calls
+  ansible.builtin.set_fact:
+    semaphore_token: "{{ semaphore_token_cmd.stdout | trim }}"
+  no_log: true
