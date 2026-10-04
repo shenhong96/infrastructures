@@ -88,10 +88,9 @@
     mode: "0644"
   register: semaphore_runner_pins
 
-# Only for new pins, like the collections below: pip's --check always reports a requirements
-# file as changed. ponytail: a first install that fails halfway needs the venv removed by hand.
+# In --check, only for new pins: pip's check mode always reports a requirements file as changed.
 - name: The runner's Ansible, hash-pinned
-  when: semaphore_runner_pins is changed
+  when: semaphore_runner_pins is changed or not ansible_check_mode
   ansible.builtin.pip:
     requirements: "{{ semaphore_runner_dir }}/requirements.txt"
     virtualenv: "{{ semaphore_runner_dir }}/venv"
