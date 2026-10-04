@@ -86,8 +86,12 @@
     owner: root
     group: root
     mode: "0644"
+  register: semaphore_runner_pins
 
+# Only for new pins, like the collections below: pip's --check always reports a requirements
+# file as changed. ponytail: a first install that fails halfway needs the venv removed by hand.
 - name: The runner's Ansible, hash-pinned
+  when: semaphore_runner_pins is changed
   ansible.builtin.pip:
     requirements: "{{ semaphore_runner_dir }}/requirements.txt"
     virtualenv: "{{ semaphore_runner_dir }}/venv"
