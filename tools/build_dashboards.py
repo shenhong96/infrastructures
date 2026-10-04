@@ -181,7 +181,7 @@ def hosts_dashboard():
     # ---- Fleet: every machine at a glance; grows by itself as machines are added.
     L.row("Fleet")
     L.add(stat("Machines reporting", prom('count(up{job="integrations/node_exporter"} == 1)', instant=True),
-               desc="Machines whose node-exporter answered the last scrape."), 4, 4)
+               desc="Machines whose agent sent their metrics in the last scrape."), 4, 4)
     L.add(stat("Containers", prom("count(count by (host, container) (container_start_time_seconds))", instant=True),
                desc="Docker containers running, on every machine."), 4, 4)
     L.add(stat("Stale agents", prom("count((time() - max by (host) (max_over_time(prometheus_remote_storage_queue_highest_sent_timestamp_seconds[1d]))) > 300) or vector(0)", instant=True),
@@ -281,16 +281,20 @@ def hosts_dashboard():
         prom(f"sum by (container) (rate(container_cpu_usage_seconds_total{{{DOCKER}}}[5m]))", table=True, ref="B"),
         prom(f"max by (container) (container_memory_working_set_bytes{{{DOCKER}}})", table=True, ref="C"),
         prom(f"max by (container) (container_memory_working_set_bytes{{{DOCKER}}}) / max by (container) (container_spec_memory_limit_bytes{{{DOCKER}}} > 0)", table=True, ref="D"),
-        prom(f"time() - max by (container) (container_start_time_seconds{{{DOCKER}}})", table=True, ref="E"),
-        prom(f"max by (container) (increase(container_oom_events_total{{{DOCKER}}}[$__range]))", table=True, ref="F"),
+        prom(f"sum by (container) (rate(container_network_receive_bytes_total{{{DOCKER}}}[5m])) * 8", table=True, ref="E"),
+        prom(f"sum by (container) (rate(container_network_transmit_bytes_total{{{DOCKER}}}[5m])) * 8", table=True, ref="F"),
+        prom(f"time() - max by (container) (container_start_time_seconds{{{DOCKER}}})", table=True, ref="G"),
+        prom(f"max by (container) (increase(container_oom_events_total{{{DOCKER}}}[$__range]))", table=True, ref="H"),
     ], {
         "A": ("Started", "dateTimeFromNow", None, None),
         "B": ("CPU", "percentunit", "status", steps(GOOD, (0.5, WARN), (1, SERIOUS))),
         "C": ("Memory", "bytes", None, None),
         "D": ("Of its limit", "percentunit", "gauge", None),
-        "E": ("Up for", "s", None, None),
-        "F": ("OOM kills", "none", "status", steps(GOOD, (1, CRIT))),
-    }, desc="One row per running container. CPU is in cores (100% = one core). Click a name for its logs.", overrides=[
+        "E": ("Net in", "bps", None, None),
+        "F": ("Net out", "bps", None, None),
+        "G": ("Up for", "s", None, None),
+        "H": ("OOM kills", "none", "status", steps(GOOD, (1, CRIT))),
+    }, desc="One row per running container. CPU is in cores (100% = one core). Containers that share a network (host, or another container's) each show that network's total. Click a name for its logs.", overrides=[
         override("container", displayName="Container", links=[{"title": "Logs of ${__value.raw}", "url": "/d/homelab-hosts?var-host=$host&var-container=${__value.raw}&${__url_time_range}"}]),
         override("compose_project", displayName="Project"),
         override("image", displayName="Image", mappings=[{"type": "regex", "options": {"pattern": "(.*)@sha256:.*", "result": {"text": "$1"}}}]),
@@ -300,6 +304,8 @@ def hosts_dashboard():
                  unit="percentunit", desc="The five that used the most over the time range. 100% = one core."), 12, 8)
     L.add(series("Memory · top 5", [prom(topk(f"max by (container) (container_memory_working_set_bytes{{{DOCKER}}})", by), "{{container}}")],
                  unit="bytes", desc="Working set: what the kernel can't reclaim, the number an OOM kill is judged on."), 12, 8)
+    L.add(series("Network · top 5", [prom(topk(f"sum by (container) (rate(container_network_receive_bytes_total{{{DOCKER}}}[$__rate_interval]) + rate(container_network_transmit_bytes_total{{{DOCKER}}}[$__rate_interval])) * 8", by), "{{container}}")],
+                 unit="bps", desc="The five busiest over the time range, in and out together. Containers that share a network each show its total."), 24, 8)
 
     # ---- Logs on $host.
     L.row("Logs · $host")

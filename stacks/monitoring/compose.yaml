@@ -1,24 +1,30 @@
 # The telemetry agent (Grafana Alloy), the same on every machine: config.alloy wires modules/
 # to Prometheus and Loki on the Proxmox host. Each machine's [[stack]] in komodo.toml adds its
 # hosts/<name>.yaml, which says who the machine is.
+#
+# It runs as the machine's node agent, so it replaces a separate node-exporter: the machine's
+# network and processes (network_mode, pid) and its /proc, /sys and / (read-only, under /host)
+# make the machine's numbers the machine's own, not the container's. Inside an LXC the /proc bind
+# carries lxcfs, so memory and CPU are the LXC's share.
 services:
   alloy:
     image: grafana/alloy:v1.20.1@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f
     command:
       - run
-      - --server.http.listen-addr=0.0.0.0:12345
+      - --server.http.listen-addr=0.0.0.0:12345 # Alloy's UI: the live pipeline, for debugging
       - --storage.path=/var/lib/alloy/data
       - --disable-reporting
       - /etc/alloy/config.alloy
-    ports:
-      - "12345:12345" # Alloy's UI: the live pipeline, for debugging
-    extra_hosts:
-      - "host.docker.internal:host-gateway" # node-exporter on the machine itself (modules/host.alloy)
+    network_mode: host
+    pid: host
     volumes:
       - ./config.alloy:/etc/alloy/config.alloy:ro
       - ./modules:/etc/alloy/modules:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+      - /sys/fs/cgroup:/sys/fs/cgroup:ro # the containers' usage, for cAdvisor (modules/docker.alloy)
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro # cAdvisor's Docker support asks containerd too
-      - /sys/fs/cgroup:/sys/fs/cgroup:ro # the containers' usage, for cAdvisor (modules/docker.alloy)
       - /opt/monitoring/alloy/data:/var/lib/alloy/data # write-ahead log and log positions
     restart: unless-stopped

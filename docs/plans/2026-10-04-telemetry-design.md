@@ -24,7 +24,7 @@ Simple to start, and built so that a new machine or a new signal is a small, obv
 stacks/monitoring/                      every machine, one folder
   compose.yaml                          the Alloy container, pinned by digest
   config.alloy                          wiring only: modules -> Prometheus / Loki
-  modules/host.alloy                    the machine, from its node-exporter
+  modules/host.alloy                    the machine, from Alloy's built-in node_exporter
   modules/docker.alloy                  each container, from cAdvisor
   modules/logs.alloy                    each container's logs
   modules/agent.alloy                   Alloy's own health
@@ -50,8 +50,9 @@ file and one block. A module that needs an extra mount or exception says so in i
 `integrations/*` naming (`node_exporter`, `docker`, `alloy`), so community dashboards and mixins
 also work. Container metrics and logs share `container`, `compose_project` and `compose_service`.
 
-**Only what a panel uses.** Each module keeps its metrics by name. On vpn that comes to about
-70 series for the machine, 6 per container and about 20 for the agent. A new panel adds its metric
+**Only what a panel uses.** Each module keeps its metrics by name, and the unix exporter runs
+only the collectors the panels need. On vpn that comes to about 75 series for the machine, 9 per
+container and about 20 for the agent. A new panel adds its metric
 to the module's keep-list.
 
 **Cadence.** Collection runs every 60s and panels draw at 5-minute steps (`interval: 5m`). A
@@ -62,15 +63,22 @@ to the module's keep-list.
 tailing starts. Levels are not parsed in Alloy: Loki 3's `detected_level` finds them, so no
 per-app regex is needed.
 
-**Host metrics without host mounts.** The `node_exporter` role already installs the exporter on
-the machine, and inside an LXC lxcfs gives it the container's own view. Alloy reaches it at
-`host.docker.internal:9100`. The alternative, Alloy's own unix exporter, would need `/`, `/proc`
-and `/sys` mounted into the container.
+**One agent, no separate node-exporter.** Alloy has node_exporter built in
+(`prometheus.exporter.unix`), with the same collectors and metric names, so the machine runs one
+process, and a new machine needs no Ansible run. For the numbers to be the machine's and not the
+container's, Alloy runs as the node agent: the machine's network and processes (`network_mode:
+host`, `pid: host`), and its `/proc`, `/sys` and `/` read-only under `/host`. Inside an LXC the
+`/proc` bind carries lxcfs, so memory and CPU are the LXC's share. The host's process view also
+lets cAdvisor read each container's network. The `node_exporter` role now removes the package from
+every container outside its group (vpn leaves the group in this change; proxy stays until it gets
+the agent). The other way, a separate node-exporter that Alloy scrapes, needs no host mounts but
+costs a second process and a laptop run per machine.
 
-**Gate.** The agent needs `docker.sock`, `containerd.sock` and `/sys/fs/cgroup`, all read-only.
-These are listed in `policy/exceptions.toml` (the owner's `gate-change` label). Both sockets give
-root-equivalent API access whatever `:ro` says. That was already true of docker.sock on the
-`monitoring-*` stacks.
+**Gate.** The agent needs the host network and PID namespaces, `/proc`, `/sys`, `/`,
+`/sys/fs/cgroup`, `docker.sock` and `containerd.sock`, all read-only. These are listed in
+`policy/exceptions.toml` (the owner's `gate-change` label), pinned to exactly these values;
+`gate.py` itself is unchanged. docker.sock already gives root-equivalent access whatever `:ro`
+says (it was already allowed on the `monitoring-*` stacks), so the rest adds no reach.
 
 ## Dashboard
 
@@ -83,8 +91,9 @@ One function per panel kind keeps every panel the same, and a test fails if the 
 2. **Machine · $host:** uptime, cores, memory, swap, OS, kernel; CPU by mode; memory;
    load against cores; network and disk I/O mirrored around zero (one axis, never two); how full
    each filesystem is; pressure stall (PSI).
-3. **Containers · $host:** a table (project, image, CPU, memory, share of its limit, uptime, OOM
-   kills) and the top 5 by CPU and by memory. The top 5 is chosen once for the whole time range,
+3. **Containers · $host:** a table (project, image, CPU, memory, share of its limit, network,
+   uptime, OOM kills) and the top 5 by CPU, memory and network. Containers that share a network
+   (host, or another container's, as in a VPN setup) each show that network's total. The top 5 is chosen once for the whole time range,
    so the set doesn't change from point to point.
 4. **Logs · $host:** lines by level, errors by container, and the log stream with Container and
    Search filters.
@@ -102,7 +111,9 @@ The stack was run locally with Prometheus v3.15, Loki 3.7 and Grafana 12.0.1 at 
 `host-monitoring` pins, Alloy v1.20.1 and a few test containers. Every dashboard query was run
 through Grafana's API. That run found and fixed: the cAdvisor attribute name, the containerd
 socket, the jobs the exporters set themselves, Alloy's own `host` label overriding the machine's,
-and the opt-out shipping lines without labels when filtered in `relabel_rules`.
+and the opt-out shipping lines without labels when filtered in `relabel_rules`. Running as the node
+agent was checked the same way: the machine's own interface, filesystems and OS, and per-container
+network. `alloy validate` doesn't check inside `declare` blocks; only a run does.
 
 Not tested locally: cgroup v2 (the sandbox was v1; vpn runs v2, which is cAdvisor's main path) and
 the lxcfs view.
@@ -112,14 +123,14 @@ the lxcfs view.
 In rough order of value:
 
 1. **The other machines:** `apps` (replaces `monitoring-apps`), `gitlab` and `nextcloud`
-   (replace Promtail), then `proxy`, `media`, `fileserver`, `control`. Each one needs a hosts
-   file, a stack entry, and the machine in the `node_exporter` group.
+   (replace Promtail), then `proxy` (and the `node_exporter` role with it), `media`,
+   `fileserver`, `control`. Each one needs a hosts file and a stack entry.
 2. **The Proxmox host:** `host_kind: proxmox`, plus `prometheus-pve-exporter` for every guest's
    CPU, memory, disk and state as Proxmox sees them, VMs included. The Proxmox host is a gate stack
    (`proxmox_stacks`).
 3. **Machine logs:** the journal, through `loki.source.journal`. Needs `/var/log/journal` and
    `/etc/machine-id` mounted (an exception).
-4. **Per-container network and disk I/O:** needs the machine's `/proc` and devices (an exception).
+4. **Per-container disk I/O:** needs the machine's devices (an exception).
 5. **Alerts:** Grafana alerting on the same labels: an agent stale for 10 minutes, a disk over 90%,
    an OOM kill, a container restart loop.
 6. **Container restarts and exited containers:** Docker's own metrics endpoint (`daemon.json`,

@@ -107,7 +107,7 @@
     {
       "type": "stat",
       "title": "Machines reporting",
-      "description": "Machines whose node-exporter answered the last scrape.",
+      "description": "Machines whose agent sent their metrics in the last scrape.",
       "datasource": {
         "type": "prometheus",
         "uid": "ceog2753mbr40d"
@@ -2540,7 +2540,7 @@
     {
       "type": "table",
       "title": "Containers",
-      "description": "One row per running container. CPU is in cores (100% = one core). Click a name for its logs.",
+      "description": "One row per running container. CPU is in cores (100% = one core). Containers that share a network (host, or another container's) each show that network's total. Click a name for its logs.",
       "datasource": {
         "type": "prometheus",
         "uid": "ceog2753mbr40d"
@@ -2604,7 +2604,7 @@
             "uid": "ceog2753mbr40d"
           },
           "refId": "E",
-          "expr": "time() - max by (container) (container_start_time_seconds{job=\"integrations/docker\", host=\"$host\"})",
+          "expr": "sum by (container) (rate(container_network_receive_bytes_total{job=\"integrations/docker\", host=\"$host\"}[5m])) * 8",
           "legendFormat": "__auto",
           "editorMode": "code",
           "instant": true,
@@ -2617,6 +2617,32 @@
             "uid": "ceog2753mbr40d"
           },
           "refId": "F",
+          "expr": "sum by (container) (rate(container_network_transmit_bytes_total{job=\"integrations/docker\", host=\"$host\"}[5m])) * 8",
+          "legendFormat": "__auto",
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "ceog2753mbr40d"
+          },
+          "refId": "G",
+          "expr": "time() - max by (container) (container_start_time_seconds{job=\"integrations/docker\", host=\"$host\"})",
+          "legendFormat": "__auto",
+          "editorMode": "code",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "ceog2753mbr40d"
+          },
+          "refId": "H",
           "expr": "max by (container) (increase(container_oom_events_total{job=\"integrations/docker\", host=\"$host\"}[$__range]))",
           "legendFormat": "__auto",
           "editorMode": "code",
@@ -2771,7 +2797,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "s"
+                "value": "bps"
               }
             ]
           },
@@ -2779,6 +2805,30 @@
             "matcher": {
               "id": "byName",
               "options": "Value #F"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "bps"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #G"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #H"
             },
             "properties": [
               {
@@ -2917,8 +2967,10 @@
               "Value #B": "CPU",
               "Value #C": "Memory",
               "Value #D": "Of its limit",
-              "Value #E": "Up for",
-              "Value #F": "OOM kills"
+              "Value #E": "Net in",
+              "Value #F": "Net out",
+              "Value #G": "Up for",
+              "Value #H": "OOM kills"
             }
           }
         }
@@ -3080,14 +3132,88 @@
       }
     },
     {
-      "type": "row",
-      "title": "Logs · $host",
-      "collapsed": false,
-      "panels": [],
+      "type": "timeseries",
+      "title": "Network · top 5",
+      "description": "The five busiest over the time range, in and out together. Containers that share a network each show its total.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "ceog2753mbr40d"
+      },
+      "interval": "5m",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "ceog2753mbr40d"
+          },
+          "refId": "A",
+          "expr": "sum by (container) (rate(container_network_receive_bytes_total{job=\"integrations/docker\", host=\"$host\"}[$__rate_interval]) + rate(container_network_transmit_bytes_total{job=\"integrations/docker\", host=\"$host\"}[$__rate_interval])) * 8 and on(container) topk(5, sum by (container) (avg_over_time((sum by (container) (rate(container_network_receive_bytes_total{job=\"integrations/docker\", host=\"$host\"}[$__rate_interval]) + rate(container_network_transmit_bytes_total{job=\"integrations/docker\", host=\"$host\"}[$__rate_interval])) * 8)[$__range:5m] @ end())))",
+          "legendFormat": "{{container}}",
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bps",
+          "color": {
+            "mode": "palette-classic-by-name"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 12,
+            "barWidthFactor": 0.6,
+            "gradientMode": "opacity",
+            "showPoints": "never",
+            "spanNulls": 360000,
+            "lineInterpolation": "smooth",
+            "axisSoftMin": 0,
+            "axisBorderShow": false,
+            "barAlignment": 0,
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisCenteredZero": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
       "id": 29,
       "gridPos": {
         "x": 0,
         "y": 64,
+        "w": 24,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "Logs · $host",
+      "collapsed": false,
+      "panels": [],
+      "id": 30,
+      "gridPos": {
+        "x": 0,
+        "y": 72,
         "w": 24,
         "h": 1
       }
@@ -3279,10 +3405,10 @@
           "sort": "desc"
         }
       },
-      "id": 30,
+      "id": 31,
       "gridPos": {
         "x": 0,
-        "y": 65,
+        "y": 73,
         "w": 12,
         "h": 8
       }
@@ -3353,10 +3479,10 @@
           "sort": "desc"
         }
       },
-      "id": 31,
+      "id": 32,
       "gridPos": {
         "x": 12,
-        "y": 65,
+        "y": 73,
         "w": 12,
         "h": 8
       }
@@ -3393,10 +3519,10 @@
         "dedupStrategy": "none",
         "sortOrder": "Descending"
       },
-      "id": 32,
+      "id": 33,
       "gridPos": {
         "x": 0,
-        "y": 73,
+        "y": 81,
         "w": 24,
         "h": 12
       }
@@ -3464,10 +3590,10 @@
             "showPercentChange": false,
             "orientation": "auto"
           },
-          "id": 34,
+          "id": 35,
           "gridPos": {
             "x": 0,
-            "y": 86,
+            "y": 94,
             "w": 6,
             "h": 4
           }
@@ -3533,10 +3659,10 @@
             "showPercentChange": false,
             "orientation": "auto"
           },
-          "id": 35,
+          "id": 36,
           "gridPos": {
             "x": 6,
-            "y": 86,
+            "y": 94,
             "w": 6,
             "h": 4
           }
@@ -3606,10 +3732,10 @@
             "showPercentChange": false,
             "orientation": "auto"
           },
-          "id": 36,
+          "id": 37,
           "gridPos": {
             "x": 12,
-            "y": 86,
+            "y": 94,
             "w": 6,
             "h": 4
           }
@@ -3672,10 +3798,10 @@
             "showPercentChange": false,
             "orientation": "auto"
           },
-          "id": 37,
+          "id": 38,
           "gridPos": {
             "x": 18,
-            "y": 86,
+            "y": 94,
             "w": 6,
             "h": 4
           }
@@ -3773,10 +3899,10 @@
               "sort": "desc"
             }
           },
-          "id": 38,
+          "id": 39,
           "gridPos": {
             "x": 0,
-            "y": 90,
+            "y": 98,
             "w": 12,
             "h": 7
           }
@@ -3874,19 +4000,19 @@
               "sort": "desc"
             }
           },
-          "id": 39,
+          "id": 40,
           "gridPos": {
             "x": 12,
-            "y": 90,
+            "y": 98,
             "w": 12,
             "h": 7
           }
         }
       ],
-      "id": 33,
+      "id": 34,
       "gridPos": {
         "x": 0,
-        "y": 85,
+        "y": 93,
         "w": 24,
         "h": 1
       }

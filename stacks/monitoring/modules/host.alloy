@@ -1,6 +1,6 @@
-// The machine itself (an LXC, a VM or the Proxmox host): CPU, memory, disks, network, load and
-// uptime, from the prometheus-node-exporter Ansible installs on it (roles/node_exporter). Inside an
-// LXC, lxcfs makes /proc show the container's own share, so these are the container's numbers.
+// The machine itself (an LXC, a VM or the Proxmox host): CPU, memory, disks, network, load,
+// pressure and uptime, from the node_exporter built into Alloy. It reads the machine's /proc, /sys
+// and / mounted under /host (compose.yaml).
 declare "host_metrics" {
 	argument "forward_to" {
 		comment = "Where the samples go."
@@ -10,20 +10,48 @@ declare "host_metrics" {
 		comment = "The machine's inventory name, set as instance."
 	}
 
-	argument "address" {
-		comment  = "node-exporter, seen from the Alloy container."
-		optional = true
-		default  = "host.docker.internal:9100"
-	}
-
 	argument "scrape_interval" {
 		optional = true
 		default  = "60s"
 	}
 
+	prometheus.exporter.unix "node" {
+		procfs_path    = "/host/proc"
+		sysfs_path     = "/host/sys"
+		rootfs_path    = "/host/root"
+		udev_data_path = "/host/root/run/udev/data"
+		set_collectors = ["cpu", "diskstats", "filesystem", "loadavg", "meminfo", "netdev", "os", "pressure", "stat", "time", "uname"]
+
+		filesystem {
+			fs_types_exclude     = "^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fuse\\.lxcfs|fusectl|hugetlbfs|mqueue|nsfs|overlay|proc|procfs|pstore|ramfs|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tmpfs|tracefs)$"
+			mount_points_exclude = "^/(dev|proc|run|sys|var/lib/docker)($|/)"
+		}
+
+		// Docker's bridges and veth pairs, and traffic-shaping devices: the containers' traffic is
+		// counted per container.
+		netdev {
+			device_exclude = "^(lo|veth.*|docker\\d+|br-.*|ifb\\d+)$"
+		}
+	}
+
+	discovery.relabel "node" {
+		targets = prometheus.exporter.unix.node.targets
+
+		rule {
+			target_label = "instance"
+			replacement  = argument.host.value
+		}
+
+		// The exporter would call it integrations/unix: node_exporter is the name Grafana's
+		// Linux dashboards and mixins look for.
+		rule {
+			target_label = "job"
+			replacement  = "integrations/node_exporter"
+		}
+	}
+
 	prometheus.scrape "node" {
-		targets         = [{"__address__" = argument.address.value, "instance" = argument.host.value}]
-		job_name        = "integrations/node_exporter"
+		targets         = discovery.relabel.node.output
 		scrape_interval = argument.scrape_interval.value
 		forward_to      = [prometheus.relabel.node.receiver]
 	}
@@ -36,24 +64,6 @@ declare "host_metrics" {
 			source_labels = ["__name__"]
 			regex         = "up|node_uname_info|node_os_info|node_boot_time_seconds|node_time_seconds|node_load(1|5|15)|node_cpu_seconds_total|node_memory_(MemTotal|MemAvailable|SwapTotal|SwapFree)_bytes|node_filesystem_(size|avail)_bytes|node_disk_(read|written)_bytes_total|node_network_(receive|transmit)_bytes_total|node_pressure_(cpu|memory|io)_(waiting|stalled)_seconds_total"
 			action        = "keep"
-		}
-		// Pseudo filesystems and Docker's own mounts say nothing about free space.
-		rule {
-			source_labels = ["fstype"]
-			regex         = "tmpfs|devtmpfs|overlay|squashfs|nsfs|proc|sysfs|fuse\\.lxcfs|ramfs|autofs"
-			action        = "drop"
-		}
-
-		rule {
-			source_labels = ["mountpoint"]
-			regex         = "/(run|dev|sys|proc|var/lib/docker)(/.*)?"
-			action        = "drop"
-		}
-		// Docker's bridges and veth pairs: the containers' traffic is counted per container already.
-		rule {
-			source_labels = ["device"]
-			regex         = "lo|veth.*|docker\\d+|br-.*"
-			action        = "drop"
 		}
 	}
 }

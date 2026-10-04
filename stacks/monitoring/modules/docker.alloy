@@ -1,8 +1,9 @@
-// Every Docker container on the machine: CPU, memory against its limit, start time and OOM kills,
-// from the cAdvisor built into Alloy. It finds the containers through docker.sock and
-// containerd.sock (it registers none without both) and reads their usage from /sys/fs/cgroup.
-// Per-container network and disk I/O would also need the machine's /proc and devices; the
-// machine's own totals (host.alloy) cover those for now.
+// Every Docker container on the machine: CPU, memory against its limit, network, start time and
+// OOM kills, from the cAdvisor built into Alloy. It finds the containers through docker.sock and
+// containerd.sock (it registers none without both), reads their usage from /sys/fs/cgroup, and
+// their network through the machine's processes (pid: host). Containers that share a network
+// (host, or another container's) each report that network's total. Per-container disk I/O would
+// also need the machine's devices; the machine's own totals (host.alloy) cover it for now.
 declare "docker_metrics" {
 	argument "forward_to" {
 		comment = "Where the samples go."
@@ -23,7 +24,7 @@ declare "docker_metrics" {
 		disable_root_cgroup_stats    = true
 		store_container_labels       = false
 		allowlisted_container_labels = ["com.docker.compose.project", "com.docker.compose.service"]
-		enabled_metrics              = ["cpu", "memory", "oom_event"]
+		enabled_metrics              = ["cpu", "memory", "network", "oom_event"]
 		storage_duration             = "2m"
 	}
 
@@ -53,7 +54,7 @@ declare "docker_metrics" {
 
 		rule {
 			source_labels = ["__name__"]
-			regex         = "up|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_spec_memory_limit_bytes|container_start_time_seconds|container_last_seen|container_oom_events_total"
+			regex         = "up|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_spec_memory_limit_bytes|container_start_time_seconds|container_last_seen|container_oom_events_total|container_network_(receive|transmit)_bytes_total"
 			action        = "keep"
 		}
 		// A series without a container name is a cgroup that is not a container.

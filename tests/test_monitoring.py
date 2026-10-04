@@ -22,10 +22,8 @@ def load_builder():
 
 
 def host_file(path):
-    """HOST, HOST_KIND, VMID and hostname from a hosts/<name>.yaml (flat, so read without PyYAML)."""
-    text = path.read_text()
-    found = dict(re.findall(r"^\s+(HOST|HOST_KIND|VMID|hostname):\s*\"?([\w.-]*)\"?\s*$", text, re.M))
-    return found
+    """HOST, HOST_KIND and VMID from a hosts/<name>.yaml (flat, so read without PyYAML)."""
+    return dict(re.findall(r"^\s+(HOST|HOST_KIND|VMID):\s*\"?([\w.-]*)\"?\s*$", path.read_text(), re.M))
 
 
 class Agent(unittest.TestCase):
@@ -48,7 +46,6 @@ class Agent(unittest.TestCase):
         for name, found in self.hosts.items():
             with self.subTest(name):
                 self.assertEqual(found.get("HOST"), name)
-                self.assertEqual(found.get("hostname"), name)
                 self.assertIn(found.get("HOST_KIND"), KINDS)
                 self.assertIn("VMID", found)  # empty on the Proxmox host itself
 
