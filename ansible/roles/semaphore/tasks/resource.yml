@@ -1,10 +1,11 @@
 # One named resource of the project (res_path, res_want): create it, or replace it when a field
 # this role owns differs (a PUT replaces the whole object, so the body is what Semaphore has,
-# with res_want on top). Its id lands in semaphore_ids[res_path].
+# with res_want on top). Its id lands in semaphore_ids[res_path]. res_list_path: where Semaphore
+# lists it, when that isn't res_path.
 - name: Read {{ res_path }}
   ansible.builtin.include_tasks: api.yml
   vars:
-    api_path: /project/{{ semaphore_project_id }}/{{ res_path }}
+    api_path: "{{ res_list_path | default('/project/' ~ semaphore_project_id ~ '/' ~ res_path) }}"
 
 - name: Compare {{ res_want.name }}
   ansible.builtin.set_fact:

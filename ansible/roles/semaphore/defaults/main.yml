@@ -48,4 +48,4 @@ semaphore_apply_tags: [base, samba, gitlab, jellyfin, nextcloud, proxy, node_exp
 semaphore_apply_limit: all:!proxmox:!control
 # The schedule that applies each new commit on main; false deletes it. Switching it off in the
 # UI doesn't stop a schedule tied to the repository (2.19.12): the emergency stop is the runner.
-semaphore_apply_on_merge: false
+semaphore_apply_on_merge: true

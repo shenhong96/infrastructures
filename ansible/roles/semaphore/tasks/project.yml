@@ -1,6 +1,33 @@
 # The project as Semaphore's database holds it: what a merge applies, and how. It lives in the
 # database, not in git, so no PR changes it; this file is a gate file.
 
+# Registration leaves the runner non-default (2.19.12 api/runners RegisterRunner), and a template
+# with no runner tag runs only on default runners (services/tasks/RemoteJob.go): every task would
+# fail "no runners available". The rest is written back as it is, `active` above all: switching
+# the runner off is the emergency stop.
+- name: Runners
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /runners
+
+- name: The runner
+  ansible.builtin.set_fact:
+    semaphore_runner: "{{ semaphore_api.json | selectattr('name', 'equalto', 'control') | first }}"
+
+- name: "The runner is the default one (now: {{ semaphore_runner.is_default }})"
+  ansible.builtin.debug:
+    msg: is_default false -> true
+  changed_when: true
+  when: not semaphore_runner.is_default
+
+- name: Make it the default
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /runners/{{ semaphore_runner.id }}
+    api_method: PUT
+    api_body: "{{ semaphore_runner | combine({'is_default': true}) }}"
+  when: not semaphore_runner.is_default and not ansible_check_mode
+
 - name: Projects
   ansible.builtin.include_tasks: api.yml
   vars:
@@ -90,10 +117,13 @@
             skip_galaxy_install: true
 
     # Every 5 minutes, Semaphore runs apply only if main's commit changed (repository_id).
+    # /project/<id>/schedules leaves out schedules tied to a repository (2.19.12
+    # db/sql/schedule.go GetProjectSchedules): only the template's list shows this one.
     - name: The schedule that applies each merge
       ansible.builtin.include_tasks: resource.yml
       vars:
         res_path: schedules
+        res_list_path: /project/{{ semaphore_project_id }}/templates/{{ semaphore_ids['templates'] }}/schedules
         res_want:
           name: apply on merge
           template_id: "{{ semaphore_ids['templates'] }}"
@@ -105,7 +135,7 @@
     - name: Schedules
       ansible.builtin.include_tasks: api.yml
       vars:
-        api_path: /project/{{ semaphore_project_id }}/schedules
+        api_path: /project/{{ semaphore_project_id }}/templates/{{ semaphore_ids['templates'] }}/schedules
       when: not semaphore_apply_on_merge | bool
 
     - name: No schedule while semaphore_apply_on_merge is false
