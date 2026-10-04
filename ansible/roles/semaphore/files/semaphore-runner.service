@@ -11,6 +11,10 @@ User=runner
 Group=runner
 # Tasks get this PATH (Semaphore forwards it): the runner's own Ansible first.
 Environment=PATH=/opt/semaphore-runner/venv/bin:/usr/local/bin:/usr/bin:/bin
+# A fresh tmp on every start, as root (+): checkouts, task homes and anything a task left there.
+# After reverting a bad merge, restart this unit.
+ExecStartPre=+/bin/rm -rf /home/runner/tmp
+ExecStartPre=+/usr/bin/install -d -o runner -g runner -m 0700 /home/runner/tmp
 ExecStart=/usr/bin/semaphore runner start --config /etc/semaphore-runner/config.json
 NoNewPrivileges=yes
 Restart=always
