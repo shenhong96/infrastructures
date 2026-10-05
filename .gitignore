@@ -32,6 +32,7 @@ vault_password*
 *.tfstate
 *.tfstate.*
 .terraform/
+*.tfvars
 
 # Ansible
 ansible/collections/

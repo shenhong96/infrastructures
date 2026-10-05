@@ -10,7 +10,7 @@ Config-as-code for the homelab: Ansible for the machines, Komodo for the apps, S
 |---|---|
 | `ansible/` | The Proxmox host, the containers, the OS inside each one, and the three apps that aren't in Docker (GitLab, Jellyfin, Nextcloud). Runs from your Mac. |
 | `komodo/` | Komodo's own settings: servers, the resource sync, the 5-minute deploy job. |
-| `cloudflare/` | The Cloudflare zone: DNS, the geoblock rule, the tunnel and the Access apps in front of it. Terraform Cloud plans it on each PR and applies it on merge. |
+| `cloudflare/` | The Cloudflare zone: DNS, the geoblock rule, the tunnel and Access. Terraform Cloud plans it after a merge that touches it; you confirm the apply there. |
 | `stacks/<project>/` | One folder per Compose project as it runs today: `compose.yaml`, `komodo.toml`, and `secrets.sops.env` where it has secrets. Flat, not grouped by machine. |
 
 This repo is public. Every secret in it is SOPS-encrypted; nothing secret is ever committed in plain text.
@@ -91,7 +91,7 @@ Every machine runs the same Grafana Alloy agent from `stacks/monitoring/`; it se
 
 ## Cloudflare
 
-`cloudflare/` is applied by Terraform Cloud (org `ahlooii`, workspace `cloudflare`), never from a laptop: a PR that touches it gets a speculative plan, and the merge applies it.
+`cloudflare/` is applied by Terraform Cloud (org `ahlooii`, workspace `cloudflare`), never from a laptop: a merge that touches it starts a plan, and nothing changes until you confirm it there. PRs get no plan, on purpose: a plan runs with the Cloudflare token, so it only runs on merged code.
 
 - The API token and the Access email lists are workspace variables in Terraform Cloud. Proxied-origin IPs, emails and tokens always come from variables, never from code.
 - The tunnel token and the Access service token are sensitive outputs: read them from the workspace's latest state in Terraform Cloud.
