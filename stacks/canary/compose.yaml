@@ -3,6 +3,6 @@
 # Proof 9 (deploy-from-anywhere plan 3): a comment-only change still redeploys; the reporter says so.
 services:
   canary:
-    image: busybox:1.38.0@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
+    image: busybox:does-not-exist
     command: sleep infinity
     restart: unless-stopped
