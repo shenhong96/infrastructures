@@ -27,3 +27,91 @@ config_files = [
   { path = "modules/host.alloy", services = ["alloy"], requires = "Restart" },
   { path = "modules/logs.alloy", services = ["alloy"], requires = "Restart" },
 ]
+
+[[stack]]
+name = "monitoring-apps"
+[stack.config]
+server = "apps"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "monitoring"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/monitoring"
+file_paths = ["compose.yaml", "hosts/apps.yaml"]
+config_files = [
+  { path = "config.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/agent.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/docker.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/host.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/logs.alloy", services = ["alloy"], requires = "Restart" },
+]
+
+[[stack]]
+name = "monitoring-gitlab"
+[stack.config]
+server = "gitlab"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "monitoring"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/monitoring"
+file_paths = ["compose.yaml", "hosts/gitlab.yaml"]
+config_files = [
+  { path = "config.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/agent.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/docker.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/host.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/logs.alloy", services = ["alloy"], requires = "Restart" },
+]
+
+[[stack]]
+name = "monitoring-nextcloud"
+[stack.config]
+server = "nextcloud"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "monitoring"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/monitoring"
+file_paths = ["compose.yaml", "hosts/nextcloud.yaml"]
+config_files = [
+  { path = "config.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/agent.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/docker.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/host.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/logs.alloy", services = ["alloy"], requires = "Restart" },
+]
+
+[[stack]]
+name = "monitoring-proxy"
+[stack.config]
+server = "proxy"
+auto_pull = false
+poll_for_updates = false
+auto_update = false
+webhook_enabled = false
+project_name = "monitoring"
+repo = "shenhong96/infrastructures"
+branch = "main"
+git_provider = "github.com"
+run_directory = "stacks/monitoring"
+file_paths = ["compose.yaml", "hosts/proxy.yaml"]
+config_files = [
+  { path = "config.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/agent.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/docker.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/host.alloy", services = ["alloy"], requires = "Restart" },
+  { path = "modules/logs.alloy", services = ["alloy"], requires = "Restart" },
+]

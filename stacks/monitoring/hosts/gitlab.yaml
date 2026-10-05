@@ -1,0 +1,7 @@
+# gitlab: CT 116 (Gitlab), Ubuntu LXC. Its labels on every series and log line.
+services:
+  alloy:
+    environment:
+      HOST: gitlab
+      HOST_KIND: lxc
+      VMID: "116"

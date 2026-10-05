@@ -1,0 +1,7 @@
+# proxy: CT 104 (Proxy), Ubuntu LXC. Its labels on every series and log line.
+services:
+  alloy:
+    environment:
+      HOST: proxy
+      HOST_KIND: lxc
+      VMID: "104"
