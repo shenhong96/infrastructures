@@ -101,6 +101,11 @@ services:
     image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
     container_name: grafana
     user: root
+    # Grafana 13 runs its datasources (Prometheus, Loki, ...) as plugin processes that talk to it over
+    # unix sockets, and Docker's docker-default AppArmor profile refuses to create those on this host
+    # (AppArmor 4, Proxmox 9): every datasource then reads "not found". The other confinement stays.
+    security_opt:
+      - apparmor=unconfined
     ports:
       - 3000:3000
     restart: unless-stopped
