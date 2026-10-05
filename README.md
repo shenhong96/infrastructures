@@ -68,9 +68,9 @@ The `gitlab`, `jellyfin` and `nextcloud` roles put the software and its config f
 
 ## Proxy: what a rebuild gives back
 
-The `proxy`, `node_exporter` and `base` roles put the files Caddy reads back; Komodo runs the stack (`stacks/proxy/compose.yaml` and `Dockerfile`, from its own clone), so Ansible places neither.
+The `proxy` and `base` roles put the files Caddy reads back; Komodo runs the stack (`stacks/proxy/compose.yaml` and `Dockerfile`, from its own clone), so Ansible places neither.
 
-- **What Ansible delivers:** `prometheus-node-exporter` on :9100, and under `/opt/caddy/` the `conf/Caddyfile` from `stacks/proxy/`, the empty `data/` and `config/` folders, and `.env` (from `host_vars/proxy/secrets.sops.yml`, root-only). The Caddyfile holds no secret: the Cloudflare token and the ACME email come from `.env` as `{env.CF_API_TOKEN}` and `{env.ACME_EMAIL}`.
+- **What Ansible delivers:** under `/opt/caddy/` the `conf/Caddyfile` from `stacks/proxy/`, the empty `data/` and `config/` folders, and `.env` (from `host_vars/proxy/secrets.sops.yml`, root-only). The Caddyfile holds no secret: the Cloudflare token and the ACME email come from `.env` as `{env.CF_API_TOKEN}` and `{env.ACME_EMAIL}`.
 - **First start (one-off, ad hoc, before Komodo owns it):** from a clone of the repo, `cd stacks/proxy && docker compose -p proxy up -d --build` (the compose file's `.env` is `/opt/caddy/.env`, an absolute path). It builds the pinned Caddy 2.8.4 with the Cloudflare DNS and caddy2-filter plugins. With an empty `data/` Caddy asks Let's Encrypt for a new `*.ahlooii.com` wildcard by DNS-01, which takes one to three minutes.
 - **Changing the Caddyfile:** run `--tags proxy`; the handler reloads Caddy in the running container. A changed `.env` (a new token) needs a Komodo redeploy of `proxy` (or `up -d` from its clone): an env file is read only when the container is created.
 - **Secrets:** the two keys in `.env` are `CF_API_TOKEN` and `ACME_EMAIL`. Caddy's certificate and ACME account (`/opt/caddy/data`) are not in the repo; they are re-issued on their own.
@@ -83,13 +83,13 @@ Every machine runs the same Grafana Alloy agent from `stacks/monitoring/`; it se
 - **What it collects:** the machine (CPU, memory, disks, network, load, pressure, from the node_exporter built into Alloy: no separate exporter), each Docker container (CPU, memory against its limit, network, uptime, OOM kills), every container's logs, and its own health. Every series and log line carries `host`, `host_kind` and `vmid`.
 - **Why it runs with the machine's network, processes, `/proc`, `/sys` and `/`:** so the numbers are the machine's, not the Alloy container's. Inside an LXC the `/proc` bind carries lxcfs, so memory and CPU are the LXC's share. Containers that share a network (host, or another container's) each show that network's total.
 - **Why every 60s when the panels draw at 5 minutes:** Prometheus forgets a series 5 minutes after its last sample, so a 5-minute scrape would leave gaps.
-- **Adding a machine:** add `stacks/monitoring/hosts/<name>.yaml` and a `[[stack]]` named `monitoring-<name>` in `stacks/monitoring/komodo.toml`; `tests/test_monitoring.py` checks the two match. If the machine is in the `node_exporter` group, take it out and remove the package once: `ansible <name> -m apt -a "name=prometheus-node-exporter,prometheus-node-exporter-collectors state=absent purge=true"` (from `ansible/`).
+- **Adding a machine:** add `stacks/monitoring/hosts/<name>.yaml` and a `[[stack]]` named `monitoring-<name>` in `stacks/monitoring/komodo.toml`; `tests/test_monitoring.py` checks the two match.
 - **Adding a signal:** a new file in `stacks/monitoring/modules/` with one `declare` block, one block in `config.alloy`, and its `config_files` entry on every stack.
 - **Changing a dashboard:** edit `tools/build_dashboards.py`, run it, commit the JSON. Grafana won't save an edit made in its UI.
 - **Finding log lines:** in the dashboard's Logs row, **Filters** narrows by any label (compose project or service, container, stdout/stderr, group). Add one from the bar, or from a line's details with the magnifier on a label. **Level** narrows by the level Loki detected, and **Search** by a case-insensitive regex. All three panels follow them. **Open in Logs Drilldown** (the Logs panel's link) takes the same machine and filters to Grafana's Logs Drilldown, which groups lines into patterns. Every line also carries `service_name` (the compose service, else the container), which Drilldown lists lines by.
 - **Grouping containers across stacks:** give a container the label `homelab.group=<name>` (say `media` or `infra`) and its lines carry `group`, which Filters offers. Keep to a handful of names: each one adds streams to Loki.
 - **Keeping a container's logs out:** give it the label `homelab.logs=false`.
-- **Next, roughly in order:** `proxy` out of the `node_exporter` group, and the role with it (nothing scrapes its :9100); the Proxmox host's own agent; `fileserver` and `media`, once they run the Komodo agent; the Proxmox host with `prometheus-pve-exporter` for every guest; machine logs from the journal; per-container disk I/O; Grafana alerts (an agent stale for 10 minutes, a disk over 90%, an OOM kill). Most need your `gate-change` label.
+- **Next, roughly in order:** the Proxmox host's own agent; `fileserver` and `media`, once they run the Komodo agent; the Proxmox host with `prometheus-pve-exporter` for every guest; machine logs from the journal; per-container disk I/O; Grafana alerts (an agent stale for 10 minutes, a disk over 90%, an OOM kill). Most need your `gate-change` label.
 
 ## Cloudflare
 
@@ -101,7 +101,7 @@ Every machine runs the same Grafana Alloy agent from `stacks/monitoring/`; it se
 
 ## Deploys: results and the emergency stop
 
-After a merge, Komodo deploys the changed stacks and Semaphore applies the Ansible tags `base`, `samba`, `gitlab`, `jellyfin`, `nextcloud`, `proxy` and `node_exporter`, each within 5 minutes. A reporter on `control` (`ansible/roles/semaphore/files/reporter.py`, every minute) posts the result on each commit:
+After a merge, Komodo deploys the changed stacks and Semaphore applies the Ansible tags `base`, `samba`, `gitlab`, `jellyfin`, `nextcloud` and `proxy`, each within 5 minutes. A reporter on `control` (`ansible/roles/semaphore/files/reporter.py`, every minute) posts the result on each commit:
 
 - **`deploy/stacks`** (Komodo) and **`deploy/ansible`** (Semaphore): `pending`, then `success` or `failure`. Merges that land together share one run; the earlier ones say `in a1b2c3d's run: …`. A deployed stack gets 5 minutes to turn healthy.
 - **`error` means nothing ran:** a schedule or the runner is off, or a task stopped before or during its run. It isn't a failed change: don't revert it. Tap Run on `apply` in Semaphore, or wait for the next reconcile.

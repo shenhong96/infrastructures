@@ -1,4 +1,4 @@
-# The reverse proxy CT: the files Caddy reads under /opt/caddy (node-exporter is the node_exporter role).
+# The reverse proxy CT: the files Caddy reads under /opt/caddy.
 # Komodo owns the stack itself (stacks/proxy/compose.yaml and Dockerfile, run from its own clone), so
 # this role places neither, and the two tools never manage one file. Not managed: the containers,
 # /opt/caddy/.env (base delivers it from SOPS as a secret file), Caddy's certificate state under

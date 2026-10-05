@@ -1,5 +1,5 @@
 # The only playbook; tags select one part of it. Roles for the containers (lxc, base,
-# samba, gitlab, jellyfin, nextcloud, proxy, node_exporter, tailscale, komodo) are added as they reach zero changes.
+# samba, gitlab, jellyfin, nextcloud, proxy, tailscale, komodo) are added as they reach zero changes.
 - name: Proxmox host
   hosts: proxmox
   tags: host
@@ -85,14 +85,6 @@
         name: komodo
         tasks_from: connected
       when: komodo_enrolled | bool and not ansible_check_mode
-
-# Prometheus node-exporter on the machines in the node_exporter group (proxy; the Alloy agent covers the rest).
-- name: Node exporter
-  hosts: node_exporter
-  tags: node_exporter
-  gather_facts: false # nothing uses facts
-  roles:
-    - node_exporter
 
 # Last: on a rebuilt machine it stops at the manual tailnet login, after the apps are in.
 - name: Tailscale

@@ -1,6 +1,6 @@
 # GitLab CE adopted as found: the package at the version running now (held, so a plain
 # `apt upgrade` can't move it), gitlab.rb, and the secret files. Not managed: the data
-# (/var/opt/gitlab), the runner and promtail containers, backups.
+# (/var/opt/gitlab), the runner container, backups.
 # Order matters on a fresh machine: the package's first reconfigure reads gitlab.rb and
 # the secrets, so they go in before it.
 
