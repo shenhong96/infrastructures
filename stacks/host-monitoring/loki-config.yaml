@@ -27,6 +27,16 @@ schema_config:
 
 ruler:
   alertmanager_url: http://localhost:9093
+
+# Groups similar lines into patterns ("this line, 40k times") for the Patterns tab of Grafana's
+# Logs Drilldown. Kept in memory for the last 3 hours, so a restart starts them again.
+pattern_ingester:
+  enabled: true
+
+# Keeps recent query results in memory (100 MB by default), so a dashboard refresh doesn't read
+# the same chunks from disk again.
+query_range:
+  cache_results: true
   
 limits_config:
   ingestion_rate_mb: 20 # the maximum ingestion rate per tenant in MB/s
