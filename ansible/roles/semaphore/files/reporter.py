@@ -28,6 +28,7 @@ WAIT = 15 * 60  # pending this long with nothing run: error
 GRACE = 5 * 60  # a deployed stack's time to turn healthy
 SKEW = 120  # Komodo's clock against GitHub's: deploys this much before a merge still count
 MAX_AGE = 24 * 3600  # older commits are left alone
+HOLD = 20 * 60  # a failing push holds its status back at most this long after the status it replaces
 FINAL = {"success", "failure"}  # error isn't: the next run covers the commit
 RUNNING = {"waiting", "starting", "running", "stopping", "waiting_confirmation", "confirmed"}
 
@@ -50,8 +51,9 @@ def decide(facts, cfg):
       komodo    {procedure, runs: [{id, start, done, success}], stacks: [{id, name, latest, deployed,
                 pending, deploys: [{id, start, end, success}], services: [{state, status}] or None}]},
                 or None (Komodo unreadable). latest and deployed are Komodo's short hashes.
-    Returns [{sha, context, state, description, url, push}] for the statuses that change; push is
-    True when one turns failure or error."""
+    Returns [{sha, context, state, description, url, push, since}] for the statuses that change; push
+    is True when one turns failure or error; since is when the status it replaces was posted (or the
+    commit's time)."""
     out = []
     for c in facts["commits"]:
         have = facts["statuses"].get(c["sha"], {})
@@ -67,7 +69,8 @@ def decide(facts, cfg):
             if description is None or (cur and (cur["state"], cur["description"], cur["url"]) == (state, description, url)):
                 continue
             out.append({"sha": c["sha"], "context": context, "state": state, "description": description, "url": url,
-                        "push": state in ("failure", "error") and (cur is None or cur["state"] != state)})
+                        "push": state in ("failure", "error") and (cur is None or cur["state"] != state),
+                        "since": cur["created"] if cur else c["time"]})
     return out
 
 
@@ -120,8 +123,9 @@ def _stacks(c, cur, facts, cfg):
             else:
                 undeployed = True
             continue
-        if not _at_or_after(s["deployed"], c, commits):
-            continue  # last deployed before c: not this merge's
+        since = [d for d in s["deploys"] if d["success"] and d["start"] >= c["time"] - SKEW]
+        if not (_at_or_after(s["deployed"], c, commits) or since):
+            continue  # last deployed or restarted before c: not this merge's (a restart keeps deployed_hash)
         deployed = True
         state = health(s["services"])
         if state == "ok":
@@ -165,14 +169,15 @@ def health(services):
 
 
 def pending(info):
-    """Komodo still has a change to deploy for a stack: what it deployed differs from the repo's
-    files (DeployStackIfChanged compares the same two lists; never deployed counts too)."""
+    """Komodo still has a change to deploy or restart for a stack, by DeployStackIfChanged's own test
+    (resolve_deploy_if_changed_action): never deployed, a new file, or a changed one whose requires
+    isn't None. A changed file with requires None, or one only in what was deployed, never deploys."""
     deployed, remote = info.get("deployed_contents"), info.get("remote_contents")
     if deployed is None:
         return True
-    if remote is None:
-        return False
-    return {(f["path"], f["contents"]) for f in deployed} != {(f["path"], f["contents"]) for f in remote}
+    was = {f["path"]: f["contents"] for f in deployed}
+    return any(f["path"] not in was or (f["contents"] != was[f["path"]] and f.get("requires", "None") != "None")
+               for f in remote or [])
 
 
 def _resolve(short, commits):
@@ -284,27 +289,29 @@ def komodo_state(cfg, since):
         return e / 1000 if e else None
 
     procedure = next((p["id"] for p in read("ListProcedures") if p["name"] == cfg["procedure"]), None)
-    query = {"start_ts": {"$gte": int((since - SKEW) * 1000)}, "operation": {"$in": ["RunProcedure", "DeployStack"]}}
+    query = {"start_ts": {"$gte": int((since - SKEW) * 1000)},
+             "operation": {"$in": ["RunProcedure", "DeployStack", "RestartStack"]}}
     updates, page = [], 0
     while page is not None:
         answer = read("ListUpdates", {"query": query, "page": page})
         updates += answer["updates"]
         page = answer.get("next_page")
-    deploys = {}
+    deploys = {}  # a restart (for a requires = "Restart" file) counts as a deploy
     for u in updates:
-        if u["operation"] == "DeployStack" and u["target"]["type"] == "Stack":
+        if u["operation"] in ("DeployStack", "RestartStack") and u["target"]["type"] == "Stack":
             done = u["status"] == "Complete"
             deploys.setdefault(u["target"]["id"], []).append(
                 {"id": u["id"], "start": u["start_ts"] / 1000, "end": end(u) if done and u["success"] else None,
                  "success": bool(u["success"]) if done else True})  # one still running hasn't failed
     stacks = []
     for s in read("ListFullStacks"):
-        mine = deploys.get(s["id"], [])
+        sid = s["_id"]["$oid"] if isinstance(s["_id"], dict) else s["_id"]  # a whole Stack: Mongo's id
+        mine = deploys.get(sid, [])
         services = None
         if any(d["success"] for d in mine):
             services = [{"state": (x.get("container") or {}).get("state"), "status": (x.get("container") or {}).get("status")}
-                        for x in read("ListStackServices", {"stack": s["id"]})]
-        stacks.append({"id": s["id"], "name": s["name"], "latest": s["info"].get("latest_hash"),
+                        for x in read("ListStackServices", {"stack": sid})]
+        stacks.append({"id": sid, "name": s["name"], "latest": s["info"].get("latest_hash"),
                        "deployed": s["info"].get("deployed_hash"), "pending": pending(s["info"]),
                        "deploys": mine, "services": services})
     runs = [{"id": u["id"], "start": u["start_ts"] / 1000, "done": u["status"] == "Complete", "success": bool(u["success"])}
@@ -345,10 +352,13 @@ def push(cfg, s):
 def main(argv):
     """Post each change. Delivery is at least once: a push goes before its status, so a failed push
     holds that status back to try both again next minute; a GitHub failure right after a push
-    means that push comes twice. One status's failure never holds back another's."""
+    means that push comes twice. One status's failure never holds back another's. Gotify runs in
+    aio, so a push still failing HOLD after the status it replaces lets the status through alone:
+    a merge that breaks aio must still show on GitHub."""
     dry = "--dry-run" in argv
     cfg = json.loads(CONFIG.read_text())
-    for s in decide(gather(cfg, time.time()), cfg):
+    now = time.time()
+    for s in decide(gather(cfg, now), cfg):
         print(f"{'would post' if dry else 'post'} {s['sha'][:7]} {s['context']} {s['state']}: "
               f"{s['description']} {s['url'] or ''}{' (push)' if s['push'] else ''}")
         if dry:
@@ -358,7 +368,13 @@ def main(argv):
             body["target_url"] = s["url"]
         try:
             if s["push"]:
-                push(cfg, s)
+                try:
+                    push(cfg, s)
+                except (OSError, ValueError) as e:
+                    if now - s["since"] < HOLD:
+                        raise
+                    print(f"{s['sha'][:7]} {s['context']}: push failed for too long, posting without it: {e!r}",
+                          file=sys.stderr)
             github(f"/repos/{cfg['repo']}/statuses/{s['sha']}", body)
         except (OSError, ValueError) as e:
             print(f"{s['sha'][:7]} {s['context']}: not sent, next minute again: {e!r}", file=sys.stderr)

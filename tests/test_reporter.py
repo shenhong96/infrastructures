@@ -3,6 +3,7 @@ deploy/ansible and deploy/stacks say, and that nothing but fixed wording and lab
 Run from the repo root: python3 -m unittest discover tests"""
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -113,6 +114,12 @@ class Ansible(unittest.TestCase):
     def test_a_task_on_a_commit_outside_the_list_is_ignored(self):
         f = facts(tasks=[self.task(commit="c" * 40)])
         self.assertEqual(out(f, "deploy/ansible")[B][:2], ("pending", "waiting for Semaphore"))
+
+    def test_a_change_says_since_when_its_commit_waited(self):
+        f = facts(tasks=[self.task()],
+                  statuses={B: {"deploy/ansible": status("pending", "waiting for Semaphore", self.TEMPLATE, T0 + 90)}})
+        self.assertEqual({s["sha"]: s["since"] for s in r.decide(f, CFG) if s["context"] == "deploy/ansible"},
+                         {B: T0 + 90, A: T0})
 
 
 class WhatLeavesTheLab(unittest.TestCase):
@@ -236,17 +243,33 @@ class Stacks(unittest.TestCase):
     def test_a_short_hash_that_matches_nothing_isnt_the_commit(self):
         self.assertEqual(self.got(kom(stack(latest="c" * 8)))[B][:2], ("pending", "waiting for Komodo"))
 
+    def test_a_restart_only_change_is_checked_too(self):
+        # Final review: for a requires = "Restart" file Komodo restarts and leaves deployed_hash where it was.
+        restarted = dict(deployed=A[:8], deploys=[{"id": "r1", "start": T0 + 200, "end": T0 + 300, "success": True}])
+        self.assertEqual(self.got(kom(stack(**restarted)))[B][:2], ("success", "stacks deployed"))
+        sick = stack(**restarted, services=[{"state": "running", "status": "Up 9 minutes (unhealthy)"}])
+        self.assertEqual(self.got(kom(sick))[B][:2], ("failure", "immich: unhealthy"))
+
     def test_komodo_unreadable_decides_nothing(self):
         self.assertEqual(out(facts(tasks=None, komodo=None), "deploy/stacks"), {})
 
 
 class Pending(unittest.TestCase):
     def test_what_komodo_would_deploy(self):
-        f1, f2 = {"path": "compose.yaml", "contents": "a"}, {"path": "compose.yaml", "contents": "b"}
+        f1, f2 = {"path": "compose.yaml", "contents": "a"}, {"path": "compose.yaml", "contents": "b", "requires": "Redeploy"}
         self.assertTrue(r.pending({"deployed_contents": None, "remote_contents": [f1]}))
         self.assertTrue(r.pending({"deployed_contents": [f1], "remote_contents": [f2]}))
+        self.assertTrue(r.pending({"deployed_contents": [f1], "remote_contents": [dict(f2, requires="Restart")]}))
+        self.assertTrue(r.pending({"deployed_contents": [f1], "remote_contents": [f1, dict(f2, path="app.env")]}))
         self.assertFalse(r.pending({"deployed_contents": [f1], "remote_contents": [dict(f1, services=[], requires="None")]}))
         self.assertFalse(r.pending({"deployed_contents": [f1], "remote_contents": None}))
+
+    def test_changes_komodo_ignores(self):
+        # Final review: DeployStackIfChanged skips a changed file whose requires is None (the default) and
+        # never looks at a file that is only in what it deployed, so neither ever deploys.
+        f1, gone = {"path": "compose.yaml", "contents": "a"}, {"path": "old.env", "contents": "x"}
+        self.assertFalse(r.pending({"deployed_contents": [f1], "remote_contents": [dict(f1, contents="b", requires="None")]}))
+        self.assertFalse(r.pending({"deployed_contents": [f1, gone], "remote_contents": [dict(f1, requires="Redeploy")]}))
 
 
 class Newest(unittest.TestCase):
@@ -277,7 +300,7 @@ class Sources(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def answers(self, semaphore, stacks):
+    def answers(self, semaphore, stacks, updates=()):
         def fake(url, body=None, headers=None):
             if "/commits?" in url:
                 return [{"sha": B, "commit": {"committer": {"date": "2026-10-05T01:00:00Z"}}}]
@@ -287,12 +310,25 @@ class Sources(unittest.TestCase):
                 return semaphore
             request = url.rsplit("/", 1)[1]
             return {"ListProcedures": [{"id": "p1", "name": "reconcile"}], "ListFullStacks": stacks,
-                    "ListUpdates": {"updates": [], "next_page": None}}[request]
+                    "ListUpdates": {"updates": list(updates), "next_page": None}, "GetUpdate": {"end_ts": 2_000},
+                    "ListStackServices": [{"service": "x", "container": {"state": "running", "status": "Up"}}]}[request]
         return mock.patch.object(r, "call", side_effect=fake)
 
-    def gather(self, semaphore, stacks):
-        with self.answers(semaphore, stacks), mock.patch("sys.stderr"):
+    def gather(self, semaphore, stacks, updates=()):
+        with self.answers(semaphore, stacks, updates), mock.patch("sys.stderr"):
             return r.gather(CFG, self.NOW)
+
+    def test_komodo_answers_in_its_own_shape(self):
+        # Final review: ListFullStacks gives whole Stacks, whose id is Mongo's {"$oid": ...} (list items
+        # give a plain id), and a change to a requires = "Restart" file shows as a RestartStack update.
+        oid = "6700000000000000000000a1"
+        stacks = [{"_id": {"$oid": oid}, "name": "immich", "info": {
+            "latest_hash": "bbbbbbbb", "deployed_hash": "aaaaaaaa", "deployed_contents": [], "remote_contents": []}}]
+        restart = {"id": "u1", "operation": "RestartStack", "target": {"type": "Stack", "id": oid},
+                   "start_ts": 1_000, "status": "Complete", "success": True}
+        got = self.gather([], stacks, [restart])["komodo"]["stacks"][0]
+        self.assertEqual((got["id"], [d["id"] for d in got["deploys"]], got["services"]),
+                         (oid, ["u1"], [{"state": "running", "status": "Up"}]))
 
     def test_a_bad_semaphore_answer_skips_deploy_ansible_only(self):
         for bad in (None, {"tasks": []}, [None], [{"id": 1}], [{"id": 1, "status": "success", "template_id": None, "created": "x"}]):
@@ -310,18 +346,28 @@ class Sources(unittest.TestCase):
 class Main(unittest.TestCase):
     """Review F4: one status's failure never holds back another's."""
 
-    def test_a_failed_push_holds_back_only_its_own_status(self):
+    def posted(self, changes):
+        """The statuses main() posts while Gotify is down."""
         cfg = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
         cfg.write('{"repo": "o/r"}')
         cfg.close()
         self.addCleanup(Path(cfg.name).unlink)
-        changes = [{"sha": A, "context": "deploy/stacks", "state": "failure", "description": "immich: deploy failed",
-                    "url": None, "push": True},
-                   {"sha": B, "context": "deploy/ansible", "state": "success", "description": "ansible run succeeded",
-                    "url": None, "push": False}]
         with mock.patch.object(r, "CONFIG", Path(cfg.name)), mock.patch.object(r, "gather"), \
                 mock.patch.object(r, "decide", return_value=changes), \
                 mock.patch.object(r, "push", side_effect=OSError("gotify down")), \
                 mock.patch.object(r, "github") as github, mock.patch("sys.stdout"), mock.patch("sys.stderr"):
             r.main([])
-        self.assertEqual([c.args[0] for c in github.call_args_list], [f"/repos/o/r/statuses/{B}"])
+        return [c.args[0] for c in github.call_args_list]
+
+    def test_a_failed_push_holds_back_only_its_own_status(self):
+        changes = [{"sha": A, "context": "deploy/stacks", "state": "failure", "description": "immich: deploy failed",
+                    "url": None, "push": True, "since": time.time()},
+                   {"sha": B, "context": "deploy/ansible", "state": "success", "description": "ansible run succeeded",
+                    "url": None, "push": False, "since": time.time()}]
+        self.assertEqual(self.posted(changes), [f"/repos/o/r/statuses/{B}"])
+
+    def test_a_push_that_keeps_failing_lets_its_status_through(self):
+        # Final review: Gotify runs in aio, so a merge that breaks aio must still show as failure.
+        changes = [{"sha": A, "context": "deploy/stacks", "state": "failure", "description": "aio: unhealthy",
+                    "url": None, "push": True, "since": time.time() - r.HOLD}]
+        self.assertEqual(self.posted(changes), [f"/repos/o/r/statuses/{A}"])
