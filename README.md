@@ -10,6 +10,7 @@ Config-as-code for the homelab: Ansible for the machines, Komodo for the apps, S
 |---|---|
 | `ansible/` | The Proxmox host, the containers, the OS inside each one, and the three apps that aren't in Docker (GitLab, Jellyfin, Nextcloud). Runs from your Mac. |
 | `komodo/` | Komodo's own settings: servers, the resource sync, the 5-minute deploy job. |
+| `cloudflare/` | The Cloudflare zone: DNS, the geoblock rule, the tunnel and the Access apps in front of it. Terraform Cloud plans it on each PR and applies it on merge. |
 | `stacks/<project>/` | One folder per Compose project as it runs today: `compose.yaml`, `komodo.toml`, and `secrets.sops.env` where it has secrets. Flat, not grouped by machine. |
 
 This repo is public. Every secret in it is SOPS-encrypted; nothing secret is ever committed in plain text.
@@ -87,6 +88,14 @@ Every machine runs the same Grafana Alloy agent from `stacks/monitoring/`; it se
 - **Changing a dashboard:** edit `tools/build_dashboards.py`, run it, commit the JSON. Grafana won't save an edit made in its UI.
 - **Keeping a container's logs out:** give it the label `homelab.logs=false`.
 - **Next, roughly in order:** the other machines (`apps` replaces `monitoring-apps`, `gitlab` and `nextcloud` replace Promtail, then `proxy` and the `node_exporter` role with it); the Proxmox host with `prometheus-pve-exporter` for every guest; machine logs from the journal; per-container disk I/O; Grafana alerts (an agent stale for 10 minutes, a disk over 90%, an OOM kill). Each but the first needs a policy exception.
+
+## Cloudflare
+
+`cloudflare/` is applied by Terraform Cloud (org `ahlooii`, workspace `cloudflare`), never from a laptop: a PR that touches it gets a speculative plan, and the merge applies it.
+
+- The API token and the Access email lists are workspace variables in Terraform Cloud. Proxied-origin IPs, emails and tokens always come from variables, never from code.
+- The tunnel token and the Access service token are sensitive outputs: read them from the workspace's latest state in Terraform Cloud.
+- The tunnel is the only way in to what it fronts: don't add a direct route around it.
 
 ## Not working yet
 
