@@ -141,3 +141,109 @@ class WhatLeavesTheLab(unittest.TestCase):
 
     def test_semaphore_nanoseconds(self):
         self.assertEqual(r.ts("2026-10-05T01:02:03.123456789Z"), r.ts("2026-10-05T01:02:03.123456Z"))
+
+
+UP = {"state": "running", "status": "Up 3 minutes"}  # no health check
+
+
+def stack(id_="s1", name="immich", latest=B[:8], deployed=B[:8], pending=False, deploys=None, services=(UP,)):
+    """A stack as gather() hands it over. By default: Komodo pulled B and deployed it at B at
+    T0+200 to T0+300, and it is up."""
+    return {"id": id_, "name": name, "latest": latest, "deployed": deployed, "pending": pending,
+            "deploys": [{"id": "d1", "start": T0 + 200, "end": T0 + 300, "success": True}] if deploys is None else deploys,
+            "services": None if services is None else list(services)}
+
+
+def kom(*stacks, runs=()):
+    return {"procedure": "p1", "runs": list(runs), "stacks": list(stacks)}
+
+
+class Stacks(unittest.TestCase):
+    PROC = f"{KOM}/procedures/p1"
+    RUN = f"{KOM}/updates/u1"
+    OLD = "0" * 8  # a hash older than the commits the reporter looks at
+
+    def got(self, komodo, now=T0 + 300 + r.GRACE, statuses=None):
+        return out(facts(now=now, tasks=None, komodo=komodo, statuses=statuses), "deploy/stacks")
+
+    def test_waits_until_komodo_has_pulled_the_commit(self):
+        self.assertEqual(self.got(kom(stack(latest=A[:8], deployed=A[:8])))[B], ("pending", "waiting for Komodo", self.PROC, False))
+
+    def test_a_commit_that_changed_no_stack(self):
+        self.assertEqual(self.got(kom(stack(deployed=self.OLD, deploys=[], services=None)))[B][:2], ("success", "no stacks changed"))
+
+    def test_deployed_and_up(self):
+        got = self.got(kom(stack(), runs=[{"id": "u1", "start": T0 + 190, "done": True, "success": True}]))
+        self.assertEqual(got[B], ("success", "stacks deployed", self.RUN, False))
+
+    def test_the_run_that_pulled_it_counts_however_soon_after_the_merge(self):
+        # Review F2: deployed by a run that started 10 s after the merge, unhealthy since; a later run changed nothing.
+        k = kom(stack(deploys=[{"id": "d1", "start": T0 + 70, "end": T0 + 80, "success": True}],
+                      services=[{"state": "running", "status": "Up 9 minutes (unhealthy)"}]),
+                runs=[{"id": "u0", "start": T0 + 70, "done": True, "success": True},
+                      {"id": "u1", "start": T0 + 400, "done": True, "success": True}])
+        self.assertEqual(self.got(k, now=T0 + 800)[B], ("failure", "immich: unhealthy", f"{KOM}/stacks/s1", True))
+
+    def test_one_pull_covers_the_earlier_commit_and_names_itself(self):
+        self.assertEqual(self.got(kom(stack()))[A][:2], ("success", "in bbbbbbb's run: stacks deployed"))
+
+    def test_a_stack_deployed_before_the_commit_isnt_its_business(self):
+        k = kom(stack(), stack("s2", "canary", deployed=A[:8], deploys=[],
+                                services=[{"state": "running", "status": "Up 2 days (unhealthy)"}]))
+        self.assertEqual(self.got(k)[B][:2], ("success", "stacks deployed"))
+
+    def test_a_failed_deploy_names_the_stack_and_links_its_log(self):
+        k = kom(stack(deployed=A[:8], pending=True, deploys=[{"id": "d9", "start": T0 + 200, "end": None, "success": False}]))
+        self.assertEqual(self.got(k)[B], ("failure", "immich: deploy failed", f"{KOM}/updates/d9", True))
+
+    def test_a_change_komodo_hasnt_deployed_waits_then_errors(self):
+        k = kom(stack(deployed=A[:8], pending=True, deploys=[]))
+        self.assertEqual(self.got(k)[B][:2], ("pending", "waiting for Komodo"))
+        was = {B: {"deploy/stacks": status("pending", "waiting for Komodo", self.PROC, T0 + 60)}}
+        self.assertEqual(self.got(k, now=T0 + 60 + r.WAIT, statuses=was)[B], ("error", "nothing ran in 15 min", self.PROC, True))
+
+    def test_a_failed_reconcile_with_a_change_waiting_is_an_error(self):
+        k = kom(stack(deployed=A[:8], pending=True, deploys=[]), runs=[{"id": "u1", "start": T0 + 100, "done": True, "success": False}])
+        self.assertEqual(self.got(k)[B], ("error", "reconcile failed", self.RUN, True))
+
+    def test_health(self):
+        cases = {  # (container status, inside the grace) -> what deploy/stacks says
+            ("Up 3 minutes (healthy)", False): ("success", "stacks deployed"),
+            ("Up 3 minutes", False): ("success", "stacks deployed"),  # no health check
+            ("Up 9 seconds (health: starting)", True): ("pending", "stacks starting"),
+            ("Up 9 minutes (health: starting)", False): ("failure", "immich: unhealthy"),
+            ("Up 3 minutes (unhealthy)", True): ("pending", "stacks starting"),
+            ("Up 3 minutes (unhealthy)", False): ("failure", "immich: unhealthy"),
+        }
+        for (text, grace), want in cases.items():
+            now = T0 + 300 + (r.GRACE - 1 if grace else r.GRACE)
+            got = self.got(kom(stack(services=[UP, {"state": "running", "status": text}])), now=now)[B][:2]
+            self.assertEqual(got, want, text)
+
+    def test_a_container_not_running_or_missing(self):
+        for services in ([{"state": "exited", "status": "Exited (1) 2 minutes ago"}], [], [{"state": None, "status": None}]):
+            self.assertEqual(self.got(kom(stack(services=services)))[B][:2], ("failure", "immich: not running"), services)
+
+    def test_several_bad_stacks(self):
+        k = kom(stack(services=[]), stack("s2", "canary", services=[]))
+        self.assertEqual(self.got(k)[B][:2], ("failure", "immich: not running +1 more"))
+
+    def test_stacks_are_matched_by_id_not_by_name(self):
+        # Review F5: two names that both show as "stack", and a real stack named "stack".
+        k = kom(stack("s1", "Bad Name", services=[]), stack("s2", "Other Bad"), stack("s3", "stack"))
+        self.assertEqual(self.got(k)[B], ("failure", "stack: not running", f"{KOM}/stacks/s1", True))
+
+    def test_a_short_hash_that_matches_nothing_isnt_the_commit(self):
+        self.assertEqual(self.got(kom(stack(latest="c" * 8)))[B][:2], ("pending", "waiting for Komodo"))
+
+    def test_komodo_unreadable_decides_nothing(self):
+        self.assertEqual(out(facts(tasks=None, komodo=None), "deploy/stacks"), {})
+
+
+class Pending(unittest.TestCase):
+    def test_what_komodo_would_deploy(self):
+        f1, f2 = {"path": "compose.yaml", "contents": "a"}, {"path": "compose.yaml", "contents": "b"}
+        self.assertTrue(r.pending({"deployed_contents": None, "remote_contents": [f1]}))
+        self.assertTrue(r.pending({"deployed_contents": [f1], "remote_contents": [f2]}))
+        self.assertFalse(r.pending({"deployed_contents": [f1], "remote_contents": [dict(f1, services=[], requires="None")]}))
+        self.assertFalse(r.pending({"deployed_contents": [f1], "remote_contents": None}))

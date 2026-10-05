@@ -55,7 +55,7 @@ def decide(facts, cfg):
     out = []
     for c in facts["commits"]:
         have = facts["statuses"].get(c["sha"], {})
-        for context, source, judge in (("deploy/ansible", "tasks", _ansible),):
+        for context, source, judge in (("deploy/ansible", "tasks", _ansible), ("deploy/stacks", "komodo", _stacks)):
             cur = have.get(context)
             if facts[source] is None or (cur and cur["state"] in FINAL):
                 continue  # never decide from missing data; a result stays
@@ -98,6 +98,95 @@ def _ansible(c, cur, facts, cfg):
         link = f"{sem}/project/{project}/history?t={t['id']}"
         return ("pending", "ansible running", link) if t["status"] in RUNNING else ("error", "nothing ran: no checkout", link)
     return _waiting(c, cur, facts["now"], "waiting for Semaphore", f"{sem}/project/{project}/templates/{cfg['template']}")
+
+
+def _stacks(c, cur, facts, cfg):
+    """deploy/stacks: once Komodo has pulled c for every stack, no stack may still wait for a deploy,
+    and every stack deployed at c or later must be up and healthy. Commits are matched by Komodo's
+    own hashes, never by time."""
+    k, base, now, commits = facts["komodo"], cfg["komodo"], facts["now"], facts["commits"]
+    proc = f"{base}/procedures/{k['procedure']}" if k["procedure"] else None
+    stacks = [s for s in k["stacks"] if s["latest"]]  # Komodo couldn't read the others' files at all
+    if not stacks or not all(_at_or_after(s["latest"], c, commits) for s in stacks):
+        return _waiting(c, cur, now, "waiting for Komodo", proc)
+    pulled = min((_resolve(s["latest"], commits) for s in stacks), key=[x["sha"] for x in commits].index)
+    prefix = _in_run(c, pulled)
+    bad, undeployed, starting, deployed = [], False, False, False
+    for s in stacks:
+        failed = [d for d in s["deploys"] if not d["success"] and d["start"] >= c["time"] - SKEW]
+        if s["pending"]:
+            if failed:
+                bad.append((safe(s["name"]), "deploy failed", f"{base}/updates/{max(failed, key=lambda d: d['start'])['id']}"))
+            else:
+                undeployed = True
+            continue
+        if not _at_or_after(s["deployed"], c, commits):
+            continue  # last deployed before c: not this merge's
+        deployed = True
+        state = health(s["services"])
+        if state == "ok":
+            continue
+        ends = [d["end"] for d in s["deploys"] if d["success"] and d["end"]]
+        if ends and now < max(ends) + GRACE:
+            starting = True
+        else:
+            bad.append((safe(s["name"]), "not running" if state == "down" else "unhealthy", f"{base}/stacks/{s['id']}"))
+    if bad:
+        name, what, url = bad[0]
+        more = f" +{len(bad) - 1} more" if len(bad) > 1 else ""
+        return "failure", f"{prefix}{name}: {what}{more}", url
+    runs = sorted((r for r in k["runs"] if r["done"] and r["start"] >= c["time"] - SKEW), key=lambda r: r["start"])
+    if undeployed:
+        if runs and not runs[-1]["success"]:  # not the change's fault for sure: error, not failure
+            return "error", "reconcile failed", f"{base}/updates/{runs[-1]['id']}"
+        return _waiting(c, cur, now, "waiting for Komodo", proc)
+    if starting:
+        return "pending", "stacks starting", proc
+    return "success", prefix + ("stacks deployed" if deployed else "no stacks changed"), \
+        f"{base}/updates/{runs[-1]['id']}" if runs else proc
+
+
+def health(services):
+    """A deployed stack's containers: down (none, or one not running), unhealthy, starting or ok.
+    Docker's status text carries a health check's result: 'Up 3 minutes (healthy)',
+    'Up 9 seconds (health: starting)', 'Up 2 minutes (unhealthy)'; no check, no suffix."""
+    if not services:
+        return "down"
+    worst = "ok"
+    for s in services:
+        if s["state"] != "running":
+            return "down"
+        text = s["status"] or ""
+        if "(unhealthy)" in text:
+            worst = "unhealthy"
+        elif "(health: starting)" in text and worst == "ok":
+            worst = "starting"
+    return worst
+
+
+def pending(info):
+    """Komodo still has a change to deploy for a stack: what it deployed differs from the repo's
+    files (DeployStackIfChanged compares the same two lists; never deployed counts too)."""
+    deployed, remote = info.get("deployed_contents"), info.get("remote_contents")
+    if deployed is None:
+        return True
+    if remote is None:
+        return False
+    return {(f["path"], f["contents"]) for f in deployed} != {(f["path"], f["contents"]) for f in remote}
+
+
+def _resolve(short, commits):
+    """The full SHA on main for one of Komodo's short hashes, or None: older than the list, or
+    ambiguous."""
+    found = [x["sha"] for x in commits if short and x["sha"].startswith(short)]
+    return found[0] if len(found) == 1 else None
+
+
+def _at_or_after(short, c, commits):
+    """Komodo's short hash names c or a later commit."""
+    order = [x["sha"] for x in commits]  # newest first
+    sha = _resolve(short, commits)
+    return sha is not None and order.index(sha) <= order.index(c["sha"])
 
 
 def _waiting(c, cur, now, phrase, url):
