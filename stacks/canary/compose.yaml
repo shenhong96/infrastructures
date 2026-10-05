@@ -1,6 +1,5 @@
 # Komodo's first stack: no secret, nothing to serve. It proves that a sync creates the stack
 # and a deploy runs the compose command on each agent machine.
-# Proof 9 (deploy-from-anywhere plan 3): a comment-only change still redeploys; the reporter says so.
 services:
   canary:
     image: busybox:1.38.0@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
