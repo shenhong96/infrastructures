@@ -1,0 +1,12 @@
+# Managed by Ansible (roles/semaphore). Off: systemctl disable --now reporter.timer (until the next
+# laptop run with --tags control).
+[Unit]
+Description=Run the deploy reporter every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

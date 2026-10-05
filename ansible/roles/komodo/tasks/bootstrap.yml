@@ -47,6 +47,10 @@
   ansible.builtin.include_tasks: gate.yml
   when: not ansible_check_mode
 
+- name: The deploy reporter's read-only login
+  ansible.builtin.include_tasks: reporter.yml
+  when: not ansible_check_mode
+
 - name: Agents' keys
   ansible.builtin.include_tasks: enroll.yml
   when: komodo_enrolled | bool and not ansible_check_mode

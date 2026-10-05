@@ -52,3 +52,18 @@ semaphore_apply_limit: all:!proxmox:!control
 # The schedule that applies each new commit on main; false deletes it. Switching it off in the
 # UI doesn't stop a schedule tied to the repository (2.19.12): the emergency stop is the runner.
 semaphore_apply_on_merge: true
+
+# The deploy reporter (plan 3): its settings, nothing secret (/etc/reporter.json). Its credentials
+# are files in reporter's home: semaphore-token (tasks/main.yml), komodo-key.json (roles/komodo),
+# github-token and gotify-token (host_vars/control/secrets.sops.yml). Komodo Core and Gotify both
+# run on apps. The ids come from tasks/project.yml.
+semaphore_apps_ip: "{{ hostvars['apps'].pct.net0 | regex_search('ip=([0-9.]+)/', '\\1') | first }}"
+semaphore_reporter_config:
+  repo: shenhong96/infrastructures
+  branch: main
+  semaphore: "{{ semaphore_url }}"
+  project: "{{ semaphore_project_id }}"
+  template: "{{ semaphore_ids['templates'] }}"
+  komodo: http://{{ semaphore_apps_ip }}:9120
+  procedure: reconcile
+  gotify: http://{{ semaphore_apps_ip }}:8087
