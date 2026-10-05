@@ -247,3 +247,81 @@ class Pending(unittest.TestCase):
         self.assertTrue(r.pending({"deployed_contents": [f1], "remote_contents": [f2]}))
         self.assertFalse(r.pending({"deployed_contents": [f1], "remote_contents": [dict(f1, services=[], requires="None")]}))
         self.assertFalse(r.pending({"deployed_contents": [f1], "remote_contents": None}))
+
+
+class Newest(unittest.TestCase):
+    def test_only_our_contexts_newest_first(self):
+        rows = [  # GitHub lists the newest first
+            {"context": "deploy/stacks", "state": "success", "description": "stacks deployed",
+             "target_url": f"{KOM}/updates/u1", "created_at": "2026-10-05T01:10:00Z"},
+            {"context": "gate", "state": "success", "description": "x", "target_url": None,
+             "created_at": "2026-10-05T01:09:00Z"},
+            {"context": "deploy/stacks", "state": "pending", "description": "waiting for Komodo",
+             "target_url": None, "created_at": "2026-10-05T01:00:00Z"},
+        ]
+        self.assertEqual(r.newest(rows), {"deploy/stacks": {
+            "state": "success", "description": "stacks deployed", "url": f"{KOM}/updates/u1",
+            "created": r.ts("2026-10-05T01:10:00Z")}})
+
+
+class Sources(unittest.TestCase):
+    """Review F6: a source that answers in the wrong shape skips its own context only."""
+    NOW = r.ts("2026-10-05T01:01:00Z")
+
+    def setUp(self):
+        home = tempfile.TemporaryDirectory()
+        self.addCleanup(home.cleanup)
+        for name, text in (("github-token", "g"), ("semaphore-token", "s"), ("komodo-key.json", '{"key": "k", "secret": "x"}')):
+            (Path(home.name) / name).write_text(text)
+        patcher = mock.patch.object(r, "HOME", Path(home.name))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def answers(self, semaphore, stacks):
+        def fake(url, body=None, headers=None):
+            if "/commits?" in url:
+                return [{"sha": B, "commit": {"committer": {"date": "2026-10-05T01:00:00Z"}}}]
+            if "/statuses" in url:
+                return []
+            if "/api/project/" in url:
+                return semaphore
+            request = url.rsplit("/", 1)[1]
+            return {"ListProcedures": [{"id": "p1", "name": "reconcile"}], "ListFullStacks": stacks,
+                    "ListUpdates": {"updates": [], "next_page": None}}[request]
+        return mock.patch.object(r, "call", side_effect=fake)
+
+    def gather(self, semaphore, stacks):
+        with self.answers(semaphore, stacks), mock.patch("sys.stderr"):
+            return r.gather(CFG, self.NOW)
+
+    def test_a_bad_semaphore_answer_skips_deploy_ansible_only(self):
+        for bad in (None, {"tasks": []}, [None], [{"id": 1}], [{"id": 1, "status": "success", "template_id": None, "created": "x"}]):
+            got = self.gather(bad, [])
+            self.assertIsNone(got["tasks"], bad)
+            self.assertEqual(got["komodo"], {"procedure": "p1", "runs": [], "stacks": []}, bad)
+
+    def test_a_bad_komodo_answer_skips_deploy_stacks_only(self):
+        for bad in (None, {"stacks": []}, [None], [{"id": "s1"}], [{"id": "s1", "name": "x", "info": None}]):
+            got = self.gather([], bad)
+            self.assertIsNone(got["komodo"], bad)
+            self.assertEqual(got["tasks"], [], bad)
+
+
+class Main(unittest.TestCase):
+    """Review F4: one status's failure never holds back another's."""
+
+    def test_a_failed_push_holds_back_only_its_own_status(self):
+        cfg = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        cfg.write('{"repo": "o/r"}')
+        cfg.close()
+        self.addCleanup(Path(cfg.name).unlink)
+        changes = [{"sha": A, "context": "deploy/stacks", "state": "failure", "description": "immich: deploy failed",
+                    "url": None, "push": True},
+                   {"sha": B, "context": "deploy/ansible", "state": "success", "description": "ansible run succeeded",
+                    "url": None, "push": False}]
+        with mock.patch.object(r, "CONFIG", Path(cfg.name)), mock.patch.object(r, "gather"), \
+                mock.patch.object(r, "decide", return_value=changes), \
+                mock.patch.object(r, "push", side_effect=OSError("gotify down")), \
+                mock.patch.object(r, "github") as github, mock.patch("sys.stdout"), mock.patch("sys.stderr"):
+            r.main([])
+        self.assertEqual([c.args[0] for c in github.call_args_list], [f"/repos/o/r/statuses/{B}"])

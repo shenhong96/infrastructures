@@ -220,3 +220,149 @@ def safe(name):
 def ts(text):
     """Epoch seconds from an RFC 3339 time (Semaphore's has nanoseconds; Python reads 6 digits)."""
     return datetime.fromisoformat(re.sub(r"(\.\d{6})\d+", r"\1", text.replace("Z", "+00:00"))).timestamp()
+
+
+# Everything below talks to the APIs. Each source is read inside its own boundary in gather():
+# whatever goes wrong there (unreachable, or an answer of the wrong shape) skips that source's
+# context for this minute and is logged to the journal on control.
+UNREADABLE = (OSError, ValueError, KeyError, TypeError, AttributeError)
+
+
+def gather(cfg, now):
+    """The facts decide() needs (see there). Semaphore and Komodo are read only while a commit
+    still waits for a result."""
+    repo = cfg["repo"]
+    commits = [{"sha": x["sha"], "time": ts(x["commit"]["committer"]["date"])}
+               for x in github(f"/repos/{repo}/commits?sha={cfg['branch']}&per_page=20")]
+    commits = [c for c in commits if now - c["time"] < MAX_AGE]
+    statuses = {c["sha"]: newest(github(f"/repos/{repo}/commits/{c['sha']}/statuses?per_page=100")) for c in commits}
+    times = [c["time"] for c in commits
+             if any(statuses[c["sha"]].get(k, {}).get("state") not in FINAL for k in CONTEXTS)]
+    facts = {"now": now, "commits": commits, "statuses": statuses, "tasks": None, "komodo": None}
+    if not times:
+        return facts  # every commit has its results
+    for name, read in (("tasks", lambda: semaphore_tasks(cfg)), ("komodo", lambda: komodo_state(cfg, min(times)))):
+        try:
+            facts[name] = read()
+        except UNREADABLE as e:
+            print(f"{name}: skipped this minute: {e!r}", file=sys.stderr)
+    return facts
+
+
+def newest(rows):
+    """Our two contexts' newest statuses on a commit (GitHub lists the newest first)."""
+    mine = {}
+    for s in rows:
+        if s["context"] in CONTEXTS and s["context"] not in mine:
+            mine[s["context"]] = {"state": s["state"], "description": s["description"] or "",
+                                  "url": s["target_url"] or None, "created": ts(s["created_at"])}
+    return mine
+
+
+def semaphore_tasks(cfg):
+    """The apply template's last 100 tasks. commit_hash is set at the checkout, so a task without
+    one never got that far."""
+    token = (HOME / "semaphore-token").read_text().strip()
+    rows = call(f"{cfg['semaphore']}/api/project/{cfg['project']}/tasks?count=100", None,
+                {"Authorization": f"Bearer {token}"})
+    return [{"id": int(t["id"]), "status": str(t["status"]), "commit": t.get("commit_hash") or None,
+             "created": ts(t["created"])}
+            for t in rows if int(t["template_id"]) == int(cfg["template"])]
+
+
+def komodo_state(cfg, since):
+    """Every stack (its hashes, whether a change waits, its deploys since the oldest commit still
+    waiting, and its containers if it deployed), and the reconcile runs since then."""
+    key = json.loads((HOME / "komodo-key.json").read_text())
+    auth = {"x-api-key": key["key"], "x-api-secret": key["secret"]}
+
+    def read(request, body=None):
+        return call(f"{cfg['komodo']}/read/{request}", body or {}, auth)
+
+    def end(u):  # ListUpdates leaves end_ts out
+        e = read("GetUpdate", {"id": u["id"]})["end_ts"]
+        return e / 1000 if e else None
+
+    procedure = next((p["id"] for p in read("ListProcedures") if p["name"] == cfg["procedure"]), None)
+    query = {"start_ts": {"$gte": int((since - SKEW) * 1000)}, "operation": {"$in": ["RunProcedure", "DeployStack"]}}
+    updates, page = [], 0
+    while page is not None:
+        answer = read("ListUpdates", {"query": query, "page": page})
+        updates += answer["updates"]
+        page = answer.get("next_page")
+    deploys = {}
+    for u in updates:
+        if u["operation"] == "DeployStack" and u["target"]["type"] == "Stack":
+            done = u["status"] == "Complete"
+            deploys.setdefault(u["target"]["id"], []).append(
+                {"id": u["id"], "start": u["start_ts"] / 1000, "end": end(u) if done and u["success"] else None,
+                 "success": bool(u["success"]) if done else True})  # one still running hasn't failed
+    stacks = []
+    for s in read("ListFullStacks"):
+        mine = deploys.get(s["id"], [])
+        services = None
+        if any(d["success"] for d in mine):
+            services = [{"state": (x.get("container") or {}).get("state"), "status": (x.get("container") or {}).get("status")}
+                        for x in read("ListStackServices", {"stack": s["id"]})]
+        stacks.append({"id": s["id"], "name": s["name"], "latest": s["info"].get("latest_hash"),
+                       "deployed": s["info"].get("deployed_hash"), "pending": pending(s["info"]),
+                       "deploys": mine, "services": services})
+    runs = [{"id": u["id"], "start": u["start_ts"] / 1000, "done": u["status"] == "Complete", "success": bool(u["success"])}
+            for u in updates if u["operation"] == "RunProcedure" and u["target"] == {"type": "Procedure", "id": procedure}]
+    return {"procedure": procedure, "runs": runs, "stacks": stacks}
+
+
+def call(url, body=None, headers=None):
+    """One JSON request: GET, or POST when there is a body."""
+    request = urllib.request.Request(
+        url, data=None if body is None else json.dumps(body).encode(),
+        headers={"Content-Type": "application/json", "User-Agent": "homelab-deploy-reporter", **(headers or {})})
+    with urllib.request.urlopen(request, timeout=15) as answer:
+        raw = answer.read()
+    return json.loads(raw) if raw else None
+
+
+def github(path, body=None):
+    token = (HOME / "github-token").read_text().strip()
+    return call("https://api.github.com" + path, body, {
+        "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28"})
+
+
+def push(cfg, s):
+    """A Gotify push with the status's description and link: tapping it opens the log."""
+    token = (HOME / "gotify-token").read_text().strip()
+    extras = {"client::display": {"contentType": "text/markdown"}}
+    message = s["description"]
+    if s["url"]:
+        extras["client::notification"] = {"click": {"url": s["url"]}}
+        message += f"\n\n[Open the log]({s['url']})"
+    call(f"{cfg['gotify']}/message", {"title": f"{s['context']} {s['state']} · {s['sha'][:7]}",
+                                      "message": message, "priority": 8, "extras": extras},
+         {"X-Gotify-Key": token})
+
+
+def main(argv):
+    """Post each change. Delivery is at least once: a push goes before its status, so a failed push
+    holds that status back to try both again next minute; a GitHub failure right after a push
+    means that push comes twice. One status's failure never holds back another's."""
+    dry = "--dry-run" in argv
+    cfg = json.loads(CONFIG.read_text())
+    for s in decide(gather(cfg, time.time()), cfg):
+        print(f"{'would post' if dry else 'post'} {s['sha'][:7]} {s['context']} {s['state']}: "
+              f"{s['description']} {s['url'] or ''}{' (push)' if s['push'] else ''}")
+        if dry:
+            continue
+        body = {"state": s["state"], "description": s["description"], "context": s["context"]}
+        if s["url"]:
+            body["target_url"] = s["url"]
+        try:
+            if s["push"]:
+                push(cfg, s)
+            github(f"/repos/{cfg['repo']}/statuses/{s['sha']}", body)
+        except (OSError, ValueError) as e:
+            print(f"{s['sha'][:7]} {s['context']}: not sent, next minute again: {e!r}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
