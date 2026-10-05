@@ -1,4 +1,5 @@
-# Opens PRs only, but a merge to main deploys within 5 minutes (Komodo's reconcile job).
+# Opens PRs only, but a merge to main deploys within 5 minutes (Komodo's reconcile job); the result
+# shows as deploy/stacks on the merge commit.
 # ci and gate check these PRs, but neither reads release notes: read them before merging.
 version: 2
 updates:

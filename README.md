@@ -2,7 +2,7 @@
 
 Config-as-code for the homelab: Ansible for the machines, Komodo for the apps, SOPS with age for secrets.
 
-> **Status: scaffold.** Nothing here deploys anything yet. Deployment, rebuild and restore steps are added as they start working; until then they're marked pending.
+> **Status:** a merge to `main` deploys (see [Deploys](#deploys-results-and-the-emergency-stop)). Rebuild and restore steps are added as they start working; until then they're marked pending.
 
 ## Layout
 
@@ -99,6 +99,25 @@ Every machine runs the same Grafana Alloy agent from `stacks/monitoring/`; it se
 - The tunnel token and the Access service token are sensitive outputs: read them from the workspace's latest state in Terraform Cloud.
 - The tunnel is the only way in to what it fronts: don't add a direct route around it.
 
+## Deploys: results and the emergency stop
+
+After a merge, Komodo deploys the changed stacks and Semaphore applies the Ansible tags `base`, `samba`, `gitlab`, `jellyfin`, `nextcloud`, `proxy` and `node_exporter`, each within 5 minutes. A reporter on `control` (`ansible/roles/semaphore/files/reporter.py`, every minute) posts the result on each commit:
+
+- **`deploy/stacks`** (Komodo) and **`deploy/ansible`** (Semaphore): `pending`, then `success` or `failure`. Merges that land together share one run; the earlier ones say `in a1b2c3d's run: …`. A deployed stack gets 5 minutes to turn healthy.
+- **`error` means nothing ran:** a schedule or the runner is off, or a task stopped before or during its run. It isn't a failed change: don't revert it. Tap Run on `apply` in Semaphore, or wait for the next reconcile.
+- **Each status links to the run's log** on the LAN: Semaphore at `192.168.9.161:3000`, Komodo at `192.168.9.151:9120`. They open from the phone with Tailscale on. The description is fixed wording; logs never leave the lab.
+- **Gotify** (app `deploys`) pushes the same line and link on `failure` or `error`. **Trust only links to those two addresses**: a status or push that links anywhere else isn't from the reporter.
+- **Off:** `systemctl disable --now reporter.timer` on `control`, until the next `--tags control` run.
+
+### Emergency stop
+
+From the phone, over Tailscale. Both switches are in the lab, so they work even if the GitHub account is taken over. Merges still land; nothing applies them.
+
+1. **Komodo:** switch off the `reconcile` procedure's schedule. Nothing switches it back on by itself: the main sync never reads `komodo/procedures.toml`.
+2. **Semaphore:** switch off the runner `control` on the Runners page. Switching off the `apply` schedule doesn't stop it (2.19.12). Tasks then fail with "no runners available", and their commits get `error`.
+
+Switching back on applies everything merged in the meantime, so check `main` first, then tap Run on `apply`: a failed task isn't retried by itself. After reverting a bad merge, restart `semaphore-runner` on `control`; that wipes what the bad run left in its tmp.
+
 ## Not working yet
 
-Deploying anything (the Ansible roles, Komodo), rebuilding from scratch, and backups and restores. Each section is added here once it has been shown to work.
+Rebuilding from scratch, and backups and restores. Each section is added here once it has been shown to work.

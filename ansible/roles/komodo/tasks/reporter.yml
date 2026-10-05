@@ -1,0 +1,88 @@
+# The deploy reporter's Komodo login (deploy-from-anywhere plan 3): a service user that can read
+# stacks and procedures, nothing else. Its key is made once and written straight to control
+# (reporter's home, 0400), never to SOPS: if that file is lost, the next run with
+# --tags komodo,control replaces the key.
+
+- name: Komodo's users
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /read/ListUsers
+
+- name: The reporter's service user, if it exists
+  ansible.builtin.set_fact:
+    komodo_reporter: "{{ komodo_api.json | selectattr('username', 'equalto', 'reporter') | first | default({}) }}"
+
+- name: Create it
+  when: komodo_reporter | length == 0
+  block:
+    - name: Create the service user
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: /write/CreateServiceUser
+        api_body: {username: reporter, description: "Deploy reporter on control: read only"}
+
+    - name: The new user
+      ansible.builtin.set_fact:
+        komodo_reporter: "{{ komodo_api.json }}"
+
+# A Mongo id comes back as {"$oid": "..."}; take either form.
+- name: Its id
+  ansible.builtin.set_fact:
+    komodo_reporter_id: "{{ komodo_reporter._id['$oid'] if komodo_reporter._id is mapping else komodo_reporter._id }}"
+
+- name: The reporter isn't an admin
+  ansible.builtin.assert:
+    that: not (komodo_reporter.admin | default(false))
+    fail_msg: Komodo's reporter user is an admin. Take that away in Komodo (Settings, Users), then run again.
+    quiet: true
+
+- name: It can read stacks and procedures
+  ansible.builtin.include_tasks: api.yml
+  vars:
+    api_path: /write/UpdatePermissionOnResourceType
+    api_body:
+      user_target: {type: User, id: "{{ komodo_reporter_id }}"}
+      resource_type: "{{ item }}"
+      permission: {level: Read, specific: []}
+  loop: [Stack, Procedure]
+
+- name: The reporter's key file on control
+  ansible.builtin.stat:
+    path: /home/reporter/komodo-key.json
+  delegate_to: control
+  register: komodo_reporter_key_file
+
+- name: A new key (any old one goes)
+  when: not komodo_reporter_key_file.stat.exists
+  block:
+    - name: Its keys now
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: /read/ListApiKeysForServiceUser
+        api_body: {user: "{{ komodo_reporter_id }}"}
+
+    - name: Delete them
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: /write/DeleteApiKeyForServiceUser
+        api_body: {key: "{{ item.key }}"}
+      loop: "{{ komodo_api.json }}"
+      loop_control:
+        label: "{{ item.name | default('key') }}"
+
+    - name: Make one
+      ansible.builtin.include_tasks: api.yml
+      vars:
+        api_path: /write/CreateApiKeyForServiceUser
+        api_body: {user_id: "{{ komodo_reporter_id }}", name: reporter, expires: 0}
+
+    - name: Keep it on control
+      ansible.builtin.copy:
+        content: "{{ {'key': komodo_api.json.key, 'secret': komodo_api.json.secret} | to_json }}\n"
+        dest: /home/reporter/komodo-key.json
+        owner: reporter
+        group: reporter
+        mode: "0400"
+      delegate_to: control
+      no_log: true
+      diff: false

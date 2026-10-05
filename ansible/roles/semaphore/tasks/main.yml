@@ -423,3 +423,6 @@
 
 - name: The project
   ansible.builtin.include_tasks: project.yml
+
+- name: The deploy reporter
+  ansible.builtin.include_tasks: reporter.yml

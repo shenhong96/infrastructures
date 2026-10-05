@@ -1,0 +1,56 @@
+# The deploy reporter (plan 3): /usr/local/bin/reporter every minute as reporter. Its four
+# credentials are 0400 in its home, which only it can read: the Semaphore token (main.yml), the
+# Komodo key (roles/komodo writes it), and the GitHub and Gotify tokens from SOPS.
+
+- name: The reporter's script
+  ansible.builtin.copy:
+    src: reporter.py
+    dest: /usr/local/bin/reporter
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: The reporter's settings
+  ansible.builtin.copy:
+    content: "{{ semaphore_reporter_config | to_nice_json }}\n"
+    dest: /etc/reporter.json
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: The reporter's GitHub and Gotify tokens
+  ansible.builtin.copy:
+    content: "{{ item.value }}\n"
+    dest: /home/reporter/{{ item.file }}
+    owner: reporter
+    group: reporter
+    mode: "0400"
+  loop:
+    - {file: github-token, value: "{{ reporter_github_token }}"}
+    - {file: gotify-token, value: "{{ reporter_gotify_token }}"}
+  loop_control:
+    label: "{{ item.file }}"
+  no_log: true
+  diff: false
+
+- name: The reporter's units
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: /etc/systemd/system/{{ item }}
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [reporter.service, reporter.timer]
+  register: semaphore_reporter_units
+
+- name: Reload systemd for the reporter's units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: semaphore_reporter_units is changed and not ansible_check_mode
+
+- name: The reporter's timer, enabled and started
+  ansible.builtin.systemd:
+    name: reporter.timer
+    enabled: true
+    state: started
+  when: not (semaphore_reporter_units is changed and ansible_check_mode) # the unit isn't there yet in --check

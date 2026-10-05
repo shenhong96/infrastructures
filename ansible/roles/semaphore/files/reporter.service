@@ -1,0 +1,19 @@
+# Managed by Ansible (roles/semaphore). The deploy reporter, once; reporter.timer runs it every
+# minute. It only reads its own home and calls out: GitHub, Semaphore, Komodo Core, Gotify.
+[Unit]
+Description=Deploy reporter: deploy/* commit statuses and Gotify pushes
+After=network-online.target semaphore.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=reporter
+Group=reporter
+ExecStart=/usr/local/bin/reporter
+TimeoutStartSec=50
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
