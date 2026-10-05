@@ -78,7 +78,7 @@ The `proxy`, `node_exporter` and `base` roles put the files Caddy reads back; Ko
 
 ## Monitoring: the telemetry agent
 
-Every machine runs the same Grafana Alloy agent from `stacks/monitoring/`; it sends to Prometheus and Loki on the Proxmox host (`stacks/host-monitoring/`), and the Grafana there shows the **Homelab · Machines & containers** dashboard. So far on `vpn`.
+Every machine runs the same Grafana Alloy agent from `stacks/monitoring/`; it sends to Prometheus and Loki on the Proxmox host (`stacks/host-monitoring/`), and the Grafana there shows the **Homelab · Machines & containers** dashboard. So far on `vpn`, `apps`, `gitlab`, `nextcloud` and `proxy`.
 
 - **What it collects:** the machine (CPU, memory, disks, network, load, pressure, from the node_exporter built into Alloy: no separate exporter), each Docker container (CPU, memory against its limit, network, uptime, OOM kills), every container's logs, and its own health. Every series and log line carries `host`, `host_kind` and `vmid`.
 - **Why it runs with the machine's network, processes, `/proc`, `/sys` and `/`:** so the numbers are the machine's, not the Alloy container's. Inside an LXC the `/proc` bind carries lxcfs, so memory and CPU are the LXC's share. Containers that share a network (host, or another container's) each show that network's total.
@@ -89,7 +89,7 @@ Every machine runs the same Grafana Alloy agent from `stacks/monitoring/`; it se
 - **Finding log lines:** in the dashboard's Logs row, **Filters** narrows by any label (compose project or service, container, stdout/stderr, group). Add one from the bar, or from a line's details with the magnifier on a label. **Level** narrows by the level Loki detected, and **Search** by a case-insensitive regex. All three panels follow them. **Open in Logs Drilldown** (the Logs panel's link) takes the same machine and filters to Grafana's Logs Drilldown, which groups lines into patterns. Every line also carries `service_name` (the compose service, else the container), which Drilldown lists lines by.
 - **Grouping containers across stacks:** give a container the label `homelab.group=<name>` (say `media` or `infra`) and its lines carry `group`, which Filters offers. Keep to a handful of names: each one adds streams to Loki.
 - **Keeping a container's logs out:** give it the label `homelab.logs=false`.
-- **Next, roughly in order:** the other machines (`apps` replaces `monitoring-apps`, `gitlab` and `nextcloud` replace Promtail, then `proxy` and the `node_exporter` role with it); the Proxmox host with `prometheus-pve-exporter` for every guest; machine logs from the journal; per-container disk I/O; Grafana alerts (an agent stale for 10 minutes, a disk over 90%, an OOM kill). Each but the first needs a policy exception.
+- **Next, roughly in order:** `proxy` out of the `node_exporter` group, and the role with it (nothing scrapes its :9100); the Proxmox host's own agent; `fileserver` and `media`, once they run the Komodo agent; the Proxmox host with `prometheus-pve-exporter` for every guest; machine logs from the journal; per-container disk I/O; Grafana alerts (an agent stale for 10 minutes, a disk over 90%, an OOM kill). Most need your `gate-change` label.
 
 ## Cloudflare
 

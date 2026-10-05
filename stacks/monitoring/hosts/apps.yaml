@@ -1,0 +1,7 @@
+# apps: CT 111 (Portainer), Ubuntu LXC. Its labels on every series and log line.
+services:
+  alloy:
+    environment:
+      HOST: apps
+      HOST_KIND: lxc
+      VMID: "111"

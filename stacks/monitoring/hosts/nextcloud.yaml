@@ -1,0 +1,7 @@
+# nextcloud: CT 112 (Nextcloud-C-Rieger), Ubuntu LXC. Its labels on every series and log line.
+services:
+  alloy:
+    environment:
+      HOST: nextcloud
+      HOST_KIND: lxc
+      VMID: "112"
