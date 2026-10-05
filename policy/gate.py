@@ -499,6 +499,8 @@ def check(pr, base_ref="origin/main", ack=False):
     flags = [
         ("Stacks", stacks_touched(pr, changed)),
         ("Images", image_changes(pr, changed)),
+        ("Cloudflare: Terraform Cloud applies on merge",
+         [f"{p} (deleted)" if s == "D" else p for p, s in sorted(changed.items()) if p.startswith("cloudflare/")]),
         ("Secret files (names only)", sorted(p for p in changed if ".sops." in p)),
         ("Ansible roles", roles_touched(changed)),
         ("New tasks check mode can't preview", [f"{f}: {l.strip()}" for f, l in added if RISKY_TASK.search(l)]),
