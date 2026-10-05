@@ -34,6 +34,9 @@ scrutiny = [
   "devices: /dev/nvme0", "devices: /dev/nvme1", "devices: /dev/nvme2",
 ]
 dash = ["privileged", "mount: /"]
+# Grafana 13 runs its datasources as plugin processes over unix sockets, which docker-default
+# refuses to create on this host (AppArmor 4, Proxmox 9).
+grafana = ["security_opt: apparmor=unconfined"]
 node-exporter = ["mount: /proc", "mount: /sys", "mount: /"]
 
 # The paths come from the stack's env file, so the gate can't see them.
