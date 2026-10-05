@@ -6,23 +6,31 @@ on:
   pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  # Your `/gate-change` comment: the ack from the phone app. Comment runs, like
+  # pull_request_target, always use main's copy of this file.
+  issue_comment:
+    types: [created]
 permissions:
   contents: read
 concurrency:
-  group: gate-${{ github.event.pull_request.number }}
+  group: gate-${{ github.event.pull_request.number || github.event.issue.number }}
 jobs:
   policy:
     # Other labels change nothing, so they don't rerun the gate (the earlier check stands).
-    if: (github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'gate-change'
+    # Other comments, anyone else's included, don't run it either.
+    if: >-
+      github.event_name == 'pull_request_target'
+      && ((github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'gate-change')
+      || github.event_name == 'issue_comment' && github.event.issue.pull_request
+      && github.event.comment.user.id == 58160889 && startsWith(github.event.comment.body, '/gate-change')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: gate # the App's key; only runs as main can read it
     env:
       APP_ID: "5173798" # homelab-gate's App ID (Task 5)
-      OWNER_ID: "58160889" # shenhong96: the only account whose gate-change label counts
+      OWNER_ID: "58160889" # shenhong96: the only account whose gate-change label or comment counts
       REPO: ${{ github.repository }}
-      PR: ${{ github.event.pull_request.number }}
-      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR: ${{ github.event.pull_request.number || github.event.issue.number }}
       ACTION: ${{ github.event.action }}
     steps:
       - name: The homelab-gate token
@@ -34,6 +42,19 @@ jobs:
           permission-checks: write
           permission-issues: write
           permission-pull-requests: write # commenting on a PR needs it, not only issues
+
+      # A comment carries no head commit, so read it from the PR: open, into main.
+      - name: The PR's head commit
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          EVENT_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          sha=$EVENT_SHA
+          if [ -z "$sha" ]; then
+            sha=$(gh api "repos/$REPO/pulls/$PR" --jq 'select(.state == "open" and .base.ref == "main") | .head.sha')
+          fi
+          [ -n "$sha" ] # a comment on a closed PR, or one not into main: nothing to check
+          echo "HEAD_SHA=$sha" >> "$GITHUB_ENV"
 
       # Opened before anything else runs, so any later failure leaves a failure, never an earlier
       # success. Only a failed token step posts nothing: without the credential, nothing can be.
@@ -55,7 +76,7 @@ jobs:
       - name: The PR, as data
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ env.HEAD_SHA }}
           path: pr
           fetch-depth: 0 # the merge base with main
           persist-credentials: false
@@ -68,9 +89,10 @@ jobs:
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tgz" | sha256sum -c -
           sudo tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks
 
-      # An ack counts only while the label is on, its last `labeled` event is yours, and that
-      # event is later than the push (the earliest check suite of the head commit, which the
-      # PR can't forge). Pushes and reopens also take the label off; the timing is the guard.
+      # An ack counts only when it's yours and later than the push (the earliest check suite of
+      # the head commit, which the PR can't forge): the label while it's on and its last
+      # `labeled` event is yours, or your latest `/gate-change` comment. Pushes and reopens also
+      # take the label off; the timing is the guard.
       # (Not on opened: a new PR has no earlier push, and `gh pr create --label` would lose it.)
       - name: Your ack
         id: ack
@@ -92,8 +114,10 @@ jobs:
             --jq '.[] | select(.event == "labeled" and .label.name == "gate-change") | "\(.actor.id) \(.created_at)"' | tail -n 1)
           last=${event%% *}
           at=${event#* }
-          if grep -qx gate-change <<<"$labels" && [ "$last" = "$OWNER_ID" ] \
-            && [ -n "$pushed" ] && [[ "$at" > "$pushed" ]]; then
+          said=$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq ".[] | select(.user.id == $OWNER_ID and (.body | startswith(\"/gate-change\"))) | .created_at" | tail -n 1)
+          if [ -n "$pushed" ] && { { grep -qx gate-change <<<"$labels" && [ "$last" = "$OWNER_ID" ] \
+            && [[ "$at" > "$pushed" ]]; } || { [ -n "$said" ] && [[ "$said" > "$pushed" ]]; }; }; then
             echo "flag=--ack" >> "$GITHUB_OUTPUT"
           fi
 
