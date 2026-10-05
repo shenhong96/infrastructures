@@ -1,7 +1,6 @@
 # OS basics on the host and inside each container Ansible can run in, adopted as found.
 # Not managed: users, and SSH keys other than Ansible's own login key. One-off fixes (e.g.
 # removing a stale key) run once as ad-hoc commands; this role only declares the state to keep.
-# Proof 9 (deploy-from-anywhere plan 3): a comment-only change; Semaphore applies it, nothing changes.
 
 # ponytail: not the apt module; Ansible's Python on the 20.04 containers (3.9, deadsnakes)
 # has no apt bindings. Only a new container lacks these.
