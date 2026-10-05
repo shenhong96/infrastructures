@@ -18,11 +18,6 @@ all:
     # CT 101 was rebuilt on Ubuntu 24.04 (2026-09-30).
     skip_inside:
       hosts: {}
-    # Machines that run Prometheus node-exporter (the node_exporter role). A machine with the
-    # Alloy agent (stacks/monitoring) doesn't need it: Alloy has node_exporter built in.
-    node_exporter:
-      hosts:
-        proxy:
     # The machine that runs Komodo Core and its database (the komodo role).
     komodo:
       hosts:
