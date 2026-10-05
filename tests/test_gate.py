@@ -438,6 +438,18 @@ class Flags(GateTest):
         pr.write("ansible/site.yml", (pr.dir / "ansible/site.yml").read_text() + "\n")
         self.assertTrue(self.assertPasses(pr)["ansible/site.yml changed"])
 
+    CLOUDFLARE = "Cloudflare: Terraform Cloud applies on merge"
+
+    def test_cloudflare_change(self):
+        pr = self.pr().write("cloudflare/extra.tf", "# a new file\n")
+        (pr.dir / "cloudflare/main.tf").unlink()  # deleting a file destroys what it manages
+        self.assertEqual(self.assertPasses(pr)[self.CLOUDFLARE],
+                         ["cloudflare/extra.tf", "cloudflare/main.tf (deleted)"])
+
+    def test_cloudflared_stack_is_not_cloudflare(self):
+        pr = self.pr().stack(name="cloudflared")
+        self.assertEqual(self.assertPasses(pr)[self.CLOUDFLARE], [])
+
     def test_cli_writes_the_check_and_the_comment(self):
         pr = self.pr().stack(server="proxmox")
         subprocess.run([*GIT, "-C", str(pr.dir), "add", "-A", "--force"], check=True)  # a PR can commit ignored files
