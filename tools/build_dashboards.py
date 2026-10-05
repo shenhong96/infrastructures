@@ -33,6 +33,12 @@ NODE = f'job="integrations/node_exporter", {H}'
 DOCKER = f'job="integrations/cadvisor", {H}'
 ALLOY = f'job="integrations/self", {H}'
 ERRORS = 'detected_level=~"error|fatal|critical"'
+# Every log panel on $host shows the lines that pass Search and Level. Grafana adds the Filters
+# bar's labels (set from the bar, or from a log line's details) to every Loki query by itself.
+LOGS = f'{{{H}}} |~ "(?i)$search" | detected_level=~"$level"'
+LEVELS = ("critical", "error", "warn", "info", "debug", "trace", "unknown")  # what Loki detects
+FILTER_KEYS = ("compose_project", "compose_service", "container", "stream", "group")
+DRILLDOWN = "/a/grafana-lokiexplore-app/explore"
 
 
 def steps(*pairs):
@@ -192,7 +198,7 @@ def hosts_dashboard():
     L.add(stat("OOM kills", prom("sum(increase(container_oom_events_total[$__range])) or vector(0)", instant=True),
                thresholds=steps(GOOD, (1, CRIT)), decimals=0, desc="Containers killed for running out of memory, in the time range."), 4, 4)
     L.add(stat("Error log lines", loki(f'sum(count_over_time({{job="integrations/docker"}} | {ERRORS} [$__range]))', instant=True),
-               thresholds=steps(GOOD, (1, WARN), (100, SERIOUS)), decimals=0, desc="Lines Loki detected as error, fatal or critical, in the time range."), 4, 4)
+               thresholds=steps(GOOD, (1, WARN), (100, SERIOUS)), decimals=0, desc="Lines Loki detected as error, fatal or critical, in the time range, on every machine. Follows Filters."), 4, 4)
 
     fleet = table("Machines", [
         prom('max by (host, host_kind, vmid) (up{job="integrations/node_exporter"})', table=True, ref="A"),
@@ -296,7 +302,7 @@ def hosts_dashboard():
         "G": ("Up for", "s", None, None),
         "H": ("OOM kills", "none", "status", steps(GOOD, (1, CRIT))),
     }, desc="One row per running container. CPU is in cores (100% = one core). Containers that share a network (host, or another container's) each show that network's total. Click a name for its logs.", overrides=[
-        override("container", displayName="Container", links=[{"title": "Logs of ${__value.raw}", "url": "/d/homelab-hosts?var-host=$host&var-container=${__value.raw}&${__url_time_range}"}]),
+        override("container", displayName="Container", links=[{"title": "Logs of ${__value.raw}", "url": "/d/homelab-hosts?var-host=$host&var-filters=container%7C%3D%7C${__value.raw}&${__url_time_range}"}]),
         override("compose_project", displayName="Project"),
         override("image", displayName="Image", mappings=[{"type": "regex", "options": {"pattern": "(.*)@sha256:.*", "result": {"text": "$1"}}}]),
         override("Value #A", custom__hidden=True),
@@ -308,19 +314,22 @@ def hosts_dashboard():
     L.add(series("Network · top 5", [prom(topk(f"sum by (container) (rate(container_network_receive_bytes_total{{{DOCKER}}}[$__rate_interval]) + rate(container_network_transmit_bytes_total{{{DOCKER}}}[$__rate_interval])) * 8", by), "{{container}}")],
                  unit="bps", desc="The five busiest over the time range, in and out together. Containers that share a network each show its total."), 24, 8)
 
-    # ---- Logs on $host.
+    # ---- Logs on $host: Filters, Level and Search narrow all three panels, so the charts count what
+    # the Logs panel shows.
     L.row("Logs · $host")
     levels = [override(n, color=FIXED(c)) for n, c in (("error", CRIT), ("critical", CRIT), ("fatal", CRIT), ("warn", WARN), ("info", BLUE), ("debug", MUTED), ("trace", MUTED), ("unknown", MUTED))]
-    L.add(series("Log lines by level", [loki(f'sum by (detected_level) (count_over_time({{{H}, container=~"$container"}} [$__auto]))', "{{detected_level}}")],
+    L.add(series("Log lines by level", [loki(f"sum by (detected_level) (count_over_time({LOGS} [$__auto]))", "{{detected_level}}")],
                  bars=True, overrides=levels, legend_calcs=("sum",), desc="Loki detects each line's level by itself."), 12, 8)
-    L.add(series("Errors by container", [loki(f'sum by (container) (count_over_time({{{H}, container=~"$container"}} | {ERRORS} [$__auto]))', "{{container}}")],
+    L.add(series("Errors by container", [loki(f"sum by (container) (count_over_time({LOGS} | {ERRORS} [$__auto]))", "{{container}}")],
                  bars=True, legend_calcs=("sum",), desc="Lines detected as error, fatal or critical."), 12, 8)
     L.add({
-        "type": "logs", "title": "Logs", "description": "Filter with Container and Search above.", "datasource": LOKI,
-        "targets": [loki(f'{{{H}, container=~"$container"}} |~ "(?i)$search"')],
+        "type": "logs", "title": "Logs", "datasource": LOKI, "targets": [loki(LOGS)],
+        "description": "Narrow with Filters, Level and Search above. In a line's details, the magnifier on a label adds it to Filters (the crossed one filters it out). The sidebar sorts, wraps and filters what's on screen; Logs Drilldown (the link) groups lines into patterns.",
+        "links": [{"title": "Open in Logs Drilldown", "url": f"{DRILLDOWN}/host/${{host}}/logs?var-ds={LOKI['uid']}&var-filters=host%7C%3D%7C${{host}}&${{filters:queryparam}}&${{__url_time_range}}"}],
         "options": {"showTime": True, "showLabels": False, "showCommonLabels": False, "wrapLogMessage": True, "prettifyLogMessage": False,
-                    "enableLogDetails": True, "enableInfiniteScrolling": True, "dedupStrategy": "none", "sortOrder": "Descending"},
-    }, 24, 12)
+                    "enableLogDetails": True, "enableInfiniteScrolling": True, "dedupStrategy": "none", "sortOrder": "Descending",
+                    "showControls": True, "showLevel": True, "syntaxHighlighting": True, "detailsMode": "sidebar", "fontSize": "default"},
+    }, 24, 14)
 
     # ---- The agent on $host: is the data getting through. Collapsed: look here when something is missing.
     def agent():
@@ -343,7 +352,7 @@ def hosts_dashboard():
     return {
         "uid": "homelab-hosts", "title": "Homelab · Machines & containers", "tags": ["homelab"],
         "description": "Every machine with the Alloy agent (stacks/monitoring), its containers and their logs. Built by tools/build_dashboards.py.",
-        "editable": False, "graphTooltip": 1, "refresh": "5m", "schemaVersion": 41, "version": 1,
+        "editable": False, "graphTooltip": 1, "refresh": "5m", "schemaVersion": 42, "version": 1,
         "time": {"from": "now-24h", "to": "now"}, "timepicker": {"refresh_intervals": ["5m", "15m", "1h"]},
         "fiscalYearStartMonth": 0, "liveNow": False, "weekStart": "", "timezone": "browser",
         "annotations": {"list": []}, "links": [],
@@ -351,11 +360,12 @@ def hosts_dashboard():
             {"type": "query", "name": "host", "label": "Machine", "datasource": PROM, "refresh": 2, "sort": 1,
              "query": {"query": 'label_values(up{job=~"integrations/.+"}, host)', "refId": "host"},
              "definition": 'label_values(up{job=~"integrations/.+"}, host)', "multi": False, "includeAll": False},
-            {"type": "query", "name": "container", "label": "Container", "datasource": LOKI, "refresh": 2, "sort": 1,
-             "query": {"type": 1, "label": "container", "stream": f"{{{H}}}", "refId": "container"},
-             "definition": f"label_values({{{H}}}, container)", "multi": True, "includeAll": True, "allValue": ".+",
-             "current": {"text": ["All"], "value": ["$__all"]}},
+            {"type": "custom", "name": "level", "label": "Level", "query": ",".join(LEVELS), "multi": True, "includeAll": True,
+             "allValue": ".*", "current": {"text": ["All"], "value": ["$__all"]},
+             "options": [{"text": "All", "value": "$__all", "selected": True}] + [{"text": v, "value": v, "selected": False} for v in LEVELS]},
             {"type": "textbox", "name": "search", "label": "Search", "query": "", "current": {"text": "", "value": ""}},
+            {"type": "adhoc", "name": "filters", "label": "Filters", "datasource": LOKI, "filters": [], "baseFilters": [],
+             "defaultKeys": [{"text": k, "value": k} for k in FILTER_KEYS], "allowCustomValue": True},
         ]},
         "panels": L.panels,
     }
