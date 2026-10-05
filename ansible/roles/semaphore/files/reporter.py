@@ -49,7 +49,7 @@ def decide(facts, cfg):
       statuses  {sha: {context: {state, description, url, created}}}, the newest of each context
       tasks     [{id, status, commit, created}] of the apply template, or None (Semaphore unreadable)
       komodo    {procedure, runs: [{id, start, done, success}], stacks: [{id, name, latest, deployed,
-                pending, deploys: [{id, start, end, success}], services: [{state, status}] or None}]},
+                pending, deploys: [{id, start, end, success, restart}], services: [{state, status}] or None}]},
                 or None (Komodo unreadable). latest and deployed are Komodo's short hashes.
     Returns [{sha, context, state, description, url, push, since}] for the statuses that change; push
     is True when one turns failure or error; since is when the status it replaces was posted (or the
@@ -123,9 +123,11 @@ def _stacks(c, cur, facts, cfg):
             else:
                 undeployed = True
             continue
-        since = [d for d in s["deploys"] if d["success"] and d["start"] >= c["time"] - SKEW]
-        if not (_at_or_after(s["deployed"], c, commits) or since):
-            continue  # last deployed or restarted before c: not this merge's (a restart keeps deployed_hash)
+        # A deploy moves deployed_hash; a restart (for a requires = "Restart" file) doesn't, so only
+        # a restart is matched by time.
+        restarted = [d for d in s["deploys"] if d.get("restart") and d["success"] and d["start"] >= c["time"] - SKEW]
+        if not (_at_or_after(s["deployed"], c, commits) or restarted):
+            continue  # last deployed or restarted before c: not this merge's
         deployed = True
         state = health(s["services"])
         if state == "ok":
@@ -302,7 +304,8 @@ def komodo_state(cfg, since):
             done = u["status"] == "Complete"
             deploys.setdefault(u["target"]["id"], []).append(
                 {"id": u["id"], "start": u["start_ts"] / 1000, "end": end(u) if done and u["success"] else None,
-                 "success": bool(u["success"]) if done else True})  # one still running hasn't failed
+                 "success": bool(u["success"]) if done else True,  # one still running hasn't failed
+                 "restart": u["operation"] == "RestartStack"})
     stacks = []
     for s in read("ListFullStacks"):
         sid = s["_id"]["$oid"] if isinstance(s["_id"], dict) else s["_id"]  # a whole Stack: Mongo's id

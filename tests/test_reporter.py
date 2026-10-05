@@ -245,10 +245,18 @@ class Stacks(unittest.TestCase):
 
     def test_a_restart_only_change_is_checked_too(self):
         # Final review: for a requires = "Restart" file Komodo restarts and leaves deployed_hash where it was.
-        restarted = dict(deployed=A[:8], deploys=[{"id": "r1", "start": T0 + 200, "end": T0 + 300, "success": True}])
+        restarted = dict(deployed=A[:8], deploys=[{"id": "r1", "start": T0 + 200, "end": T0 + 300, "success": True,
+                                                   "restart": True}])
         self.assertEqual(self.got(kom(stack(**restarted)))[B][:2], ("success", "stacks deployed"))
         sick = stack(**restarted, services=[{"state": "running", "status": "Up 9 minutes (unhealthy)"}])
         self.assertEqual(self.got(kom(sick))[B][:2], ("failure", "immich: unhealthy"))
+
+    def test_the_previous_merges_deploy_isnt_this_ones(self):
+        # Proof 9 (PR #45): a base-only merge 2 min after a canary merge said "stacks deployed", because
+        # the canary's deploy for A started inside B's SKEW window. A full deploy moves deployed_hash, so
+        # only a restart is matched by time.
+        k = kom(stack(deployed=A[:8], deploys=[{"id": "d1", "start": T0 + 30, "end": T0 + 40, "success": True}]))
+        self.assertEqual(self.got(k)[B][:2], ("success", "no stacks changed"))
 
     def test_komodo_unreadable_decides_nothing(self):
         self.assertEqual(out(facts(tasks=None, komodo=None), "deploy/stacks"), {})
@@ -327,8 +335,8 @@ class Sources(unittest.TestCase):
         restart = {"id": "u1", "operation": "RestartStack", "target": {"type": "Stack", "id": oid},
                    "start_ts": 1_000, "status": "Complete", "success": True}
         got = self.gather([], stacks, [restart])["komodo"]["stacks"][0]
-        self.assertEqual((got["id"], [d["id"] for d in got["deploys"]], got["services"]),
-                         (oid, ["u1"], [{"state": "running", "status": "Up"}]))
+        self.assertEqual((got["id"], [(d["id"], d["restart"]) for d in got["deploys"]], got["services"]),
+                         (oid, [("u1", True)], [{"state": "running", "status": "Up"}]))
 
     def test_a_bad_semaphore_answer_skips_deploy_ansible_only(self):
         for bad in (None, {"tasks": []}, [None], [{"id": 1}], [{"id": 1, "status": "success", "template_id": None, "created": "x"}]):
