@@ -290,7 +290,7 @@ services:
 
   influxdb:
     restart: always
-    image: influxdb:1.8
+    image: influxdb:1.13
     ports:
       - "8086:8086"
     volumes:
@@ -301,7 +301,7 @@ services:
       - "INFLUXDB_DB=speedtest"
 
   wallabag:
-    image: wallabag/wallabag:2.5.2
+    image: wallabag/wallabag:2.6.14
     restart: unless-stopped
     container_name: wallabag
     environment:
