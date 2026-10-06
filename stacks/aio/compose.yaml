@@ -216,7 +216,7 @@ services:
       gethomepage.widget.key: "${GOTIFY_HOMEPAGE_KEY}"
 
   olivetin:
-    image: jamesread/olivetin:2022-04-07
+    image: jamesread/olivetin:2025.11.25
     container_name: olivetin
     volumes:
       - ./olivetin/config.yaml:/config/config.yaml:ro
