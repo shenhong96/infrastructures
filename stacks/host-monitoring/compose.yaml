@@ -2,11 +2,6 @@
 # Relative paths made absolute, Portainer's agent removed. The Prometheus, Loki and Grafana datasource config
 # now live next to this file (bind-mounted read-only); the data folders stay on the machine.
 ---
-x-monitoring: &loki
-  labels:
-    logging: "promtail"
-    logging_jobname: "containerlogs"
-
 version: '3.5'
 networks:
   monitoring:
@@ -43,7 +38,6 @@ services:
       - "/dev/nvme1"
       - "/dev/nvme2"
     restart: always
-    <<: *loki
 
   dash:
     image: mauricenino/dashdot:latest
@@ -73,7 +67,6 @@ services:
       - '--config.file=/etc/prometheus/prometheus.yml' 
     networks:
       - monitoring
-    <<: *loki
 
   node-exporter:
     image: quay.io/prometheus/node-exporter:latest
@@ -94,7 +87,6 @@ services:
     restart: unless-stopped
     networks:
       - monitoring
-    <<: *loki
 
   grafana:
     # 13 moves folders and dashboards into its own storage on first start; there's no way back to 12.

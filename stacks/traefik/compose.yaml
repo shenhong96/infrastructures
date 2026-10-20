@@ -1,11 +1,6 @@
 # Captured 2026-10-01 from CT 111 /opt/traefik/docker-compose.yml (project traefik).
 # Relative paths made absolute, inline secrets moved to secrets.sops.env.
 ---
-x-monitoring: &loki
-  labels:
-    logging: "promtail"
-    logging_jobname: "containerlogs"
-    
 version: "2.3"
 services:
   traefik:
@@ -25,7 +20,6 @@ services:
     networks:
       - default
       - traefik
-    <<: *loki
 
   certs:
     image: slocomptech/traefik-cert-extract:latest
@@ -34,7 +28,6 @@ services:
     volumes:
       - /opt/traefik/traefik:/data:ro
       - /opt/traefik/certs:/config/certs
-    <<: *loki
 
 networks:
   traefik:

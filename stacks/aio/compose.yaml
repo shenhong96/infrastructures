@@ -78,8 +78,6 @@ services:
       - "/opt/aio/uptime-kuma:/app/data"
     restart: always
     labels:
-      logging: "promtail"
-      logging_jobname: "containerlogs"
       gethomepage.enable: "true"
       gethomepage.name: "Uptime Kuma"
       gethomepage.description: "Uptime monitoring"
@@ -107,8 +105,6 @@ services:
     restart: unless-stopped
     labels:
       homelab.config-rev: "${BLOBS_SMOKEPING_SHA}"
-      logging: "promtail"
-      logging_jobname: "containerlogs"
       gethomepage.enable: "true"
       gethomepage.name: "SmokePing"
       gethomepage.description: "Network latency monitoring"
@@ -131,8 +127,6 @@ services:
     shm_size: "2gb"
     restart: unless-stopped
     labels:
-      logging: "promtail"
-      logging_jobname: "containerlogs"
       gethomepage.enable: "true"
       gethomepage.name: "Firefox"
       gethomepage.description: "Browser in the cloud"
@@ -156,8 +150,6 @@ services:
     shm_size: "4gb"
     restart: unless-stopped
     labels:
-      logging: "promtail"
-      logging_jobname: "containerlogs"
       gethomepage.enable: "true"
       gethomepage.name: "Webtop"
       gethomepage.description: "Ubuntu MATE desktop"
@@ -192,8 +184,6 @@ services:
       - 8078:8000
     restart: always
     labels:
-      logging: "promtail"
-      logging_jobname: "containerlogs"
       gethomepage.enable: "true"
       gethomepage.name: "Healthchecks"
       gethomepage.description: "Cron job monitoring"
@@ -215,8 +205,6 @@ services:
       - "/opt/aio/gotify:/app/data"
     restart: always
     labels:
-      logging: "promtail"
-      logging_jobname: "containerlogs"
       gethomepage.enable: "true"
       gethomepage.name: "Gotify"
       gethomepage.description: "Push notifications"
@@ -258,8 +246,6 @@ services:
       - /opt/aio/audiobookshelf/config:/config
     restart: always
     labels:
-      logging: "promtail"
-      logging_jobname: "containerlogs"
       gethomepage.enable: "true"
       gethomepage.name: "Audiobookshelf"
       gethomepage.description: "Audiobook and podcast server"
@@ -301,9 +287,6 @@ services:
       - "SPEEDTEST_HOST=local"
     depends_on:
       - influxdb
-    labels:
-      logging: "promtail"
-      logging_jobname: "containerlogs"
 
   influxdb:
     restart: always
@@ -344,8 +327,6 @@ services:
       - wallabag-db
       - wallabag-redis
     labels:
-      logging: "promtail"
-      logging_jobname: "containerlogs"
       gethomepage.enable: "true"
       gethomepage.name: "Wallabag"
       gethomepage.description: "Read-it-later articles"
@@ -361,17 +342,11 @@ services:
       - MYSQL_ROOT_PASSWORD=${WALLABAG_DB_MYSQL_ROOT_PASSWORD}
     volumes:
       - /mnt/ssd/wallabag/db:/var/lib/mysql
-    labels:
-      logging: "promtail"
-      logging_jobname: "containerlogs"
 
   wallabag-redis:
     image: redis:alpine
     restart: unless-stopped
     container_name: wallabag_redis
-    labels:
-      logging: "promtail"
-      logging_jobname: "containerlogs"
 
   syncthing:
     image: ghcr.io/linuxserver/syncthing:2.1.5
@@ -387,8 +362,6 @@ services:
       - 21027:21027/udp
     restart: unless-stopped
     labels:
-      logging: "promtail"
-      logging_jobname: "containerlogs"
       gethomepage.enable: "true"
       gethomepage.name: "Syncthing"
       gethomepage.description: "File synchronization"
