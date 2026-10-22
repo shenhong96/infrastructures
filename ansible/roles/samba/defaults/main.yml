@@ -4,3 +4,7 @@
 samba_users:
   - {name: ahlooii, uid: 1000, groups: users}
   - {name: privateshr, uid: 1002, groups: ""}
+# Owner of everything in the media and downloads shares: host uid/gid 101000 is uid/gid 1000
+# inside the unprivileged app containers, so every app writes as the same user and group.
+# Only `force user` uses it; it has no Samba password.
+  - {name: media, uid: 101000, groups: ""}
