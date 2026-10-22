@@ -42,6 +42,28 @@
     append: true
   notify: Restart Jellyfin
 
+# The TV library saves nfo files and images next to the media (SaveLocalMetadata), so
+# Jellyfin writes into data/media. Everything there belongs to group 101000 (gid 1000 in
+# the unprivileged app containers). mergerfs only sees a writer's primary group, so the
+# service runs with media as its primary group and umask 002: new files 664, folders 775.
+- name: The shared media group
+  ansible.builtin.group:
+    name: media
+    gid: 101000
+
+- name: Jellyfin runs with media as its primary group and umask 002
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/jellyfin.service.d/media-group.conf
+    content: |
+      [Service]
+      Group=media
+      SupplementaryGroups=jellyfin video render
+      UMask=0002
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload and restart Jellyfin
+
 # ponytail: uid/gid are the live jellyfin user's numbers; a fresh container can give the
 # user others. Check `id jellyfin` after a rebuild, or template them from getent.
 - name: Transcode tmpfs in fstab
