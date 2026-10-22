@@ -93,7 +93,7 @@ Every machine runs the same Grafana Alloy agent from `stacks/monitoring/`; it se
 
 ## Merging
 
-Every PR gets two required checks: `ci` (the tests in four shards, `ansible-lint`, the playbook syntax check, `docker compose config` per stack) and `gate` (the security policy, run from `main`'s code; its comment lists what blocks and what to look at). A PR need not be up to date with `main`: the gate re-checks every open PR when a merge changes `policy/`, and `ci` runs on `main` after each merge. So a batch of independent PRs merges back to back: review each, enable auto-merge on it, and they land as their checks pass. Only the owner can merge; an auto-merge set by anyone else is refused by the `main-owner` ruleset.
+Every PR gets two required checks: `ci` (the tests in four shards, `ansible-lint`, the playbook syntax check, `docker compose config` per stack) and `gate` (the security policy, run from `main`'s code; its comment lists what blocks and what to look at). A PR need not be up to date with `main`: the gate re-checks every open PR when a merge changes `policy/`, and `ci` runs on `main` after each merge. So a batch of independent PRs merges back to back: review each green one and merge it, with no update from `main` and no wait. Only the owner can merge (`main-owner`'s update rule). GitHub's auto-merge never completes under that rule, even when the owner enabled it and approved the PR, so merge directly.
 
 A change to the gate's own files needs the owner's `gate-change` label or `/gate-change` comment after the last push that changed the PR's diff; an update from `main` that leaves the changed files identical carries it over.
 
