@@ -108,6 +108,7 @@ After a merge, Komodo deploys the changed stacks and Semaphore applies the Ansib
 - **Each status links to the run's log** on the LAN: Semaphore at `192.168.9.161:3000`, Komodo at `192.168.9.151:9120`. They open from the phone with Tailscale on. The description is fixed wording; logs never leave the lab.
 - **Gotify** (app `deploys`) pushes the same line and link on `failure` or `error`. **Trust only links to those two addresses**: a status or push that links anywhere else isn't from the reporter.
 - **Off:** `systemctl disable --now reporter.timer` on `control`, until the next `--tags control` run.
+- **What a merge doesn't apply:** roles under the other tags (`host`, `lxc`, `komodo`, `periphery`, `tailscale`, `control`, `github`), `base` on the Proxmox host, and SOPS edits. The gate's comment lists them under "Needs a laptop run"; apply with `ansible-playbook site.yml --tags <tag>` from the laptop.
 
 ### Emergency stop
 
