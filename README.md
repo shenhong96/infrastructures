@@ -91,6 +91,12 @@ Every machine runs the same Grafana Alloy agent from `stacks/monitoring/`; it se
 - **Keeping a container's logs out:** give it the label `homelab.logs=false`.
 - **Next, roughly in order:** the Proxmox host's own agent; `fileserver` and `media`, once they run the Komodo agent; the Proxmox host with `prometheus-pve-exporter` for every guest; machine logs from the journal; per-container disk I/O; Grafana alerts (an agent stale for 10 minutes, a disk over 90%, an OOM kill). Most need your `gate-change` label.
 
+## Merging
+
+Every PR gets two required checks: `ci` (the tests in four shards, `ansible-lint`, the playbook syntax check, `docker compose config` per stack) and `gate` (the security policy, run from `main`'s code; its comment lists what blocks and what to look at). A PR need not be up to date with `main`: the gate re-checks every open PR when a merge changes `policy/`, and `ci` runs on `main` after each merge. So a batch of independent PRs merges back to back: review each, enable auto-merge on it, and they land as their checks pass. Only the owner can merge; an auto-merge set by anyone else is refused by the `main-owner` ruleset.
+
+A change to the gate's own files needs the owner's `gate-change` label or `/gate-change` comment after the last push that changed the PR's diff; an update from `main` that leaves the changed files identical carries it over.
+
 ## Cloudflare
 
 `cloudflare/` is applied by Terraform Cloud (org `ahlooii`, workspace `cloudflare`), never from a laptop: a merge that touches it starts a plan, and nothing changes until you confirm it there. PRs get no plan, on purpose: a plan runs with the Cloudflare token, so it only runs on merged code.
