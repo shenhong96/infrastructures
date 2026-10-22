@@ -67,10 +67,13 @@ class PR:
         self.write(f"stacks/{name}/compose.yaml", compose)
         return self.write(f"stacks/{name}/komodo.toml", STACK.format(name=name, server=server, extra=extra))
 
-    def check(self, ack=False):
+    def check(self, ack=False, acked=()):
         subprocess.run([*GIT, "-C", str(self.dir), "add", "-A", "--force"], check=True)  # a PR can commit ignored files
         subprocess.run([*GIT, "-C", str(self.dir), "commit", "-q", "--allow-empty", "-m", "pr"], check=True)
-        return gate.check(self.dir, "origin/main", ack)
+        return gate.check(self.dir, "origin/main", ack, acked)
+
+    def git(self, *args):
+        subprocess.run([*GIT, "-C", str(self.dir), *args], check=True)
 
 
 @unittest.skipUnless(shutil.which("gitleaks") and importlib.util.find_spec("yaml"),
@@ -95,11 +98,11 @@ class GateTest(unittest.TestCase):
         return PR(self, self.base)
 
     def assertBlocks(self, pr, text, ack=False):
-        blocks, _ = pr.check(ack)
+        blocks = pr.check(ack)[0]
         self.assertTrue(any(text in b for b in blocks), f"no block mentions {text!r}: {blocks}")
 
     def assertPasses(self, pr, ack=False):
-        blocks, flags = pr.check(ack)
+        blocks, flags = pr.check(ack)[:2]
         self.assertEqual(blocks, [])
         return dict(flags)
 
@@ -459,6 +462,37 @@ class Flags(GateTest):
         body = json.loads((out / "check.json").read_text())
         self.assertEqual((body["name"], body["head_sha"], body["conclusion"]), ("gate", "abc123", "failure"))
         self.assertTrue((out / "comment.md").read_text().startswith("<!-- gate -->\n### gate: blocked"))
+
+
+class Fingerprint(GateTest):
+    def test_stable_when_main_moves_and_is_merged_in(self):
+        pr = self.pr().write("stacks/homepage/notes.txt", "hi\n")
+        before = pr.check()[2]
+        pr.git("commit", "-q", "-m", "pr")
+        pr.git("checkout", "-q", "main")
+        (pr.dir / "unrelated.txt").write_text("x\n")
+        pr.git("add", "unrelated.txt")
+        pr.git("commit", "-q", "-m", "main moves")
+        pr.git("update-ref", "refs/remotes/origin/main", "HEAD")
+        pr.git("checkout", "-q", "pr")
+        pr.git("merge", "-q", "--no-edit", "main")
+        self.assertEqual(pr.check()[2], before)
+
+    def test_changes_on_any_edit(self):
+        pr = self.pr().write("stacks/homepage/notes.txt", "hi\n")
+        fps = {pr.check()[2], pr.write("stacks/homepage/notes.txt", "ho\n").check()[2],
+               pr.write("stacks/homepage/notes.txt", "ho \n").check()[2]}
+        self.assertEqual(len(fps), 3)
+
+    def test_ack_carries_over(self):
+        pr = self.pr()
+        pr.write("policy/exceptions.toml", (pr.dir / "policy/exceptions.toml").read_text() + "\n")
+        self.assertBlocks(pr, "gate files changed")
+        blocks, flags, fp, acked = pr.check(ack=True)
+        self.assertEqual((blocks, acked), ([], True))
+        blocks, flags, _, _ = pr.check(acked={fp})
+        self.assertEqual(blocks, [])
+        self.assertIn("carried", dict(flags)["Gate-change ack"][0])
 
 
 class Units(unittest.TestCase):

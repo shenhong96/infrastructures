@@ -20,7 +20,9 @@ github_settings:
       allow_squash_merge: true
       allow_merge_commit: false
       allow_rebase_merge: false
-      allow_auto_merge: false # the bot could queue a merge
+      # An auto-merge runs as whoever enabled it, and main-owner's update rule (admin bypass
+      # only) refuses the bot: only the owner's auto-merge can land.
+      allow_auto_merge: true
       delete_branch_on_merge: true
       security_and_analysis:
         secret_scanning: { status: enabled }
@@ -72,7 +74,8 @@ github_rulesets:
           require_extra_approval_for_unattributed_changes: true
       - type: required_status_checks
         parameters:
-          strict_required_status_checks_policy: true
+          # PRs need not be up to date: gate.yml re-checks every open PR on each push to main, ci on main catches the rest
+          strict_required_status_checks_policy: false
           do_not_enforce_on_create: false
           required_status_checks:
             - { context: ci, integration_id: "{{ github_actions_app_id | int }}" }

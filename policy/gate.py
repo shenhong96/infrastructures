@@ -4,15 +4,18 @@
 The gate workflow checks out main (this code) and the PR head (with main in its history)
 side by side, then runs
 
-    python3 main/policy/gate.py --pr pr --head-sha SHA --out out [--ack]
+    python3 main/policy/gate.py --pr pr --head-sha SHA --out out [--ack] [--acked FP ...]
 
 Nothing from the PR is ever run. It writes out/check.json (the body of the `gate` check
 run) and out/comment.md (the summary comment). --ack means you labelled the PR gate-change
-since its last push. A crash exits non-zero and posts nothing, so the PR stays blocked.
+since its last push; --acked lists the change fingerprints you acked on its earlier heads,
+which carry the ack over while the PR's changes stay the same. It also writes out/pending.md:
+what merging won't apply, for the laptop. A crash exits non-zero and posts nothing, so the PR stays blocked.
 Tests: python3 -m unittest discover tests
 """
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import posixpath
@@ -95,6 +98,14 @@ def stage_on_merge_base(pr, base_ref):
     git(pr, "reset", "-q", "--soft", base)
     out = git(pr, "diff", "--cached", "--name-status", "--no-renames", "-z").split("\0")
     return dict(zip(out[1::2], out[0::2]))
+
+
+def fingerprint(pr):
+    """sha256 of every changed file's status, path and content at the PR head, once staged.
+    Not git patch-id: that ignores whitespace, which YAML does not."""
+    out = git(pr, "diff", "--cached", "--raw", "--no-renames", "-z").split("\0")
+    lines = sorted(f"{meta.split()[4]} {path} {meta.split()[3]}" for meta, path in zip(out[0::2], out[1::2]))
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
 
 def force_text_diffs(pr):
@@ -479,11 +490,16 @@ def laptop_runs(pr, changed):
     return out
 
 
-def check(pr, base_ref="origin/main", ack=False):
-    """(blocks, flags) for the PR checked out at pr."""
+def check(pr, base_ref="origin/main", ack=False, acked=()):
+    """(blocks, flags, fingerprint, acked?) for the PR checked out at pr. acked: fingerprints
+    you acked on earlier heads of this PR (only the gate App writes them, so none are forged)."""
     pr = Path(pr)
     force_text_diffs(pr)
     changed = stage_on_merge_base(pr, base_ref)
+    fp = fingerprint(pr)
+    how = ["your label or /gate-change since the last push"] if ack else []
+    if not ack and fp in acked:
+        ack, how = True, ["carried from an earlier head: same changes"]
     exceptions = tomllib.loads((POLICY / "exceptions.toml").read_text())
     blocks = secret_findings(pr) + compose_findings(pr, exceptions["compose"]) + komodo_findings(pr, exceptions)
     blocks += special_files(pr)
@@ -509,8 +525,9 @@ def check(pr, base_ref="origin/main", ack=False):
         ("Needs a laptop run: merging won't apply it", laptop_runs(pr, changed)),
         ("SSH connection settings", connection),
         ("Gate files", gate),
+        ("Gate-change ack", how),
     ]
-    return blocks, flags
+    return blocks, flags, fp, ack
 
 
 def esc(text, limit=160):
@@ -541,17 +558,23 @@ def main(argv=None):
     p.add_argument("--base-ref", default="origin/main")
     p.add_argument("--head-sha", required=True)
     p.add_argument("--ack", action="store_true", help="you labelled the PR gate-change since its last push")
+    p.add_argument("--acked", nargs="*", default=[], help="fingerprints acked on earlier heads of this PR")
     p.add_argument("--out", type=Path, required=True)
     args = p.parse_args(argv)
-    blocks, flags = check(args.pr, args.base_ref, args.ack)
+    blocks, flags, fp, acked = check(args.pr, args.base_ref, args.ack, args.acked)
     summary = render(blocks, flags)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "comment.md").write_text(summary)
+    output = {"title": f"{len(blocks)} blocking" if blocks else "Nothing blocks", "summary": summary[:60000]}
+    if acked:
+        output["text"] = f"ack {fp}"  # gate.yml reads this back on the next push
     (args.out / "check.json").write_text(json.dumps({
         "name": "gate", "head_sha": args.head_sha, "status": "completed",
-        "conclusion": "failure" if blocks else "success",
-        "output": {"title": f"{len(blocks)} blocking" if blocks else "Nothing blocks", "summary": summary[:60000]},
+        "conclusion": "failure" if blocks else "success", "output": output,
     }))
+    flagged = dict(flags)
+    pending = flagged["Needs a laptop run: merging won't apply it"] + [f"secret file {p}" for p in flagged["Secret files (names only)"]]
+    (args.out / "pending.md").write_text("; ".join(pending))
 
 
 if __name__ == "__main__":
