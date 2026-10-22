@@ -2,3 +2,9 @@
   ansible.builtin.service:
     name: jellyfin
     state: restarted
+
+- name: Reload and restart Jellyfin
+  ansible.builtin.systemd_service:
+    name: jellyfin
+    daemon_reload: true
+    state: restarted
