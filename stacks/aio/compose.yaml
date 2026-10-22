@@ -238,6 +238,8 @@ services:
   audiobookshelf:
     image: ghcr.io/advplyr/audiobookshelf:2.37.1
     container_name: audiobookshelf
+    # Writes into data/media/Books as the shared owner (uid/gid 1000 here = 101000 on the host)
+    user: "1000:1000"
     ports:
       - 13378:80
     volumes:
@@ -513,7 +515,8 @@ services:
     container_name: calibre-web
     environment:
       - PUID=1000
-      - PGID=117
+      - PGID=1000
+      - UMASK=002
       - TZ=Etc/UTC
       - DOCKER_MODS=linuxserver/mods:universal-calibre
       - OAUTHLIB_RELAX_TOKEN_SCOPE=1
