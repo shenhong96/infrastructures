@@ -44,7 +44,7 @@ services:
       options: {max-size: 10m, max-file: "3"}
 
   core:
-    image: ghcr.io/moghtech/komodo-core:2.2.0@sha256:7afbcfa99674bf3f51539ec3aa7235795e9b994af9b7099a6c4c654d5d8a5b6b
+    image: ghcr.io/moghtech/komodo-core:2.3.4@sha256:91b2afd7b3bb2abea0ebd3046d65ec457eb1f3d505868d1d60cb0f8562490ef9
     container_name: komodo-core
     labels:
       komodo.skip: "true"

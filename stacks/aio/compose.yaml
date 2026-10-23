@@ -303,7 +303,7 @@ services:
       - "INFLUXDB_DB=speedtest"
 
   wallabag:
-    image: wallabag/wallabag:2.5.2
+    image: wallabag/wallabag:2.6.14
     restart: unless-stopped
     container_name: wallabag
     environment:
@@ -351,7 +351,7 @@ services:
     container_name: wallabag_redis
 
   syncthing:
-    image: ghcr.io/linuxserver/syncthing:2.1.5
+    image: ghcr.io/linuxserver/syncthing:2.1.7
     container_name: syncthing
     volumes:
       - /opt/aio/syncthing/config:/config
