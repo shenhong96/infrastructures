@@ -57,6 +57,15 @@
   roles:
     - proxy
 
+# The vpn machine's Compose file and WireGuard config: laptop only (policy/gate.py's
+# LAPTOP_TAGS). The compose file sits outside stacks/, so the gate's compose rules never see it.
+- name: VPN stack files
+  hosts: vpn
+  tags: vpn
+  gather_facts: false # nothing uses facts
+  roles:
+    - vpn
+
 # Komodo Core and its database, then the agents; enrollment (agents connect) is a separate
 # deliberate run: -e komodo_enrolled=true. Core goes first so a restored or rebuilt Core
 # has its servers and their keys in place before an agent ever connects.

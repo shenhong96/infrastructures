@@ -1,0 +1,21 @@
+{# The vpn container's tunnel (AirVPN), read from /config/wg0.conf when the container starts.
+   The keys and the tunnel address come from host_vars/vpn/secrets.sops.yml; the rest is plain.
+   PostUp/PreDown: routes to the home networks past the tunnel, then the IPv4 kill-switch
+   (REJECT anything not leaving through the tunnel). Kept exactly as it ran on 2026-10-24,
+   including PreDown's "HOMENET3ET=" (so $HOMENET and $DROUTE are unset there).
+   IPv6 later: add the v6 address to vpn_wg_address, ::/0 to AllowedIPs and an ip6tables
+   copy of the four iptables rules to PostUp and PreDown. #}
+[Interface]
+Address = {{ vpn_wg_address }}
+PrivateKey = {{ vpn_wg_private_key }}
+MTU = 1320
+DNS = 10.128.0.1
+PostUp = DROUTE=$(ip route | grep default | awk '{print $3}'); HOMENET=192.168.0.0/16; HOMENET2=10.0.0.0/12; HOMENET3=172.16.0.0/12; ip route add $HOMENET3 via $DROUTE;ip route add $HOMENET2 via $DROUTE; ip route add $HOMENET via $DROUTE;iptables -I OUTPUT -d $HOMENET -j ACCEPT;iptables -A OUTPUT -d $HOMENET2 -j ACCEPT; iptables -A OUTPUT -d $HOMENET3 -j ACCEPT;  iptables -A OUTPUT ! -o %i -m mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT
+PreDown = HOMENET3ET=192.168.0.0/16; HOMENET2=10.0.0.0/12; HOMENET3=172.16.0.0/12; ip route del $HOMENET3 via $DROUTE;ip route del $HOMENET2 via $DROUTE; ip route del $HOMENET via $DROUTE; iptables -D OUTPUT ! -o %i -m mark ! --mark $(wg show %i fwmark) -m addrtype ! --dst-type LOCAL -j REJECT; iptables -D OUTPUT -d $HOMENET -j ACCEPT; iptables -D OUTPUT -d $HOMENET2 -j ACCEPT; iptables -D OUTPUT -d $HOMENET3 -j ACCEPT
+
+[Peer]
+PublicKey = {{ vpn_wg_peer_public_key }}
+PresharedKey = {{ vpn_wg_preshared_key }}
+Endpoint = jp3.vpn.airdns.org:1637
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 15

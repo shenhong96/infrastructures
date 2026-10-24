@@ -76,6 +76,14 @@ The `proxy` and `base` roles put the files Caddy reads back; Komodo runs the sta
 - **Secrets:** the two keys in `.env` are `CF_API_TOKEN` and `ACME_EMAIL`. Caddy's certificate and ACME account (`/opt/caddy/data`) are not in the repo; they are re-issued on their own.
 - **Container:** Ubuntu 24.04 with Docker 29 needs the raw key `lxc.mount.entry: /dev/null sys/module/apparmor/parameters/enabled none bind 0 0` in the inventory, as on `apps`, or `docker run` fails on the AppArmor check.
 
+## VPN stack: what's in git
+
+The media stack on `vpn` (CT 118: the `vpn` WireGuard container, qBittorrent and the arr apps in its network, and their neighbours) is Komodo's `vpn` stack in files-on-server mode: Komodo deploys `/root/docker-compose.yml` on the machine (project `root`). The `vpn` role puts that file and the tunnel config in place; it never restarts a container.
+
+- **What Ansible delivers:** `/root/docker-compose.yml` from `ansible/roles/vpn/files/` (as it ran on 2026-10-24, byte for byte; outside `stacks/` because a files-on-server folder holds only `komodo.toml`), and `/root/wireguard/config/wg0.conf` (the container's `/config/wg0.conf`) from `templates/wg0.conf.j2`. The keys and the tunnel address are `vpn_wg_*` in `host_vars/vpn/secrets.sops.yml`; the routes and the kill-switch in `PostUp`/`PreDown` are plain in the template.
+- **Changing them:** edit the file in git, then `ansible-playbook site.yml --tags vpn` from the laptop (a merge doesn't apply it). Then redeploy `vpn` in Komodo for a compose change, or restart the `vpn` container for a tunnel change (that restarts everything in its network too). An edit made on the machine is overwritten by the next `--tags vpn` run.
+- **Not in git:** `/root/.env` (flaresolverr's log settings, read by Compose), the apps' own config under `/root/<app>`, and the rest of `/root/wireguard/config` (`myannonymous.sh` is one of `base`'s secret files).
+
 ## Monitoring: the telemetry agent
 
 Every machine runs the same Grafana Alloy agent from `stacks/monitoring/`; it sends to Prometheus and Loki on the Proxmox host (`stacks/host-monitoring/`), and the Grafana there shows the **Homelab · Machines & containers** dashboard. So far on `vpn`, `apps`, `gitlab`, `nextcloud` and `proxy`.
@@ -114,7 +122,7 @@ After a merge, Komodo deploys the changed stacks and Semaphore applies the Ansib
 - **Each status links to the run's log** on the LAN: Semaphore at `192.168.9.161:3000`, Komodo at `192.168.9.151:9120`. They open from the phone with Tailscale on. The description is fixed wording; logs never leave the lab.
 - **Gotify** (app `deploys`) pushes the same line and link on `failure` or `error`. **Trust only links to those two addresses**: a status or push that links anywhere else isn't from the reporter.
 - **Off:** `systemctl disable --now reporter.timer` on `control`, until the next `--tags control` run.
-- **What a merge doesn't apply:** roles under the other tags (`host`, `lxc`, `komodo`, `periphery`, `tailscale`, `control`, `github`), `base` on the Proxmox host, and SOPS edits. The gate's comment lists them under "Needs a laptop run"; apply with `ansible-playbook site.yml --tags <tag>` from the laptop.
+- **What a merge doesn't apply:** roles under the other tags (`host`, `lxc`, `komodo`, `periphery`, `tailscale`, `control`, `github`, `vpn`), `base` on the Proxmox host, and SOPS edits. The gate's comment lists them under "Needs a laptop run"; apply with `ansible-playbook site.yml --tags <tag>` from the laptop.
 
 ### Emergency stop
 
