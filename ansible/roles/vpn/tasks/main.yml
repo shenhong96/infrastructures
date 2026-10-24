@@ -1,0 +1,39 @@
+# The vpn machine's media stack, adopted as found on 2026-10-24: the Compose file Komodo runs
+# in files-on-server mode (stacks/vpn/komodo.toml: project root, /root/docker-compose.yml) and
+# the vpn container's WireGuard config (/root/wireguard/config is the container's /config).
+# Only the files: nothing here restarts or recreates a container. A changed compose file is
+# picked up by the next deploy of the vpn stack in Komodo; a changed wg0.conf only when the vpn
+# container restarts (and with it everything in its network namespace).
+# Not managed: /root/.env (flaresolverr's log settings, read by Compose for interpolation),
+# the apps' config folders under /root/<app>, and the rest of /root/wireguard/config
+# (myannonymous.sh comes from base's secret files; the MAM cookies are written by the script).
+
+- name: The WireGuard config folders
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0755"
+  loop:
+    - /root/wireguard
+    - /root/wireguard/config
+
+- name: Compose file of the stack (Komodo project root)
+  ansible.builtin.copy:
+    src: docker-compose.yml
+    dest: /root/docker-compose.yml
+    owner: root
+    group: root
+    mode: "0600"
+
+# Keys and tunnel address from host_vars/vpn/secrets.sops.yml. 0644 and 1000:1000 as found.
+- name: WireGuard config of the vpn container
+  ansible.builtin.template:
+    src: wg0.conf.j2
+    dest: /root/wireguard/config/wg0.conf
+    owner: "1000"
+    group: "1000"
+    mode: "0644"
+  no_log: true
+  diff: false

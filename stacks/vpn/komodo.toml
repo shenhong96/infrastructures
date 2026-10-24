@@ -1,8 +1,9 @@
 # Safety settings on every stack, enforced by tests/test_komodo_gate.py: a sync only creates
 # or updates the stack record. Nothing deploys until someone runs DeployStack on it.
-# Files-on-server mode: the compose file stays on the vpn machine (/root/docker-compose.yml),
-# covered by that machine's backup, and is deliberately not in this repo. Komodo deploys and
-# watches it. env_file_path names a file that doesn't exist, so Komodo never writes or uses
+# Files-on-server mode: Komodo deploys and watches the compose file on the vpn machine
+# (/root/docker-compose.yml). This folder holds only this file (the gate checks that); the
+# compose file's copy in git is ansible/roles/vpn/files/docker-compose.yml, which a laptop run
+# of --tags vpn puts in place. Edit it there, not on the machine. env_file_path names a file that doesn't exist, so Komodo never writes or uses
 # /root/.env; Compose still reads it for interpolation, as it always has.
 
 [[stack]]

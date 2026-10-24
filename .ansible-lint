@@ -2,4 +2,5 @@
 exclude_paths:
   - "**/*.sops.yml"
   - ansible/collections/
+  - ansible/roles/vpn/files/docker-compose.yml # Compose, not Ansible: kept byte for byte as it runs
 offline: true # ci installs requirements.yml itself

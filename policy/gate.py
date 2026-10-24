@@ -72,7 +72,7 @@ HELPER = re.compile(r"/usr/local/sbin/komodo-decrypt-(env|files)( [\w.-][\w./-]*
 # compose_cmd_wrapper: only the redaction pipe, over plain env file names.
 WRAPPER = re.compile(r"set -o pipefail; \[\[COMPOSE_COMMAND\]\] \| /usr/local/sbin/komodo-redact-config( [\w.-]+)+")
 
-LAPTOP_TAGS = {"host", "lxc", "komodo", "periphery", "tailscale", "control", "github"}
+LAPTOP_TAGS = {"host", "lxc", "komodo", "periphery", "tailscale", "control", "github", "vpn"}
 RISKY_TASK = re.compile(r"^\s*(?:-\s+)?(?:ansible\.(?:builtin|legacy)\.)?(shell|command|raw|script|get_url)\s*:")
 # Setting these anywhere but the inventory (a gate file) can switch off the pinned host keys or
 # point a host elsewhere: a variable beats the runner's ANSIBLE_HOST_KEY_CHECKING=True.
