@@ -1,4 +1,4 @@
-{# The vpn container's tunnel (AirVPN), read from /config/wg0.conf when the container starts.
+{# The vpn container's tunnel (AirVPN), read from /config/wg_confs/wg0.conf when the container starts.
    The keys and the tunnel address come from host_vars/vpn/secrets.sops.yml; the rest is plain.
    PostUp/PreDown: routes to the home networks past the tunnel, then the IPv4 kill-switch
    (REJECT anything not leaving through the tunnel). Kept exactly as it ran on 2026-10-24,
