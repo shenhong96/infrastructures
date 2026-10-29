@@ -28,7 +28,6 @@ x-wg-port: &exposed_port
     - 8686:8686 #lidarr
     - 6767:6767 #bazarr
     - 6969:6969 #whisparr
-    - 8082:80 #nginx (vuetorrent)
 
 x-monitoring: &loki
   labels:
@@ -65,16 +64,6 @@ services:
       - /mnt/data/downloads/incomplete:/incomplete-downloads #optional
         #network_mode: "service:vpn"
     <<: [*local, *loki]
-
-  nginx:
-    image: nginx:1.25.3
-    container_name: nginx
-    volumes:
-      - ./nginx:/etc/nginx/conf.d
-      - ./qbittorrent/config/VueTorrent:/opt/vuetorrent
-    network_mode: "service:vpn"
-    restart: always
-    <<: *loki
 
   qbittorrent:
     image: ghcr.io/linuxserver/qbittorrent:libtorrentv1-release-5.1.4_v1.2.20-ls112
