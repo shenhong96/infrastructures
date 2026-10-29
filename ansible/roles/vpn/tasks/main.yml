@@ -18,6 +18,7 @@
   loop:
     - /root/wireguard
     - /root/wireguard/config
+    - /root/wireguard/config/wg_confs
 
 - name: Compose file of the stack (Komodo project root)
   ansible.builtin.copy:
@@ -27,13 +28,14 @@
     group: root
     mode: "0600"
 
-# Keys and tunnel address from host_vars/vpn/secrets.sops.yml. 0644 and 1000:1000 as found.
+# Keys and tunnel address from host_vars/vpn/secrets.sops.yml. 1000:1000 as found; 0600 since the
+# image warns about a world-readable one. Images since 2022 read wg_confs/, not /config/wg0.conf.
 - name: WireGuard config of the vpn container
   ansible.builtin.template:
     src: wg0.conf.j2
-    dest: /root/wireguard/config/wg0.conf
+    dest: /root/wireguard/config/wg_confs/wg0.conf
     owner: "1000"
     group: "1000"
-    mode: "0644"
+    mode: "0600"
   no_log: true
   diff: false
