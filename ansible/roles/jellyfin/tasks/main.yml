@@ -19,14 +19,15 @@
     update_cache: true
   when: jellyfin_apt_source is changed and not ansible_check_mode
 
-- name: Jellyfin packages at the running versions
+- name: Jellyfin packages at the pinned versions
   ansible.builtin.apt:
     name:
-      - jellyfin=12.1+ubu2204
-      - jellyfin-server=12.1+ubu2204
-      - jellyfin-web=12.1+ubu2204
+      - jellyfin=12.4+ubu2204
+      - jellyfin-server=12.4+ubu2204
+      - jellyfin-web=12.4+ubu2204
       - jellyfin-ffmpeg8=8.1.2-5-jammy
     state: present
+    allow_change_held_packages: true # the pin above is the deliberate upgrade
 
 - name: Hold Jellyfin packages
   ansible.builtin.dpkg_selections:
