@@ -1,0 +1,5 @@
+---
+# pve:
+#   url: https://proxmox.host.or.ip:8006
+#   token: CHANGE_ME
+#   secret: CHANGE_ME

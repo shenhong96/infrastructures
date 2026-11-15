@@ -1,8 +1,8 @@
 # Captured 2026-10-01 from CT 111 /opt/aio/docker-compose.yml (project aio; app data stays under /opt/aio on the machine).
 # Config that used to sit loose on the machine now comes from this folder: plain files bind-mounted as they are, and
-# the ones that name things or hold keys (homepage, smokeping Targets and ssmtp.conf) as encrypted *.sops.yaml blobs that
-# komodo-decrypt-files turns into ./.decrypted/... before every deploy. The BLOBS_*_SHA labels (from files.env) make a
-# changed blob recreate its container.
+# the ones that hold keys (smokeping Targets and ssmtp.conf) as encrypted *.sops.yaml blobs that komodo-decrypt-files
+# turns into ./.decrypted/... before every deploy. The BLOBS_*_SHA labels (from files.env) make a changed blob recreate
+# its container. Homepage's config is plain; its keys come from secrets.sops.env as {{HOMEPAGE_VAR_*}} placeholders.
 # Relative paths made absolute, inline secrets moved to secrets.sops.env, Portainer's agent removed.
 ---
 x-lsio: &lsio
@@ -20,17 +20,29 @@ services:
       - PUID=1000
       - PGID=117
       - HOMEPAGE_ALLOWED_HOSTS=home.ahlooii.com,192.168.9.151:7777
+      - HOMEPAGE_VAR_PROXMOX_USERNAME=${HOMEPAGE_VAR_PROXMOX_USERNAME}
+      - HOMEPAGE_VAR_PROXMOX_PASSWORD=${HOMEPAGE_VAR_PROXMOX_PASSWORD}
+      - HOMEPAGE_VAR_QBITTORRENT_USERNAME=${HOMEPAGE_VAR_QBITTORRENT_USERNAME}
+      - HOMEPAGE_VAR_QBITTORRENT_PASSWORD=${HOMEPAGE_VAR_QBITTORRENT_PASSWORD}
+      - HOMEPAGE_VAR_PROWLARR_KEY=${HOMEPAGE_VAR_PROWLARR_KEY}
+      - HOMEPAGE_VAR_RADARR_KEY=${HOMEPAGE_VAR_RADARR_KEY}
+      - HOMEPAGE_VAR_SONARR_KEY=${HOMEPAGE_VAR_SONARR_KEY}
+      - HOMEPAGE_VAR_READARR_KEY=${HOMEPAGE_VAR_READARR_KEY}
+      - HOMEPAGE_VAR_BAZARR_KEY=${HOMEPAGE_VAR_BAZARR_KEY}
+      - HOMEPAGE_VAR_JELLYFIN_KEY=${HOMEPAGE_VAR_JELLYFIN_KEY}
+      - HOMEPAGE_VAR_HEALTHCHECKS_KEY=${HOMEPAGE_VAR_HEALTHCHECKS_KEY}
+      - HOMEPAGE_VAR_TAILNET_HOST_1=${HOMEPAGE_VAR_TAILNET_HOST_1}
+      - HOMEPAGE_VAR_TAILNET_HOST_2=${HOMEPAGE_VAR_TAILNET_HOST_2}
+      - HOMEPAGE_VAR_MINER_WALLET=${HOMEPAGE_VAR_MINER_WALLET}
     ports:
       - 7777:3000
-    labels:
-      homelab.config-rev: "${BLOBS_HOMEPAGE_SHA}"
     volumes:
-      - ./.decrypted/homepage/bookmarks.yaml:/app/config/bookmarks.yaml:ro
-      - ./.decrypted/homepage/docker.yaml:/app/config/docker.yaml:ro
-      - ./.decrypted/homepage/proxmox.yaml:/app/config/proxmox.yaml:ro
-      - ./.decrypted/homepage/services.yaml:/app/config/services.yaml:ro
-      - ./.decrypted/homepage/settings.yaml:/app/config/settings.yaml:ro
-      - ./.decrypted/homepage/widgets.yaml:/app/config/widgets.yaml:ro
+      - ./homepage/bookmarks.yaml:/app/config/bookmarks.yaml:ro
+      - ./homepage/docker.yaml:/app/config/docker.yaml:ro
+      - ./homepage/proxmox.yaml:/app/config/proxmox.yaml:ro
+      - ./homepage/services.yaml:/app/config/services.yaml:ro
+      - ./homepage/settings.yaml:/app/config/settings.yaml:ro
+      - ./homepage/widgets.yaml:/app/config/widgets.yaml:ro
       - ./homepage/custom.css:/app/config/custom.css:ro
       - ./homepage/custom.js:/app/config/custom.js:ro
       - ./homepage/kubernetes.yaml:/app/config/kubernetes.yaml:ro

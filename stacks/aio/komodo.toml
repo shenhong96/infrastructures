@@ -18,25 +18,23 @@ file_paths = ["compose.yaml"]
 # Secrets: decrypted into secrets.env next to the compose file just before every deploy (the helper
 # roles/periphery installs; a failed decrypt stops the deploy). The encrypted files are tracked,
 # so a secret-only change counts as a changed stack; the plaintext is never tracked or stored.
-# The *.sops.yaml blobs (homepage, smokeping Targets and ssmtp.conf) are whole config files kept opaque in the public
+# The *.sops.yaml blobs (smokeping Targets and ssmtp.conf) are whole config files kept opaque in the public
 # repo: komodo-decrypt-files puts them in .decrypted/ (root-only folder) and writes files.env with a hash per folder,
 # which the compose file uses as a label so a changed blob recreates just that container.
 pre_deploy.command = '''
 /usr/local/sbin/komodo-decrypt-env secrets.sops.env
 /usr/local/sbin/komodo-decrypt-files -m 0644 \
-  homepage/bookmarks.sops.yaml homepage/docker.sops.yaml homepage/proxmox.sops.yaml \
-  homepage/services.sops.yaml homepage/settings.sops.yaml homepage/widgets.sops.yaml \
   smokeping/Targets.sops.yaml smokeping/ssmtp.conf.sops.yaml
 '''
 # Plain files read at start: a change restarts that service. Blobs: a redeploy of that service (decrypt, then the label recreates it).
 config_files = [
   { path = "secrets.sops.env", requires = "Redeploy" },
-  { path = "homepage/bookmarks.sops.yaml", services = ["homepage"], requires = "Redeploy" },
-  { path = "homepage/docker.sops.yaml", services = ["homepage"], requires = "Redeploy" },
-  { path = "homepage/proxmox.sops.yaml", services = ["homepage"], requires = "Redeploy" },
-  { path = "homepage/services.sops.yaml", services = ["homepage"], requires = "Redeploy" },
-  { path = "homepage/settings.sops.yaml", services = ["homepage"], requires = "Redeploy" },
-  { path = "homepage/widgets.sops.yaml", services = ["homepage"], requires = "Redeploy" },
+  { path = "homepage/bookmarks.yaml", services = ["homepage"], requires = "Restart" },
+  { path = "homepage/docker.yaml", services = ["homepage"], requires = "Restart" },
+  { path = "homepage/proxmox.yaml", services = ["homepage"], requires = "Restart" },
+  { path = "homepage/services.yaml", services = ["homepage"], requires = "Restart" },
+  { path = "homepage/settings.yaml", services = ["homepage"], requires = "Restart" },
+  { path = "homepage/widgets.yaml", services = ["homepage"], requires = "Restart" },
   { path = "homepage/custom.css", services = ["homepage"], requires = "Restart" },
   { path = "homepage/custom.js", services = ["homepage"], requires = "Restart" },
   { path = "homepage/kubernetes.yaml", services = ["homepage"], requires = "Restart" },

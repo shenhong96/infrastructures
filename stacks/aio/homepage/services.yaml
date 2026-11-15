@@ -1,0 +1,448 @@
+---
+- Network:
+    - Proxmox:
+        icon: proxmox.png
+        href: https://192.168.9.152:8006/
+        description: Hypervisor node 1
+        siteMonitor: https://192.168.9.152:8006
+        widget:
+          type: proxmox
+          url: https://192.168.9.152:8006
+          username: "{{HOMEPAGE_VAR_PROXMOX_USERNAME}}"
+          password: "{{HOMEPAGE_VAR_PROXMOX_PASSWORD}}"
+    - Proxmox-2:
+        icon: proxmox.png
+        href: https://192.168.9.52:8006/
+        description: Hypervisor node 2
+        siteMonitor: https://192.168.9.52:8006
+    - OPNsense:
+        icon: opnsense.png
+        href: https://router.ahlooii.com
+        description: Firewall / router
+        siteMonitor: https://router.ahlooii.com
+    - Adguard Home:
+        icon: adguard-home.png
+        href: https://adguard.ahlooii.com
+        description: DNS ad blocking
+        siteMonitor: https://adguard.ahlooii.com
+        server: my-docker
+        container: adguard
+        # widget:
+        #   type: adguard
+        #   url: https://adguard.ahlooii.com
+        #   username: CHANGE_ME
+        #   password: CHANGE_ME
+    - Omada Controller:
+        icon: omada.png
+        href: http://192.168.9.3
+        description: TP-Link network controller
+        siteMonitor: http://192.168.9.3
+    - Nginx Proxy Manager:
+        icon: nginx-proxy-manager.png
+        href: http://192.168.9.155:81
+        description: Reverse proxy management
+        siteMonitor: http://192.168.9.155:81
+        # widget:
+        #   type: npm
+        #   url: http://192.168.9.155:81
+        #   username: CHANGE_ME
+        #   password: CHANGE_ME
+    - Traefik:
+        icon: traefik.png
+        href: http://192.168.9.151:8080
+        description: Reverse proxy & load balancer
+        siteMonitor: http://192.168.9.151:8080
+        server: my-docker
+        container: traefik-traefik-1
+        widget:
+          type: traefik
+          url: http://192.168.9.151:8080
+
+- Infrastructure:
+    - Home Assistant:
+        icon: home-assistant.png
+        href: http://192.168.9.148:8123
+        description: Home automation
+        siteMonitor: http://192.168.9.148:8123
+        # widget:
+        #   type: homeassistant
+        #   url: http://192.168.9.148:8123
+        #   key: CHANGE_ME
+    - Pocket-ID:
+        icon: pocket-id.png
+        href: http://192.168.9.151:1411
+        description: OIDC identity provider
+        siteMonitor: http://192.168.9.151:1411
+        server: my-docker
+        container: pocket-id
+    - Syncthing:
+        icon: syncthing.png
+        href: http://192.168.9.151:8384
+        description: File sync server
+        siteMonitor: http://192.168.9.151:8384
+        server: my-docker
+        container: syncthing
+        # widget:
+        #   type: syncthing
+        #   url: http://192.168.9.151:8384
+        #   key: CHANGE_ME
+    - Komodo:
+        icon: komodo.png
+        href: http://192.168.9.151:9120
+        description: Docker stack deploys (GitOps)
+        siteMonitor: http://192.168.9.151:9120
+        server: my-docker
+        container: komodo-core
+
+- Torrent:
+    - qBittorrent:
+        icon: qbittorrent.png
+        href: http://192.168.9.156:8080
+        description: Torrent client
+        siteMonitor: http://192.168.9.156:8080
+        widget:
+          type: qbittorrent
+          url: http://192.168.9.156:8080
+          username: "{{HOMEPAGE_VAR_QBITTORRENT_USERNAME}}"
+          password: "{{HOMEPAGE_VAR_QBITTORRENT_PASSWORD}}"
+    - Qui:
+        icon: qui.png
+        href: http://192.168.9.156:8081
+        description: qBittorrent manager
+        siteMonitor: http://192.168.9.156:8081
+
+    - SABnzbd:
+        icon: sabnzbd.png
+        href: http://192.168.9.156:8085
+        description: Usenet downloader
+        siteMonitor: http://192.168.9.156:8085
+        # widget:
+        #   type: sabnzbd
+        #   url: http://192.168.9.156:8085
+        #   key: CHANGE_ME
+    - Prowlarr:
+        icon: prowlarr.png
+        href: http://192.168.9.156:9696
+        description: Indexer manager
+        siteMonitor: http://192.168.9.156:9696
+        widget:
+          type: prowlarr
+          url: http://192.168.9.156:9696
+          key: "{{HOMEPAGE_VAR_PROWLARR_KEY}}"
+    - Jackett:
+        icon: jackett.png
+        href: http://192.168.9.156:9117
+        description: Torrent indexer proxy
+        siteMonitor: http://192.168.9.156:9117
+    - Radarr:
+        icon: radarr.png
+        href: http://192.168.9.156:7878
+        description: Movie auto-grabber
+        siteMonitor: http://192.168.9.156:7878
+        widget:
+          type: radarr
+          url: http://192.168.9.156:7878
+          key: "{{HOMEPAGE_VAR_RADARR_KEY}}"
+    - Sonarr:
+        icon: sonarr.png
+        href: http://192.168.9.156:8989
+        description: TV show auto-grabber
+        siteMonitor: http://192.168.9.156:8989
+        widget:
+          type: sonarr
+          url: http://192.168.9.156:8989
+          key: "{{HOMEPAGE_VAR_SONARR_KEY}}"
+    - Lidarr:
+        icon: lidarr.png
+        href: http://192.168.9.156:8686
+        description: Music auto-grabber
+        siteMonitor: http://192.168.9.156:8686
+        # widget:
+        #   type: lidarr
+        #   url: http://192.168.9.156:8686
+        #   key: CHANGE_ME
+    - Readarr:
+        icon: readarr.png
+        href: http://192.168.9.156:8787
+        description: eBook auto-grabber
+        siteMonitor: http://192.168.9.156:8787
+        widget:
+          type: readarr
+          url: http://192.168.9.156:8787
+          key: "{{HOMEPAGE_VAR_READARR_KEY}}"
+    - Bazarr:
+        icon: bazarr.png
+        href: http://192.168.9.156:6767
+        description: Subtitle auto-grabber
+        siteMonitor: http://192.168.9.156:6767
+        widget:
+          type: bazarr
+          url: http://192.168.9.156:6767
+          key: "{{HOMEPAGE_VAR_BAZARR_KEY}}"
+    - Whisparr:
+        icon: whisparr.png
+        href: http://192.168.9.156:6969
+        description: Adult content auto-grabber
+        siteMonitor: http://192.168.9.156:6969
+    - iYuu:
+        icon: https://iyuu.cn/static/logo/logo_257.png
+        href: http://192.168.9.156:8780
+        description: Torrent cross-seeding
+        siteMonitor: http://192.168.9.156:8780
+
+- Media:
+    - Jellyfin:
+        icon: jellyfin.png
+        href: http://192.168.9.154:8096
+        description: Media streaming server
+        siteMonitor: http://192.168.9.154:8096
+        widget:
+          type: jellyfin
+          url: http://192.168.9.154:8096
+          key: "{{HOMEPAGE_VAR_JELLYFIN_KEY}}"
+          enableBlocks: true
+          enableNowPlaying: true
+    - Jellyseerr:
+        icon: jellyseerr.png
+        href: http://192.168.9.156:5055
+        description: Media request management
+        siteMonitor: http://192.168.9.156:5055
+        # widget:
+        #   type: jellyseerr
+        #   url: http://192.168.9.156:5055
+        #   key: CHANGE_ME
+    - Audiobookshelf:
+        icon: audiobookshelf.png
+        href: http://192.168.9.151:13378
+        description: Audiobook & podcast server
+        siteMonitor: http://192.168.9.151:13378
+        server: my-docker
+        container: audiobookshelf
+    - Audiobook Sessions:
+        icon: audiobookshelf.png
+        href: http://192.168.9.151:7778/
+        description: Latest listening sessions
+        server: my-docker
+        container: abs-session-api
+        widget:
+          type: iframe
+          src: http://192.168.9.151:7778/widget
+          classes: h-20 sm:h-20 md:h-20 lg:h-20 xl:h-20 2xl:h-20
+          allowScrolling: "yes"
+          refreshInterval: 30000
+    - Calibre:
+        icon: calibre.png
+        href: http://192.168.9.151:8082
+        description: Ebook library manager
+        siteMonitor: http://192.168.9.151:8082
+        server: my-docker
+        container: calibre
+    - Calibre-Web:
+        icon: calibre-web.png
+        href: http://192.168.9.151:8083
+        description: Calibre web frontend
+        siteMonitor: http://192.168.9.151:8083
+        server: my-docker
+        container: calibre-web
+
+- Photos:
+    - Photoprism:
+        icon: photoprism.png
+        href: http://192.168.9.151:2342
+        description: AI-powered photo management
+        siteMonitor: http://192.168.9.151:2342
+        server: my-docker
+        container: photoprism_wife
+    - Photoview:
+        icon: photoview.png
+        href: http://192.168.9.151:8009
+        description: Photos archive viewer
+        siteMonitor: http://192.168.9.151:8009
+        server: my-docker
+        container: photoview
+    - Immich:
+        icon: immich.png
+        href: http://192.168.9.151:2283
+        description: Self-hosted photo & video backup
+        siteMonitor: http://192.168.9.151:2283
+        server: my-docker
+        container: immich_server
+
+- Monitoring:
+    - Uptime Kuma:
+        icon: uptime-kuma.png
+        href: https://uptime.ahlooii.com
+        description: Service uptime monitoring
+        siteMonitor: https://uptime.ahlooii.com
+        server: my-docker
+        container: uptime-kuma
+        widget:
+          type: uptimekuma
+          url: https://uptime.ahlooii.com
+          slug: default
+    - HealthChecks:
+        icon: healthchecks.png
+        href: http://192.168.9.151:8078
+        description: Cron job monitoring
+        siteMonitor: http://192.168.9.151:8078
+        server: my-docker
+        container: healthchecks
+        widget:
+          type: healthchecks
+          url: http://192.168.9.151:8078
+          key: "{{HOMEPAGE_VAR_HEALTHCHECKS_KEY}}"
+    - Gotify:
+        icon: gotify.png
+        href: http://192.168.9.151:8087
+        description: Push notification server
+        siteMonitor: http://192.168.9.151:8087
+        server: my-docker
+        container: gotify
+    - Grafana Main:
+        icon: grafana.png
+        href: http://192.168.9.152:3000
+        description: Main Grafana instance
+        siteMonitor: http://192.168.9.152:3000
+        server: my-docker
+        container: aio-grafana-1
+        # widget:
+        #   type: grafana
+        #   url: http://192.168.9.152:3000
+        #   username: admin
+        #   password: CHANGE_ME
+    - Grafana Speedtest:
+        icon: grafana.png
+        href: http://192.168.9.151:3030
+        description: Speedtest results dashboard
+        siteMonitor: http://192.168.9.151:3030
+    - InfluxDB:
+        icon: influxdb.png
+        href: http://192.168.9.151:8086
+        description: Time-series database for Grafana
+        siteMonitor: http://192.168.9.151:8086
+        server: my-docker
+        container: aio-influxdb-1
+    - Scrutiny:
+        icon: scrutiny.png
+        href: http://192.168.9.152:8080
+        description: Disk S.M.A.R.T. monitoring
+        siteMonitor: http://192.168.9.152:8080
+        widget:
+          type: scrutiny
+          url: http://192.168.9.152:8080
+    - SmokePing:
+        icon: smokeping.png
+        href: http://192.168.9.151:81
+        description: Network latency monitoring
+        siteMonitor: http://192.168.9.151:81
+        server: my-docker
+        container: smokeping
+    - Netdata OPNsense:
+        icon: netdata.png
+        href: http://192.168.9.2:19999
+        description: OPNsense system monitoring
+        siteMonitor: http://192.168.9.2:19999
+        widget:
+          type: netdata
+          url: http://192.168.9.2:19999
+
+- DevOps:
+    - Gitlab:
+        icon: gitlab.png
+        href: https://gitlab.ahlooii.com
+        description: In-house Git & CI/CD
+        siteMonitor: https://gitlab.ahlooii.com
+    - Gitea:
+        icon: gitea.png
+        href: http://192.168.9.152:3001
+        description: Self-hosted Git service
+        siteMonitor: http://192.168.9.152:3001
+        # widget:
+        #   type: gitea
+        #   url: http://192.168.9.152:3001
+        #   key: CHANGE_ME
+    - Code-Server:
+        icon: code-server.png
+        href: http://192.168.9.151:8443
+        description: VS Code in the browser
+        siteMonitor: http://192.168.9.151:8443
+        server: my-docker
+        container: code-server
+    - Code-Server (Homepage):
+        icon: code-server.png
+        href: http://192.168.9.151:8444
+        description: VS Code for Homepage config
+        siteMonitor: http://192.168.9.151:8444
+        server: my-docker
+        container: code-server-homepage
+    - OliveTin:
+        icon: olivetin.png
+        href: http://192.168.9.151:1337
+        description: Self-hosted action runner
+        siteMonitor: http://192.168.9.151:1337
+        server: my-docker
+        container: olivetin
+    - Hermes Dashboard:
+        icon: mdi-robot
+        href: http://{{HOMEPAGE_VAR_TAILNET_HOST_1}}:9119/sessions
+        description: Hermes Agent Sessions
+        siteMonitor: http://{{HOMEPAGE_VAR_TAILNET_HOST_1}}:9119/sessions
+    - Hermes Desktop:
+        icon: mdi-monitor
+        href: https://{{HOMEPAGE_VAR_TAILNET_HOST_2}}:8443/
+        description: Hermes Desktop
+        siteMonitor: https://{{HOMEPAGE_VAR_TAILNET_HOST_2}}:8443/
+
+- Productivity:
+    - Nextcloud:
+        icon: nextcloud.png
+        href: https://nextcloud.ahlooii.com
+        description: File sync & collaboration
+        siteMonitor: https://nextcloud.ahlooii.com
+        # widget:
+        #   type: nextcloud
+        #   url: https://nextcloud.ahlooii.com
+        #   username: CHANGE_ME
+        #   password: CHANGE_ME
+    - Firefly III:
+        icon: firefly-iii.png
+        href: http://192.168.9.151:8096
+        description: Personal finance manager
+        siteMonitor: http://192.168.9.151:8096
+        server: my-docker
+        container: firefly_firefly-app_1
+    - Wallabag:
+        icon: wallabag.png
+        href: http://192.168.9.151:8765
+        description: Read-it-later service
+        siteMonitor: http://192.168.9.151:8765
+        server: my-docker
+        container: wallabag
+    - Librespeed:
+        icon: librespeed.png
+        href: http://192.168.9.151:82
+        description: Self-hosted speedtest
+        siteMonitor: http://192.168.9.151:82
+        server: my-docker
+        container: librespeed
+
+- Tools:
+    - Firefox:
+        icon: firefox.png
+        href: http://192.168.9.151:3309
+        description: Firefox Docker browser
+        siteMonitor: http://192.168.9.151:3309
+        server: my-docker
+        container: firefox
+    - Webtop:
+        icon: webtop.png
+        href: http://192.168.9.151:1596
+        description: Ubuntu desktop in browser
+        siteMonitor: http://192.168.9.151:1596
+        server: my-docker
+        container: webtop
+    - SillyTavern:
+        icon: sillytavern.png
+        href: http://{{HOMEPAGE_VAR_TAILNET_HOST_1}}:8000
+        description: SillyTavern on Oracle (Tailscale)
+        siteMonitor: http://{{HOMEPAGE_VAR_TAILNET_HOST_1}}:8000

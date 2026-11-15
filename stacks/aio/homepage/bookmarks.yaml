@@ -1,0 +1,29 @@
+---
+- Quick Links:
+    - PVE:
+        - abbr: PV
+          href: https://192.168.9.152:8006/
+    - PVE-2:
+        - abbr: P2
+          href: https://192.168.9.52:8006/
+    - Firewall:
+        - abbr: FW
+          href: https://router.ahlooii.com
+    - GitHub:
+        - abbr: GH
+          href: https://github.com/shenhong96
+          icon: github.png
+    - GitLab:
+        - abbr: GL
+          href: https://gitlab.ahlooii.com
+          icon: gitlab.png
+- External Links:
+    - 2Miners:
+        - abbr: 2M
+          href: https://eth.2miners.com/account/{{HOMEPAGE_VAR_MINER_WALLET}}
+    - BlackBlaze:
+        - abbr: B2
+          href: https://secure.backblaze.com/b2_buckets.htm
+    - Oracle Cloud:
+        - abbr: OC
+          href: https://www.oracle.com/sg/cloud/sign-in.html
