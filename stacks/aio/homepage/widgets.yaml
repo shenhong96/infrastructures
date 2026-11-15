@@ -1,0 +1,32 @@
+---
+- greeting:
+    text_size: 2xl
+    text: "Welcome back 👾"
+
+- datetime:
+    text_size: xl
+    format:
+      dateStyle: long
+      timeStyle: short
+      hourCycle: h23
+
+- search:
+    provider: google
+    target: _blank
+
+- resources:
+    cpu: true
+    memory: true
+    disk: /
+    expanded: true
+    label: root
+
+- resources:
+    disk: /mnt/appdata
+    expanded: true
+    label: storage (54TB)
+
+- resources:
+    disk: /mnt/ssd
+    expanded: true
+    label: zfs-ssd
