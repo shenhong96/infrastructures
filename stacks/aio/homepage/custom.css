@@ -1,0 +1,7 @@
+/* Keep the header widgets row (search bar) pinned while scrolling */
+#information-widgets {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  backdrop-filter: blur(8px);
+}
