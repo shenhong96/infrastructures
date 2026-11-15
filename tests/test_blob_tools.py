@@ -121,17 +121,25 @@ class PreCommitHook(unittest.TestCase):
         self.assertEqual((out.returncode, out.stderr), (0, ""))
 
     def test_plaintext_twins_are_refused(self):
-        names = ["stacks/aio/homepage/services.yaml", "stacks/aio/homepage/settings.yml", "stacks/aio/homepage/services.yaml.bak-1",
+        names = ["stacks/aio/homepage/services.yaml.bak-1",
                  "stacks/aio/smokeping/Targets", "stacks/aio/smokeping/ssmtp.conf", "stacks/aio/.decrypted/homepage/docker.yaml"]
         out = self.staged({n: "x: 1\n" for n in names})
         self.assertEqual(out.returncode, 1)
         for n in names:
             self.assertIn(n, out.stderr)
 
+    def test_homepage_keys_must_be_placeholders(self):
+        ok = "- A:\n    - B:\n        widget:\n          key: \"{{HOMEPAGE_VAR_B_KEY}}\"\n        #   key: CHANGE_ME\n"
+        self.assertEqual(self.staged({"stacks/aio/homepage/services.yaml": ok}).returncode, 0)
+        for line in ("          key: abc123", "          password: hunter2", "        #   key: abc123"):
+            out = self.staged({"stacks/aio/homepage/services.yaml": ok + line + "\n"})
+            self.assertEqual(out.returncode, 1, line)
+            self.assertIn("placeholder", out.stderr)
+
     def test_a_blob_with_a_plaintext_value_is_refused(self):
-        good = next(p for p in (ROOT / "stacks").rglob("*.sops.yaml") if p.parent.name == "homepage").read_text()
+        good = next(p for p in (ROOT / "stacks").rglob("*.sops.yaml") if p.parent.name == "smokeping").read_text()
         bad = good.replace("data: ENC[", "data: hello ENC[", 1)
-        out = self.staged({"stacks/aio/homepage/services.sops.yaml": bad})
+        out = self.staged({"stacks/aio/smokeping/Targets.sops.yaml": bad})
         self.assertEqual(out.returncode, 1)
 
 

@@ -19,8 +19,8 @@ SECRETISH = re.compile(r"(pass|secret|token|key|hash|auth|cookie|dsn|salt|webhoo
 HARMLESS = re.compile(r"^(|\$\{[A-Z0-9_]+\}|true|false|yes|no|\d+|/\S*|https?://[^@\s]*|[a-z0-9.-]+\.[a-z]{2,}|\w+@example\.com)$", re.I)
 
 
-# Config that names things or holds keys: committed only as an opaque *.sops.yaml blob (same rule as .githooks/pre-commit).
-PLAINTEXT_CONFIG = re.compile(r"(^|/)(\.decrypted/|homepage/(bookmarks|docker|proxmox|services|settings|widgets)\.ya?ml(\..*)?$|homepage/[^/]*\.bak|smokeping/(Targets|ssmtp\.conf)$)")
+# Config that holds keys: committed only as an opaque *.sops.yaml blob (same rule as .githooks/pre-commit).
+PLAINTEXT_CONFIG = re.compile(r"(^|/)(\.decrypted/|homepage/[^/]*\.bak|smokeping/(Targets|ssmtp\.conf)$)")
 
 
 def komodo_command(command):
