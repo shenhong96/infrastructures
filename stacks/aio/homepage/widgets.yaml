@@ -1,4 +1,8 @@
 ---
+- search:
+    provider: google
+    target: _blank
+
 - greeting:
     text_size: 2xl
     text: "Welcome back 👾"
@@ -9,10 +13,6 @@
       dateStyle: long
       timeStyle: short
       hourCycle: h23
-
-- search:
-    provider: google
-    target: _blank
 
 - resources:
     cpu: true

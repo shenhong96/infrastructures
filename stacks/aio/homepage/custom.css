@@ -1,4 +1,8 @@
-/* Keep the header widgets row (search bar) pinned while scrolling */
+/* Keep the header widgets row (search bar) pinned while scrolling.
+   The page container is h-full (one screen), which would end the sticky after one screen; let it grow. */
+#inner_wrapper > .container {
+  height: auto;
+}
 #information-widgets {
   position: sticky;
   top: 0;
