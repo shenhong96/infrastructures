@@ -3,10 +3,10 @@
    PostUp/PreDown: routes to the home networks past the tunnel, then the IPv4 kill-switch
    (REJECT anything not leaving through the tunnel). Kept exactly as it ran on 2026-10-24,
    including PreDown's "HOMENET3ET=" (so $HOMENET and $DROUTE are unset there).
-   IPv6 later: add the v6 address to vpn_wg_address, ::/0 to AllowedIPs and an ip6tables
-   copy of the four iptables rules to PostUp and PreDown. #}
+   IPv4 only: the v6 part of vpn_wg_address is dropped and AllowedIPs has no ::/0. The
+   ip6tables rule stays, so v6 is rejected rather than leaking outside the tunnel. #}
 [Interface]
-Address = {{ vpn_wg_address }}
+Address = {{ vpn_wg_address.split(',')[0] | trim }}
 PrivateKey = {{ vpn_wg_private_key }}
 MTU = 1320
 DNS = 10.128.0.1
@@ -21,5 +21,5 @@ PreDown = ip6tables -D OUTPUT ! -o %i -m mark ! --mark $(wg show %i fwmark) -m a
 PublicKey = {{ vpn_wg_peer_public_key }}
 PresharedKey = {{ vpn_wg_preshared_key }}
 Endpoint = jp3.vpn.airdns.org:1637
-AllowedIPs = 0.0.0.0/0, ::/0
+AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 15
