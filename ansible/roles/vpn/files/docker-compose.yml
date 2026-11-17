@@ -85,7 +85,7 @@ services:
 
   # UBits only, outside the tunnel (home IP). Finished torrents move to qbittorrent above for
   # seeding: /root/scripts/qbit-ubits-handoff.sh from /etc/cron.d. Same /downloads mount, so the
-  # save paths match. WebUI 8090, torrent port 6882 (forward it for connectability).
+  # save paths match. WebUI 8090, torrent port 46882 (forward it; 6881-6889 are tracker-blacklisted).
   qbittorrent-ubits:
     image: ghcr.io/linuxserver/qbittorrent:libtorrentv1-release-5.1.4_v1.2.20-ls112
     container_name: qbittorrent-ubits
@@ -95,14 +95,14 @@ services:
       - TZ=Asia/Kuala_Lumpur
       - UMASK=002
       - WEBUI_PORT=8090
-      - TORRENTING_PORT=6882
+      - TORRENTING_PORT=46882
     volumes:
       - ./qbittorrent-ubits/config:/config
       - /mnt/data/downloads:/downloads
     ports:
       - 8090:8090
-      - 6882:6882
-      - 6882:6882/udp
+      - 46882:46882
+      - 46882:46882/udp
     <<: [*internalbase, *loki]
 
   prowlarr:
