@@ -83,6 +83,28 @@ services:
     restart: always
     <<: *loki
 
+  # UBits only, outside the tunnel (home IP). Finished torrents move to qbittorrent above for
+  # seeding: /root/scripts/qbit-ubits-handoff.sh from /etc/cron.d. Same /downloads mount, so the
+  # save paths match. WebUI 8090, torrent port 6882 (forward it for connectability).
+  qbittorrent-ubits:
+    image: ghcr.io/linuxserver/qbittorrent:libtorrentv1-release-5.1.4_v1.2.20-ls112
+    container_name: qbittorrent-ubits
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Asia/Kuala_Lumpur
+      - UMASK=002
+      - WEBUI_PORT=8090
+      - TORRENTING_PORT=6882
+    volumes:
+      - ./qbittorrent-ubits/config:/config
+      - /mnt/data/downloads:/downloads
+    ports:
+      - 8090:8090
+      - 6882:6882
+      - 6882:6882/udp
+    <<: [*internalbase, *loki]
+
   prowlarr:
     image: ghcr.io/linuxserver/prowlarr:2.7.0.5723-ls166
     container_name: prowlarr
