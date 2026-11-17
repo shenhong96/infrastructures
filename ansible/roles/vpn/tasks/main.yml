@@ -28,6 +28,24 @@
     group: root
     mode: "0600"
 
+# Moves finished UBits torrents from qbittorrent-ubits to qbittorrent (see the compose file).
+- name: UBits handoff script
+  ansible.builtin.copy:
+    src: qbit-ubits-handoff.sh
+    dest: /root/scripts/qbit-ubits-handoff.sh
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: UBits handoff cron
+  ansible.builtin.copy:
+    dest: /etc/cron.d/qbit-ubits-handoff
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      */10 * * * * root /root/scripts/qbit-ubits-handoff.sh >> /var/log/qbit-ubits-handoff.log 2>&1
+
 # Keys and tunnel address from host_vars/vpn/secrets.sops.yml. 1000:1000 as found; 0600 since the
 # image warns about a world-readable one. Images since 2022 read wg_confs/, not /config/wg0.conf.
 - name: WireGuard config of the vpn container
