@@ -30,7 +30,6 @@ html.hl-stuck .information-widget-search {
   left: var(--hl-s-left, 1.25rem);
   width: var(--hl-s-width, 24rem);
   z-index: 20;
-  backdrop-filter: blur(8px);
 }
 /* While stuck the search is out of flow, leaving datetime as this row's only
    flex child — margin-left:auto keeps it right; space-between would snap it to
@@ -53,4 +52,37 @@ html.hl-stuck #inner_wrapper {
 html.hl-stuck #background {
   filter: blur(4px);
   transform: scale(1.03);
+}
+/* Soft-edged blur halo: a backdrop-filter on the form itself ends in a hard
+   rectangle (visible blurred-box boundary on scroll). This ::before layer
+   sits 20px outside the form, carries the blur, and is masked with
+   feathered gradients on both axes so the blur dissolves into the page. It
+   also fades in over 0.4s when the bar pins (and out when it unpins), so the
+   blur blends in smoothly. position: relative on the form anchors the pseudo
+   to the FORM — never to an ancestor — so it cannot re-anchor the
+   position:fixed pin; z-index: -1 keeps it behind the input inside the
+   form's stacking context. At rest opacity is 0, so nothing changes in the
+   top-of-page layout. */
+.information-widget-search {
+  position: relative;
+}
+.information-widget-search::before {
+  content: "";
+  position: absolute;
+  inset: -20px;
+  z-index: -1;
+  pointer-events: none; /* halo outsets 20px: never swallow clicks around the bar */
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 60px, #000 calc(100% - 60px), transparent 100%),
+    linear-gradient(to bottom, transparent 0, #000 32px, #000 calc(100% - 32px), transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(to right, transparent 0, #000 60px, #000 calc(100% - 60px), transparent 100%),
+    linear-gradient(to bottom, transparent 0, #000 32px, #000 calc(100% - 32px), transparent 100%);
+  mask-composite: intersect;
+}
+html.hl-stuck .information-widget-search::before {
+  opacity: 1;
 }
