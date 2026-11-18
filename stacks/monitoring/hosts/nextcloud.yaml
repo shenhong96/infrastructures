@@ -5,3 +5,6 @@ services:
       HOST: nextcloud
       HOST_KIND: lxc
       VMID: "112"
+    # A privileged LXC: docker-default AppArmor would block docker.sock for Alloy.
+    security_opt:
+      - apparmor=unconfined

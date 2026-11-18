@@ -26,5 +26,8 @@ services:
       - /sys/fs/cgroup:/sys/fs/cgroup:ro # the containers' usage, for cAdvisor (modules/docker.alloy)
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /run/containerd/containerd.sock:/run/containerd/containerd.sock:ro # cAdvisor's Docker support asks containerd too
+      - /var/lib/docker:/var/lib/docker:ro
       - /opt/monitoring/alloy/data:/var/lib/alloy/data # write-ahead log and log positions
+    # cAdvisor reads each container's layer id under /var/lib/docker/image (overlay2 hosts: apps, gitlab,
+    # nextcloud).
     restart: unless-stopped
