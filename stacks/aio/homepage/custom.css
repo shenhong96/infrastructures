@@ -9,3 +9,13 @@
   z-index: 20;
   backdrop-filter: blur(8px);
 }
+/* gethomepage hard-splits widgets: search + datetime render inside
+   #information-widgets-right, always AFTER greeting/resources, so the search
+   bar wraps to the 2nd row. Force that group onto its own first line so
+   search leads the page (id selectors beat the sm:basis-auto/md:justify-end
+   Tailwind classes on the element). */
+#widgets-wrap > #information-widgets-right {
+  order: -1;
+  flex-basis: 100%;
+  justify-content: space-between;
+}
