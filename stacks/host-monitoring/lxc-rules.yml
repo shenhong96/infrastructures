@@ -1,0 +1,14 @@
+# Per-guest CPU from lxc_* (lxc-cpu/metrics.sh), keyed by host and vmid like the guests' own metrics.
+groups:
+  - name: lxc-cpu
+    rules:
+      # Cores in use.
+      - record: lxc:cpu_usage_cores:rate5m
+        expr: rate(lxc_cpu_usage_seconds_total[5m])
+      # Share of the guest's cores in use, 0 to 1.
+      - record: lxc:cpu_usage_ratio:rate5m
+        expr: lxc:cpu_usage_cores:rate5m / on (host, vmid) lxc_cpu_cores
+      # Share of time some of its tasks waited for a CPU, 0 to 1: the load substitute, since a
+      # guest's loadavg is the host's.
+      - record: lxc:cpu_pressure_ratio:rate5m
+        expr: rate(lxc_pressure_cpu_waiting_seconds_total[5m])

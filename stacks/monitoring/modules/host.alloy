@@ -22,10 +22,11 @@ declare "host_metrics" {
 			mount_points_exclude = "^/(dev|proc|run|sys|var/lib/docker)($|/)"
 		}
 
-		// Docker's bridges and veth pairs, and traffic-shaping devices: the containers' traffic is
-		// counted per container.
+		// Docker's bridges and veth pairs, traffic-shaping devices and tunnels (tailscale, wireguard):
+		// the containers' traffic is counted per container, and a tunnel's is already on eth0, so
+		// counting both would double it.
 		netdev {
-			device_exclude = "^(lo|veth.*|docker\\d+|br-.*|ifb\\d+)$"
+			device_exclude = "^(lo|veth.*|docker\\d+|br-.*|ifb\\d+|tailscale\\d+|wg\\d+)$"
 		}
 	}
 

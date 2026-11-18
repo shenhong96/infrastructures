@@ -18,6 +18,8 @@ file_paths = ["compose.yaml"]
 # Static config bind-mounted from this folder and read at start: a change restarts only that service.
 config_files = [
   { path = "prometheus.yml", services = ["prometheus"], requires = "Restart" },
+  { path = "lxc-rules.yml", services = ["prometheus"], requires = "Restart" },
+  { path = "lxc-cpu/metrics.sh", services = ["lxc-cpu"], requires = "Restart" },
   { path = "loki-config.yaml", services = ["loki"], requires = "Restart" },
   { path = "grafana-datasources/datasources.yaml", services = ["grafana"], requires = "Restart" },
   { path = "grafana-dashboards-provider/homelab.yaml", services = ["grafana"], requires = "Restart" },

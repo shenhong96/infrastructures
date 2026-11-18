@@ -58,6 +58,7 @@ services:
       - 9090:9090
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./lxc-rules.yml:/etc/prometheus/lxc-rules.yml:ro
       - /mnt/storage/appdata/monitoring/prometheus:/prometheus
     command: 
       - '--web.enable-lifecycle'  
@@ -65,6 +66,20 @@ services:
       - '--enable-feature=native-histograms' 
       - '--enable-feature=remote-write-receiver'
       - '--config.file=/etc/prometheus/prometheus.yml' 
+    networks:
+      - monitoring
+
+  # Per-guest CPU for Prometheus, from the host's cgroups (lxc-cpu/metrics.sh runs on each scrape).
+  # A guest can't report its own: lxcfs hands it the host's /proc/stat and loadavg.
+  lxc-cpu:
+    image: busybox:1.38.0@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
+    container_name: lxc-cpu
+    user: "65534:65534"
+    command: ["httpd", "-f", "-p", "9101", "-h", "/www"]
+    volumes:
+      - /sys/fs/cgroup/lxc:/cgroup:ro
+      - ./lxc-cpu/metrics.sh:/www/cgi-bin/metrics:ro
+    restart: unless-stopped
     networks:
       - monitoring
 

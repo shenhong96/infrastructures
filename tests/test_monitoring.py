@@ -2,6 +2,7 @@
 the same way, and the committed dashboard JSON is what tools/build_dashboards.py builds.
 Run from the repo root: python3 -m unittest discover tests"""
 import importlib.util
+import os
 import re
 import tomllib
 import unittest
@@ -79,6 +80,22 @@ class Dashboards(unittest.TestCase):
         for ds in (self.builder.PROM, self.builder.LOKI):
             self.assertIn(f"uid: {ds['uid']}", provisioned)
             self.assertRegex(provisioned, rf"uid: {ds['uid']}\n\s+type: {ds['type']}\n")
+
+
+class LxcCpu(unittest.TestCase):
+    def test_script_names_every_lxc_machine_and_runs_as_a_cgi(self):
+        script = GRAFANA / "lxc-cpu/metrics.sh"
+        self.assertTrue(os.access(script, os.X_OK), "busybox httpd only runs an executable script")
+        named = dict(re.findall(r"(\d+)=([\w-]+)", re.search(r'-v map="([^"]*)"', script.read_text()).group(1)))
+        want = {f["VMID"]: name for p in (AGENT / "hosts").glob("*.yaml")
+                for name, f in [(p.stem, host_file(p))] if f["HOST_KIND"] == "lxc"}
+        self.assertEqual(named, want)
+
+    def test_prometheus_scrapes_it_and_loads_the_rules(self):
+        prom = (GRAFANA / "prometheus.yml").read_text()
+        self.assertIn('metrics_path: /cgi-bin/metrics', prom)
+        self.assertIn('lxc-cpu:9101', prom)
+        self.assertIn('- "lxc-rules.yml"', prom)
 
 
 if __name__ == "__main__":
