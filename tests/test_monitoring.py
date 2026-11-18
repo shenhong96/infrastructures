@@ -101,12 +101,16 @@ class LxcCpu(unittest.TestCase):
 class ReadOnlyProxy(unittest.TestCase):
     def test_proxy_allows_only_get_and_the_listed_paths(self):
         conf = (GRAFANA / "readonly-proxy/default.conf.template").read_text()
-        self.assertIn("if ($request_method != GET) { return 403; }", conf)
-        self.assertNotRegex(conf, r"limit_except|\bPOST\b|\bPUT\b|\bDELETE\b")
+        self.assertIn("if ($method_ok = 0) { return 403; }", conf)
+        self.assertNotRegex(conf, r"limit_except|\bPUT\b|\bDELETE\b|\bPATCH\b")
+        block = re.search(r'map "\$request_method:\$uri" \$method_ok \{(.*?)\}', conf, re.S).group(1)
+        allowed = re.findall(r'^\s*"([^"]+)"\s+1;', block, re.M)
+        self.assertEqual(sorted(allowed), sorted(["~^GET:", "POST:/coverage/watch",
+                                                  "POST:/coverage/unwatch", "POST:/coverage/refresh"]))
         paths = re.findall(r"^\s*location\s+(?:[=~]\s+)?(\S+)", conf, re.M)
         self.assertEqual(sorted(paths), sorted(["/", "/api/v1/query", "/api/v1/query_range", "/api/v1/series",
                                                 "/api/v1/labels", "/api/v1/metadata",
-                                                "^/api/v1/label/[^/]+/values$", "/homepage/"]))
+                                                "^/api/v1/label/[^/]+/values$", "/homepage/", "/coverage/"]))
 
 
 if __name__ == "__main__":

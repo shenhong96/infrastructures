@@ -1,11 +1,21 @@
-# Read-only door to Prometheus for Hermes (Oracle VM). GET only, six query paths, plus an
-# off-by-default route to the homepage. Everything else is 403. Written as JSON for Alloy.
+# Door for Hermes (Oracle VM): GET on six Prometheus query paths, an off-by-default route to
+# the homepage, and the episode-coverage API (GET, plus POST on exactly three paths; its
+# limits live in the API itself). Everything else is 403. Written as JSON for Alloy.
 log_format json escape=json '{"time":"$time_iso8601","remote":"$remote_addr","method":"$request_method","uri":"$request_uri","status":$status,"request_time":$request_time,"upstream_status":"$upstream_status"}';
 
 # HOMEPAGE_ROUTE comes from compose: "on" opens /homepage/*, anything else keeps it shut.
 map "${HOMEPAGE_ROUTE}" $homepage_open {
     default 0;
     "on"    1;
+}
+
+# GET anywhere a location allows it; POST only on these three paths.
+map "$request_method:$uri" $method_ok {
+    default                   0;
+    "~^GET:"                  1;
+    "POST:/coverage/watch"    1;
+    "POST:/coverage/unwatch"  1;
+    "POST:/coverage/refresh"  1;
 }
 
 server {
@@ -17,7 +27,8 @@ server {
     proxy_send_timeout 30s;
     proxy_read_timeout 30s;
 
-    if ($request_method != GET) { return 403; }
+    if ($method_ok = 0) { return 403; }
+    client_max_body_size 4k;
 
     location / { return 403; }
 
@@ -33,5 +44,11 @@ server {
         if ($homepage_open = 0) { return 403; }
         proxy_set_header Host 192.168.9.151:7777;
         proxy_pass http://192.168.9.151:7777/;
+    }
+
+    # Episode-coverage API (CT 118). It only answers requests from this host.
+    location /coverage/ {
+        proxy_read_timeout 120s;
+        proxy_pass http://192.168.9.156:8795;
     }
 }
