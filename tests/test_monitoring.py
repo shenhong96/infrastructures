@@ -98,5 +98,16 @@ class LxcCpu(unittest.TestCase):
         self.assertIn('- "lxc-rules.yml"', prom)
 
 
+class ReadOnlyProxy(unittest.TestCase):
+    def test_proxy_allows_only_get_and_the_listed_paths(self):
+        conf = (GRAFANA / "readonly-proxy/default.conf.template").read_text()
+        self.assertIn("if ($request_method != GET) { return 403; }", conf)
+        self.assertNotRegex(conf, r"limit_except|\bPOST\b|\bPUT\b|\bDELETE\b")
+        paths = re.findall(r"^\s*location\s+(?:[=~]\s+)?(\S+)", conf, re.M)
+        self.assertEqual(sorted(paths), sorted(["/", "/api/v1/query", "/api/v1/query_range", "/api/v1/series",
+                                                "/api/v1/labels", "/api/v1/metadata",
+                                                "^/api/v1/label/[^/]+/values$", "/homepage/"]))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -61,7 +61,6 @@ services:
       - ./lxc-rules.yml:/etc/prometheus/lxc-rules.yml:ro
       - /mnt/storage/appdata/monitoring/prometheus:/prometheus
     command: 
-      - '--web.enable-lifecycle'  
       - '--web.enable-remote-write-receiver'
       - '--enable-feature=native-histograms' 
       - '--enable-feature=remote-write-receiver'
@@ -79,6 +78,38 @@ services:
     volumes:
       - /sys/fs/cgroup/lxc:/cgroup:ro
       - ./lxc-cpu/metrics.sh:/www/cgi-bin/metrics:ro
+    restart: unless-stopped
+    networks:
+      - monitoring
+
+  # Read-only door to Prometheus for Hermes: GET, six query paths, optional /homepage/*. Nothing else.
+  prom-readonly-proxy:
+    image: nginx:1.27.5-alpine
+    container_name: prom-readonly-proxy
+    restart: unless-stopped
+    ports:
+      - "9091:9091"
+    environment:
+      HOMEPAGE_ROUTE: "off" # "on" opens /homepage/* (troubleshooting only), then back to "off"
+    volumes:
+      - ./readonly-proxy/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - proxylog:/var/log/proxy
+    networks:
+      - monitoring
+
+  proxy-alloy:
+    image: grafana/alloy:v1.20.1@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f
+    container_name: proxy-alloy
+    command:
+      - run
+      - --server.http.listen-addr=127.0.0.1:12345
+      - --storage.path=/var/lib/alloy/data
+      - --disable-reporting
+      - /etc/alloy/config.alloy
+    volumes:
+      - ./proxy-alloy.alloy:/etc/alloy/config.alloy:ro
+      - proxylog:/var/log/proxy:ro
+      - proxyalloy:/var/lib/alloy/data
     restart: unless-stopped
     networks:
       - monitoring
@@ -132,9 +163,13 @@ services:
     user: root
     volumes:
       - ./loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - ./loki-rules:/tmp/loki/rules/fake:ro # ruler alerts (auth is off, so the tenant is "fake")
       - /mnt/storage/appdata/monitoring/loki:/tmp/loki # This is where loki stores all the data chunks, the logs.
     ports:
       - "3100:3100"
     restart: unless-stopped
     command: -config.file=/etc/loki/loki-config.yaml
 
+volumes:
+  proxylog:
+  proxyalloy:
