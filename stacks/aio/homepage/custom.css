@@ -1,21 +1,56 @@
-/* Keep the header widgets row (search bar) pinned while scrolling.
-   The page container is h-full (one screen), which would end the sticky after one screen; let it grow. */
+/* The page container is h-full (one screen), which would cut scrolling short;
+   let it grow so #inner_wrapper becomes the scroller. */
 #inner_wrapper > .container {
   height: auto;
 }
-#information-widgets {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  backdrop-filter: blur(8px);
-}
 /* gethomepage hard-splits widgets: search + datetime render inside
    #information-widgets-right, always AFTER greeting/resources, so the search
-   bar wraps to the 2nd row. Force that group onto its own first line so
-   search leads the page (id selectors beat the sm:basis-auto/md:justify-end
-   Tailwind classes on the element). */
+   bar wraps to the 2nd row. Force that group onto its own leading line so
+   search leads the page (id selectors beat sm:basis-auto/md:justify-end). */
 #widgets-wrap > #information-widgets-right {
   order: -1;
   flex-basis: 100%;
   justify-content: space-between;
+  /* Placeholder: keeps this line's height while the search is lifted out of
+     flow by html.hl-stuck, so nothing below jumps. Value measured at rest. */
+  min-height: var(--hl-row-h, auto);
+}
+/* ONLY the search bar stays pinned while scrolling. custom.js measures the
+   search widget's resting geometry into CSS vars on <html>; once the row
+   would naturally scroll past the top it adds html.hl-stuck and the search
+   is lifted into this fixed position. Handoff is continuous: custom.js sets
+   the threshold from the search form's own resting top, so at the flip its
+   natural top equals the pinned top: 0. The old sticky+blur rule on
+   #information-widgets is gone ON PURPOSE: backdrop-filter/filter/transform
+   on an ancestor would re-anchor position:fixed to that ancestor instead of
+   the (stationary) viewport. */
+html.hl-stuck .information-widget-search {
+  position: fixed;
+  top: 0;
+  left: var(--hl-s-left, 1.25rem);
+  width: var(--hl-s-width, 24rem);
+  z-index: 20;
+  backdrop-filter: blur(8px);
+}
+/* While stuck the search is out of flow, leaving datetime as this row's only
+   flex child — margin-left:auto keeps it right; space-between would snap it to
+   the left edge at the flip moment. */
+html.hl-stuck #information-widgets-right > :not(.information-widget-search) {
+  margin-left: auto;
+}
+/* #inner_wrapper carries backdrop-blur/saturate/brightness from settings
+   (background.blur/saturate/brightness). backdrop-filter makes an element the
+   containing block for position:fixed descendants — the pinned search would
+   then scroll away with the content instead of pinning (verified in headless
+   Chromium: fixed child of a backdrop-filtered scroller landed at -500px
+   after scrollTop=500, while the unfiltered control stayed at 0). Drop the
+   wrapper's filter only while stuck, and compensate by blurring the
+   background layer itself — #background is a sibling of #page_wrapper, never
+   an ancestor of the search, so it cannot re-anchor position:fixed. */
+html.hl-stuck #inner_wrapper {
+  backdrop-filter: none;
+}
+html.hl-stuck #background {
+  filter: blur(4px);
+  transform: scale(1.03);
 }
