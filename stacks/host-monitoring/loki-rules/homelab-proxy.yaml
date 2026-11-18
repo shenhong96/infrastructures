@@ -1,0 +1,25 @@
+# Loki ruler rules for the read-only proxy's access log (readonly-proxy/default.conf.template).
+# Alerts need an Alertmanager at ruler.alertmanager_url in loki-config.yaml.
+groups:
+  - name: prom-readonly-proxy
+    rules:
+      - alert: ProxyBlockedRequest
+        expr: sum(count_over_time({service_name="prom-readonly-proxy"} | json | status="403" [5m])) > 0
+        labels: {severity: warning}
+        annotations: {summary: "Read-only proxy refused a request (blocked path or method)"}
+      - alert: ProxyRequestRateHigh
+        expr: |
+          sum(rate({service_name="prom-readonly-proxy"}[5m]))
+            > 5 * sum(rate({service_name="prom-readonly-proxy"}[1d] offset 5m))
+          and sum(count_over_time({service_name="prom-readonly-proxy"}[5m])) > 20
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Read-only proxy traffic is over 5x its daily baseline"}
+      - alert: ProxyTimeout
+        expr: sum(count_over_time({service_name="prom-readonly-proxy"} | json | status="504" [5m])) > 0
+        labels: {severity: warning}
+        annotations: {summary: "A request through the read-only proxy hit the 30s timeout"}
+      - alert: ProxyHomepageRouteUsed
+        expr: sum(count_over_time({service_name="prom-readonly-proxy"} | json | uri=~"/homepage/.*" [5m])) > 0
+        labels: {severity: info}
+        annotations: {summary: "The /homepage route of the read-only proxy is open and in use"}

@@ -1,0 +1,19 @@
+// Ships the read-only proxy's JSON access log to Loki.
+local.file_match "proxy" {
+	path_targets = [{
+		"__path__"     = "/var/log/proxy/access.json",
+		"job"          = "prom-readonly-proxy",
+		"service_name" = "prom-readonly-proxy",
+	}]
+}
+
+loki.source.file "proxy" {
+	targets    = local.file_match.proxy.targets
+	forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+	endpoint {
+		url = "http://loki:3100/loki/api/v1/push"
+	}
+}
