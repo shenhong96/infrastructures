@@ -1,4 +1,8 @@
 ---
+# NOTE: putting search first here does NOT choose its row — gethomepage
+# hard-routes search+datetime into #information-widgets-right, after
+# greeting/resources; the leading row is enforced in custom.css.
+# Keep search ABOVE datetime: within that container, file order = left/right.
 - search:
     provider: google
     target: _blank
