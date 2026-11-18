@@ -38,6 +38,8 @@ dash = ["privileged", "mount: /"]
 # refuses to create on this host (AppArmor 4, Proxmox 9).
 grafana = ["security_opt: apparmor=unconfined"]
 node-exporter = ["mount: /proc", "mount: /sys", "mount: /"]
+# The guests' CPU counters, read-only: the only place they are exact (lxcfs shows a guest the host's).
+lxc-cpu = ["mount: /sys/fs/cgroup/lxc"]
 
 # The paths come from the stack's env file, so the gate can't see them.
 [compose."stacks/immich/compose.yaml"]
@@ -62,7 +64,12 @@ alloy = [
   "network_mode is not allowed", "network_mode: host", "pid is not allowed", "pid: host",
   "mount: /proc", "mount: /sys", "mount: /", "mount: /sys/fs/cgroup",
   "mount: /var/run/docker.sock", "mount: /run/containerd/containerd.sock",
+  "mount: /var/lib/docker",
 ]
+
+# Nextcloud is a privileged LXC, so docker-default AppArmor applies and blocks docker.sock.
+[compose."stacks/monitoring/hosts/nextcloud.yaml"]
+alloy = ["security_opt: apparmor=unconfined"]
 
 
 [compose."stacks/photoprism/compose.yaml"]
