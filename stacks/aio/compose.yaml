@@ -248,7 +248,7 @@ services:
       gethomepage.href: "http://192.168.9.151:1337"
 
   audiobookshelf:
-    image: ghcr.io/advplyr/audiobookshelf:2.37.1
+    image: ghcr.io/advplyr/audiobookshelf:2.38.0
     container_name: audiobookshelf
     # Writes into data/media/Books as the shared owner (uid/gid 1000 here = 101000 on the host)
     user: "1000:1000"
@@ -304,7 +304,7 @@ services:
 
   influxdb:
     restart: always
-    image: influxdb:1.8
+    image: influxdb:1.13
     ports:
       - "8086:8086"
     volumes:
@@ -315,7 +315,7 @@ services:
       - "INFLUXDB_DB=speedtest"
 
   wallabag:
-    image: wallabag/wallabag:2.5.2
+    image: wallabag/wallabag:2.6.17
     restart: unless-stopped
     container_name: wallabag
     environment:
@@ -363,7 +363,7 @@ services:
     container_name: wallabag_redis
 
   syncthing:
-    image: ghcr.io/linuxserver/syncthing:2.1.5
+    image: ghcr.io/linuxserver/syncthing:2.1.7
     container_name: syncthing
     volumes:
       - /opt/aio/syncthing/config:/config
