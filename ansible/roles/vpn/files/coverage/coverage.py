@@ -5,7 +5,7 @@ Runs on the vpn host. Talks to prowlarr/sonarr/qbittorrent via `docker exec <ctr
 on localhost; API keys are read from each app's config at run time and never stored.
 `query` / `seeding` never touch a site; only `refresh` searches, slowly.
 """
-import argparse, fcntl, hashlib, json, random, re, secrets, sqlite3, subprocess, sys, time, urllib.parse, urllib.request
+import argparse, fcntl, hashlib, json, random, re, secrets, sqlite3, subprocess, sys, time, unicodedata, urllib.parse, urllib.request
 from collections import defaultdict
 from contextlib import closing
 from datetime import datetime, timezone
@@ -547,11 +547,13 @@ def grab_check(c, show, pick, ignore_id=None):
     fills = sorted(got & (aired - have))
     if not fills:
         raise Refused("nothing missing in this release")
-    if c.execute("select count(*) from grabs where site_id=? and guid=? and status not in ('denied','expired') "
+    if c.execute("select count(*) from grabs where site_id=? and guid=? and status not in ('denied','expired','failed') "
                  "and id is not ?", (rel["site_id"], rel["guid"], ignore_id)).fetchone()[0]:
         raise Refused("this release was already requested")
     eps_used, bytes_used = grab_usage(c, ignore_id)
     size = rel["size"] or 0
+    if size <= 0:
+        raise Refused("the listed size is unknown, so it can't be held to the daily size cap")
     if eps_used + len(fills) > grab_cfg()["grab_max_eps_day"]:
         raise Refused(f"daily episode cap: {eps_used} used + {len(fills)} would pass {grab_cfg()['grab_max_eps_day']}")
     if bytes_used + size > grab_cfg()["grab_max_bytes_day"]:
@@ -603,6 +605,36 @@ def check_download_url(url):
         raise Refused("download link is not an internal gateway link")
     return url
 
+def _bdecode(b, i=0, depth=0):
+    """Minimal bencode reader -> (value, next index). Raises ValueError on anything odd."""
+    if depth > 20:
+        raise ValueError("too deep")
+    c = b[i:i + 1]
+    if c == b"i":
+        j = b.index(b"e", i)
+        return int(b[i + 1:j]), j + 1
+    if c in (b"l", b"d"):
+        out, i = ([], i + 1) if c == b"l" else ({}, i + 1)
+        while b[i:i + 1] != b"e":
+            v, i = _bdecode(b, i, depth + 1)
+            if c == b"l":
+                out.append(v)
+            else:
+                k = v
+                v, i = _bdecode(b, i, depth + 1)
+                out[k] = v
+        return out, i + 1
+    j = b.index(b":", i)
+    n = int(b[i:j])
+    if n < 0 or j + 1 + n > len(b):
+        raise ValueError("bad string")
+    return b[j + 1:j + 1 + n], j + 1 + n
+
+def torrent_bytes(body):
+    """Total payload size a .torrent declares (single file or the sum of its files)."""
+    info = _bdecode(body)[0][b"info"]
+    return info[b"length"] if b"length" in info else sum(f[b"length"] for f in info[b"files"])
+
 def docker_curl(ctr, args, stdin=None, timeout=90):
     """The only place a write goes through: `docker exec [-i] <ctr> curl <args>`. Returns (returncode, stdout)."""
     cmd = ["docker", "exec"] + (["-i"] if stdin is not None else []) + [ctr, "curl"] + list(args)
@@ -639,6 +671,14 @@ def dispatch(c, g):
     port = qb_port()
     base = ["-s", "-m", "30", "-w", "\n%{http_code}", "--form-string", "category=" + cat]
     if code == "200" and body.startswith(b"d") and b"4:info" in body:
+        try:
+            total = torrent_bytes(body)
+        except Exception:
+            return "failed", "the file is not a valid torrent"
+        listed = rel["size"] or 0
+        if not isinstance(total, int) or total <= 0 or total > grab_cfg()["grab_max_bytes_day"] or total > listed * 1.25 + 50 * 2**20:
+            return "failed", f"the file declares {total / 1e9:.1f} GB, bigger than the listing ({listed / 1e9:.1f} GB) or the daily cap" \
+                if isinstance(total, int) and total > 0 else "the file declares no size"
         rc, res = docker_curl("qbittorrent", base + ["-F", "torrents=@-;filename=x.torrent", f"localhost:{port}/api/v2/torrents/add"],
                               stdin=body, timeout=60)
     elif code in ("301", "302", "303", "307", "308") and MAGNET_RX.match(loc.strip()):
@@ -658,11 +698,11 @@ def dispatch(c, g):
     return "sent", "sent to qBittorrent; not visible there yet"
 
 # ---------- grab: Telegram bot (the only holder of the bot token) ----------
-CTRL_RX = re.compile(r"[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]")
-
 def clean(text, n=200):
-    """Untrusted release text -> one short plain line (no control or bidi characters)."""
-    return CTRL_RX.sub(" ", str(text or "")).strip()[:n]
+    """Untrusted release text -> one short plain line: control, format (bidi, zero-width) and
+    line/paragraph-separator characters become spaces."""
+    return "".join(" " if unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") else ch
+                   for ch in str(text or "")).strip()[:n]
 
 def tg(method, **params):
     """Telegram Bot API call. Errors never carry the URL, so the token cannot reach a log."""
@@ -1093,6 +1133,17 @@ def _selftest_grab_request():
         shown = api_read("/coverage/grabs", {})
         assert "2/30 eps" in shown and "http" not in shown and "Example Show" in shown
 
+        seed("Z0", "Example Show S01E10 1080p", 0)
+        assert refused({"show": "7", "pick": pk("Z0")})                             # unknown size can't be capped
+        with closing(db()) as c:
+            c.execute("update releases set size=NULL where guid='Z0'"); c.commit()
+        assert refused({"show": "7", "pick": pk("Z0")})
+        # a failed request may be asked for again (transient failure), a pending/queued one may not
+        with closing(db()) as c:
+            c.execute("update grabs set status='failed'"); c.commit()
+        req("A")
+        with closing(db()) as c:
+            c.execute("delete from grabs where status='failed'"); c.commit()
         # episode cap: 2 pending + filler 27 = 29 -> one more episode fits, two don't
         filler("f1", 27, 0, "pending")
         req("C")                                                                    # 30 of 30
@@ -1199,6 +1250,18 @@ def _selftest_grab_dispatch():
             assert st == "sent"
             listing[:] = [{"name": "old", "added_on": now - 3600}]
             assert run("T3b", (0, torrent + b"\n200 "), (0, b"Ok.\n200"))[0] == "sent"
+            # declared size in the file is checked against the listing and the daily cap
+            listing[:] = [{"name": "n", "added_on": now}]
+            big = b"d8:announce3:abc4:infod6:lengthi5000000000000eee"                 # 5 TB vs listed 1 GB
+            st, note = run("S1", (0, big + b"\n200 "))
+            assert st == "failed" and len(calls) == 1 and "bigger" in note, (st, note)
+            multi = b"d4:infod5:filesld6:lengthi800000000eed6:lengthi800000000eeeee"  # 1.6 GB over two files vs listed 1 GB
+            st, note = run("S2", (0, multi + b"\n200 "))
+            assert st == "failed" and len(calls) == 1
+            ok2 = b"d4:infod5:filesld6:lengthi300000000eed6:lengthi300000000eeeee"    # 0.6 GB: fine
+            assert run("S3", (0, ok2 + b"\n200 "), (0, b"Ok.\n200"))[0] == "queued"
+            st, note = run("S4", (0, b"d4:infoXe\n200 "))                            # not valid bencode
+            assert st == "failed" and len(calls) == 1
             # anything else: failed, qBittorrent never called
             for i, rep in enumerate([(0, b"\n302 http://evil.example/x"), (0, b"<html>no</html>\n200 "), (0, b"\n200 "),
                                      (0, b"\n302 magnet:?xt=urn:btih:short"), (1, b""), (0, b"\n500 ")]):
@@ -1358,6 +1421,7 @@ def _selftest_grab_bot():
         finally:
             urllib.request.urlopen = real_open
         assert clean("a\x1bb\u202ec" + "x" * 500) == "a b c" + "x" * 195
+        assert clean("a\u200bb\u2028c\u061cd\ufeffe\u2029f") == "a b c d e f"
     finally:
         g.update(saved)
 
