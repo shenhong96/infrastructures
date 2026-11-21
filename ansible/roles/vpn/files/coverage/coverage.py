@@ -704,13 +704,13 @@ def selftest():
     assert not relevant("The Demon Hunter's Romance S01 2025 2160p", ["The Demon Hunter"])
     assert relevant("沧元图.The.Demon.Hunter.S01E01.2023.1080p", ["The Demon Hunter"])
     assert rng({1, 2, 3, 5, 7, 8}) == "1-3,5,7-8"
-    assert subs("[GM-Team][国漫][沧元图][The Demon Hunter][2023][12][GB][4K HEVC 10Bit]") == "chs"
-    assert subs("[ANi] Sword of the Demon Hunter / 鬼人幻燈抄 - 24 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]") == "hard-cht"
-    assert subs("[XK] 沧元图 [内嵌简繁][1080P]") == "hard-chs+cht"
-    assert subs("The Demon Hunter 2023 S01E97 2160p WEB-DL H265 AAC-GRP") == "?"
     real_config = globals()["config"]
-    globals()["config"] = lambda: {"sub_groups": {"ALPHA": "hard-chs"}}
+    globals()["config"] = lambda: {"sub_groups": {"ALPHA": "hard-chs"}}   # never read the live config
     try:
+        assert subs("[GM-Team][国漫][沧元图][The Demon Hunter][2023][12][GB][4K HEVC 10Bit]") == "chs"
+        assert subs("[ANi] Sword of the Demon Hunter / 鬼人幻燈抄 - 24 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]") == "hard-cht"
+        assert subs("[XK] 沧元图 [内嵌简繁][1080P]") == "hard-chs+cht"
+        assert subs("The Demon Hunter 2023 S01E97 2160p WEB-DL H265 AAC-GRP") == "?"
         assert subs("The Demon Hunter S01 2023 2160p WEB-DL H265 AAC-ALPHA") == "hard-chs"
         assert subs("Show.S01E01.2160p.WEB-DL.H265-ALPHA.mkv") == "hard-chs"
         assert subs("The Demon Hunter S01 2023 2160p WEB-DL H265 AAC-GRP") == "?"
