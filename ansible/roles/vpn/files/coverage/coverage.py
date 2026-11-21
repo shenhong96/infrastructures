@@ -704,6 +704,14 @@ def clean(text, n=200):
     return "".join(" " if unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") else ch
                    for ch in str(text or "")).strip()[:n]
 
+def owner_id(key):
+    """Telegram ids as int, whatever the config round trip made of them (123, 123.0, "123"). None if unset/bad."""
+    try:
+        v = grab_cfg().get(key)
+        return int(float(str(v))) if v not in (None, "") else None
+    except ValueError:
+        return None
+
 def tg(method, **params):
     """Telegram Bot API call. Errors never carry the URL, so the token cannot reach a log."""
     token = config().get("grab_bot_token")
@@ -715,7 +723,11 @@ def tg(method, **params):
         with urllib.request.urlopen(req, timeout=params.get("timeout", 0) + 30) as r:
             res = json.load(r)
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"{method} failed: HTTP {e.code}") from None
+        try:
+            why = clean(json.loads(e.read()).get("description"), 80)
+        except Exception:
+            why = ""
+        raise RuntimeError(f"{method} failed: HTTP {e.code} {why}".rstrip()) from None
     except Exception as e:
         raise RuntimeError(f"{method} failed: {type(e).__name__}") from None
     if not res.get("ok"):
@@ -747,7 +759,7 @@ def _edit(c, g, tail):
     if not g["msg_id"]:
         return
     try:
-        tg("editMessageText", chat_id=grab_cfg().get("owner_chat_id"), message_id=g["msg_id"],
+        tg("editMessageText", chat_id=owner_id("owner_chat_id"), message_id=g["msg_id"],
            text=grab_message(c, g) + "\n\n" + tail, reply_markup={"inline_keyboard": []})
     except Exception as e:
         print("grab edit failed:", e, file=sys.stderr, flush=True)
@@ -756,7 +768,7 @@ def announce(c):
     for g in c.execute("select * from grabs where status='pending' and msg_id is null").fetchall():
         kb = {"inline_keyboard": [[{"text": "\u2705 Approve", "callback_data": "a:" + g["id"]},
                                     {"text": "\u274c Deny", "callback_data": "d:" + g["id"]}]]}
-        m = tg("sendMessage", chat_id=grab_cfg().get("owner_chat_id"), text=grab_message(c, g), reply_markup=kb)
+        m = tg("sendMessage", chat_id=owner_id("owner_chat_id"), text=grab_message(c, g), reply_markup=kb)
         c.execute("update grabs set msg_id=? where id=?", (m["message_id"], g["id"]))
         c.commit()
 
@@ -769,8 +781,8 @@ def expire(c):
 
 def handle_callback(c, cb):
     cfg = grab_cfg()
-    owner = cfg.get("owner_user_id")
-    if owner in (None, "") or str((cb.get("from") or {}).get("id")) != str(owner):
+    owner = owner_id("owner_user_id")
+    if owner is None or (cb.get("from") or {}).get("id") != owner:
         return                                  # not the owner: say nothing at all
     def answer(text):
         try:
@@ -1407,7 +1419,7 @@ def _selftest_grab_bot():
         # the token never lands in the db and never in an error text
         with closing(db()) as c:
             assert "BOTTOKEN123" not in repr(c.execute("select * from grabs").fetchall()) + repr(c.execute("select * from actions").fetchall())
-        import urllib.error, urllib.request
+        import io, urllib.error, urllib.request
         real_open = urllib.request.urlopen
         def failing(req, timeout=None):
             raise urllib.error.URLError("boom " + req.full_url)
@@ -1418,6 +1430,37 @@ def _selftest_grab_bot():
             raise AssertionError("tg should raise")
         except RuntimeError as e:
             assert "BOTTOKEN123" not in str(e) and "getMe" in str(e)
+        finally:
+            urllib.request.urlopen = real_open
+        # owner ids stored as floats (SOPS/JSON round trip) still match Telegram's integer ids
+        g["tg"] = fake_tg
+        cfgd["owner_user_id"] = 111.0
+        fresh(); seed("A", "[GrpB][动画][示例剧][Example Show][2023][03-06][GB][1080P]")
+        gid = request("A"); tap(gid)
+        assert dispatched == ["A"], dispatched
+        cfgd["owner_user_id"] = "111"
+        fresh(); seed("A", "[GrpB][动画][示例剧][Example Show][2023][03-06][GB][1080P]")
+        gid = request("A"); tap(gid)
+        assert dispatched == ["A"], dispatched
+        cfgd["owner_user_id"] = 111
+        assert owner_id("owner_user_id") == 111 and owner_id("nope") is None
+        cfgd["owner_chat_id"] = 111.0
+        fresh(); seed("A", "[GrpB][动画][示例剧][Example Show][2023][03-06][GB][1080P]")
+        request("A")
+        with closing(db()) as c:
+            announce(c)
+        assert sent[-1][1]["chat_id"] == 111 and isinstance(sent[-1][1]["chat_id"], int)
+        cfgd["owner_chat_id"] = 111
+        # Telegram's own reason is kept (it never contains the token)
+        def http400(req, timeout=None):
+            raise urllib.error.HTTPError(req.full_url, 400, "Bad Request", {}, io.BytesIO(b'{"ok":false,"description":"Bad Request: chat not found"}'))
+        urllib.request.urlopen = http400
+        g["tg"] = saved["tg"]
+        try:
+            tg("sendMessage")
+            raise AssertionError("tg should raise")
+        except RuntimeError as e:
+            assert "chat not found" in str(e) and "BOTTOKEN123" not in str(e), str(e)
         finally:
             urllib.request.urlopen = real_open
         assert clean("a\x1bb\u202ec" + "x" * 500) == "a b c" + "x" * 195
