@@ -7,6 +7,7 @@ on localhost; API keys are read from each app's config at run time and never sto
 """
 import argparse, fcntl, json, random, re, sqlite3, subprocess, sys, time, urllib.parse
 from collections import defaultdict
+from contextlib import closing
 from datetime import datetime, timezone
 from itertools import groupby
 from pathlib import Path
@@ -167,10 +168,11 @@ def find_series(name):
         sys.exit(f"'{name}' matches {len(hits)} Sonarr series: " + ", ".join(s["title"] for s in hits[:8]))
     return hits[0]
 
-def show_row(c, name):
+def show_row(c, name, exact=False):
     allrows = list(c.execute("select * from shows"))
-    rows = [r for r in allrows if str(r["id"]) == name or r["title"].lower() == name.lower()] or \
-           [r for r in allrows if name.lower() in r["title"].lower()]
+    rows = [r for r in allrows if str(r["id"]) == name or r["title"].lower() == name.lower()]
+    if not rows and not exact:
+        rows = [r for r in allrows if name.lower() in r["title"].lower()]
     if len(rows) != 1:
         sys.exit(f"'{name}' matches {len(rows)} watched shows (see: watch list)")
     return rows[0]
@@ -507,56 +509,57 @@ def _budget(c, kind, limit):
         raise Refused(f"daily limit reached: {limit} {kind} per 24 h")
 
 def api_read(path, q):
-    c = db(ro=True)
     ns = argparse.Namespace
-    if path == "/coverage/shows":
-        return _capture(lambda a, c: cmd_watch(a, c), ns(action="list"), c)
-    if path == "/coverage/sites":
-        return _capture(cmd_sites, ns(action="list", names=[]), c)
-    if path == "/coverage/seeding":
-        return _capture(cmd_seeding, ns(), c)
-    what = path.rsplit("/", 1)[-1]
-    if what in ("missing", "site", "gaps", "unclear"):
-        if not q.get("show") or (what in ("site", "gaps") and not q.get("site")):
-            raise Refused("need ?show=" + ("&site=" if what in ("site", "gaps") else ""))
-        return _capture(cmd_query, ns(what=what, show=q["show"], site=q.get("site"), download_links=False), c)
-    raise Refused("unknown path")
+    with closing(db(ro=True)) as c:
+        if path == "/coverage/shows":
+            return _capture(lambda a, c: cmd_watch(a, c), ns(action="list"), c)
+        if path == "/coverage/sites":
+            return _capture(cmd_sites, ns(action="list", names=[]), c)
+        if path == "/coverage/seeding":
+            return _capture(cmd_seeding, ns(), c)
+        what = path.rsplit("/", 1)[-1]
+        if what in ("missing", "site", "gaps", "unclear"):
+            if not q.get("show") or (what in ("site", "gaps") and not q.get("site")):
+                raise Refused("need ?show=" + ("&site=" if what in ("site", "gaps") else ""))
+            return _capture(cmd_query, ns(what=what, show=q["show"], site=q.get("site"), download_links=False), c)
+        raise Refused("unknown path")
 
 def api_write(path, body):
-    c = db()
     show = str(body.get("show") or "").strip()
     if not show or len(show) > 80:
         raise Refused("need a 'show' (Sonarr title or id)")
-    if path == "/coverage/watch":
-        terms = body.get("terms") or []
-        if not isinstance(terms, list) or len(terms) > MAX_TERMS or not all(isinstance(t, str) and TERM_RX.match(t) for t in terms):
-            raise Refused(f"'terms' must be a list of up to {MAX_TERMS} plain strings, each 1-40 chars")
-        _budget(c, "changes", MAX_CHANGES_DAY)
-        s = find_series(show)
-        known = c.execute("select terms from shows where id=?", (s["id"],)).fetchone()
-        terms = terms or (json.loads(known["terms"]) if known else [])   # re-watch keeps old terms
-        if not known and c.execute("select count(*) from shows").fetchone()[0] >= MAX_SHOWS:
-            raise Refused(f"already watching {MAX_SHOWS} shows; unwatch one first")
-        out = _capture(cmd_watch, argparse.Namespace(action="add", show=str(s["id"]), term=terms or None), c)
-        kind = "changes"
-    elif path == "/coverage/unwatch":
-        _budget(c, "changes", MAX_CHANGES_DAY)
-        out = _capture(cmd_watch, argparse.Namespace(action="remove", show=show), c)
-        kind = "changes"
-    elif path == "/coverage/refresh":
-        _budget(c, "refresh", MAX_REFRESH_DAY)
-        show_row(c, show)       # must be watched
-        r = subprocess.run(["systemctl", "start", "--no-block", "episode-coverage.service"], capture_output=True, text=True)
-        if r.returncode:
-            raise Refused("could not start refresh")
-        out = ("refresh started for all watched shows; it keeps the usual pacing (12 h per show and site, "
-               "60 searches per run), so new data arrives over the next minutes")
-        kind = "refresh"
-    else:
-        raise Refused("unknown path")
-    c.execute("insert into actions values(?,?,?)", (time.time(), kind, f"{path} {show}"))
-    c.commit()
-    return out
+    with closing(db()) as c:
+        if path == "/coverage/watch":
+            terms = body.get("terms") or []
+            if not isinstance(terms, list) or len(terms) > MAX_TERMS or not all(isinstance(t, str) and TERM_RX.match(t) for t in terms):
+                raise Refused(f"'terms' must be a list of up to {MAX_TERMS} plain strings, each 1-40 chars")
+            _budget(c, "changes", MAX_CHANGES_DAY)
+            s = find_series(show)
+            known = c.execute("select terms from shows where id=?", (s["id"],)).fetchone()
+            terms = terms or (json.loads(known["terms"]) if known else [])   # re-watch keeps old terms
+            if not known and c.execute("select count(*) from shows").fetchone()[0] >= MAX_SHOWS:
+                raise Refused(f"already watching {MAX_SHOWS} shows; unwatch one first")
+            out = _capture(cmd_watch, argparse.Namespace(action="add", show=str(s["id"]), term=terms or None), c)
+            kind = "changes"
+        elif path == "/coverage/unwatch":
+            _budget(c, "changes", MAX_CHANGES_DAY)
+            r = show_row(c, show, exact=True)
+            out = _capture(cmd_watch, argparse.Namespace(action="remove", show=str(r["id"])), c)
+            kind = "changes"
+        elif path == "/coverage/refresh":
+            _budget(c, "refresh", MAX_REFRESH_DAY)
+            show_row(c, show, exact=True)       # must be watched
+            r = subprocess.run(["systemctl", "start", "--no-block", "episode-coverage.service"], capture_output=True, text=True)
+            if r.returncode:
+                raise Refused("could not start refresh")
+            out = ("refresh started for all watched shows; it keeps the usual pacing (12 h per show and site, "
+                   "60 searches per run), so new data arrives over the next minutes")
+            kind = "refresh"
+        else:
+            raise Refused("unknown path")
+        c.execute("insert into actions values(?,?,?)", (time.time(), kind, f"{path} {show}"))
+        c.commit()
+        return out
 
 def cmd_serve(a, _c):
     from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -644,6 +647,25 @@ def _selftest_limits():
         for _ in range(n):
             api_write("/coverage/watch", {"show": "1"})
         assert refused("/coverage/unwatch", {"show": "1"})                                     # 21st change
+        # exact match required for API writes: partial title must not unwatch or refresh
+        g["DB"] = Path(tempfile.mkdtemp()) / "exact.db"
+        db().close()
+        ri = {"id": 42, "title": "Renegade Immortal"}
+        g["find_series"] = lambda name: ri if name in (ri["title"], str(ri["id"])) else sys.exit(f"unknown {name}")
+        api_write("/coverage/watch", {"show": "Renegade Immortal"})
+        def write_refused(path, body):
+            try:
+                api_write(path, body)
+            except (Refused, SystemExit):
+                return True
+            return False
+        assert write_refused("/coverage/unwatch", {"show": "Renegade"})
+        assert write_refused("/coverage/refresh", {"show": "Renegade"})
+        with closing(db()) as c:
+            assert [r["title"] for r in c.execute("select title from shows")] == ["Renegade Immortal"]
+        assert "removed Renegade Immortal" in api_write("/coverage/unwatch", {"show": "Renegade Immortal"})
+        with closing(db()) as c:
+            assert c.execute("select count(*) from shows").fetchone()[0] == 0
     finally:
         g.update(saved)
         subprocess.run = real_run
