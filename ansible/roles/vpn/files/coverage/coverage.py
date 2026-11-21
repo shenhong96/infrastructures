@@ -154,7 +154,7 @@ def parse(title, lengths):
     return None
 
 def relevant(title, terms):
-    """Title contains a term, not as the start of a longer name ('The Demon Hunter's Romance')."""
+    """Title contains a term, not as the start of a longer name ('Example Show's Romance')."""
     t = title.lower().replace("’", "'")
     rx = lambda x: r"[\s._]*".join(map(re.escape, x.lower().split())) + r"(?!'s|[a-z])"
     return any(re.search(rx(x), t) for x in terms)
@@ -397,6 +397,10 @@ def subs(title):
     lang = next((k for k, rx in SUB_LANG if re.search(rx, title, re.I)), "")
     if not kind and re.search(r"\[Baha\]", title):  # ANi Baha rips are hardsubbed CHT
         kind, lang = "hard", lang or "cht"
+    if not kind and not lang:  # release groups with a known house style; private, so from config
+        m = re.search(r"-([A-Za-z0-9]+)(\.\w{2,4})?$", title.strip())
+        known = config().get("sub_groups", {}) if m else {}
+        return known.get(m.group(1), "?") if m else "?"
     return "-".join(x for x in (kind, lang) if x) or "?"
 
 def fmt_rel(r, dl):
@@ -636,10 +640,10 @@ def _selftest_limits():
         assert refused("/coverage/watch", {"show": ""})                                        # no show
         assert refused("/coverage/nope", {"show": "x"})
         for i in range(MAX_SHOWS):
-            api_write("/coverage/watch", {"show": str(i + 1), "terms": ["沧元图 第二季"]})
+            api_write("/coverage/watch", {"show": str(i + 1), "terms": ["示例剧 第二季"]})
         assert refused("/coverage/watch", {"show": "999"})                                     # 11th show
         api_write("/coverage/watch", {"show": "1"})                                            # re-watch is fine
-        assert json.loads(db().execute("select terms from shows where id=1").fetchone()[0]) == ["沧元图 第二季"]
+        assert json.loads(db().execute("select terms from shows where id=1").fetchone()[0]) == ["示例剧 第二季"]
         for _ in range(MAX_REFRESH_DAY):
             api_write("/coverage/refresh", {"show": "1"})
         assert refused("/coverage/refresh", {"show": "1"})                                     # 7th refresh
@@ -650,20 +654,20 @@ def _selftest_limits():
         # exact match required for API writes: partial title must not unwatch or refresh
         g["DB"] = Path(tempfile.mkdtemp()) / "exact.db"
         db().close()
-        ri = {"id": 42, "title": "Renegade Immortal"}
+        ri = {"id": 42, "title": "Sample Immortal"}
         g["find_series"] = lambda name: ri if name in (ri["title"], str(ri["id"])) else sys.exit(f"unknown {name}")
-        api_write("/coverage/watch", {"show": "Renegade Immortal"})
+        api_write("/coverage/watch", {"show": "Sample Immortal"})
         def write_refused(path, body):
             try:
                 api_write(path, body)
             except (Refused, SystemExit):
                 return True
             return False
-        assert write_refused("/coverage/unwatch", {"show": "Renegade"})
-        assert write_refused("/coverage/refresh", {"show": "Renegade"})
+        assert write_refused("/coverage/unwatch", {"show": "Sample"})
+        assert write_refused("/coverage/refresh", {"show": "Sample"})
         with closing(db()) as c:
-            assert [r["title"] for r in c.execute("select title from shows")] == ["Renegade Immortal"]
-        assert "removed Renegade Immortal" in api_write("/coverage/unwatch", {"show": "Renegade Immortal"})
+            assert [r["title"] for r in c.execute("select title from shows")] == ["Sample Immortal"]
+        assert "removed Sample Immortal" in api_write("/coverage/unwatch", {"show": "Sample Immortal"})
         with closing(db()) as c:
             assert c.execute("select count(*) from shows").fetchone()[0] == 0
     finally:
@@ -673,37 +677,46 @@ def _selftest_limits():
 def selftest():
     L = {1: 26, 2: 36, 3: 36}
     cases = {
-        "The Demon Hunter 2023 S01E103 2160p WEB-DL HQ H265 10bit AAC-GRP": {103},
-        "The Demon Hunter 2023 S01E05 1080p WEB-DL H264 AAC-GRP": {5},
-        "The Demon Hunter 2024 S02 2160p WEB-DL H.265 HQ 10bit DTS-HD7.1-AilMWe": set(range(27, 63)),
-        "The Demon Hunter S02E03 1080p": {29},
-        "The Demon Hunter S02E40 1080p": {40},
-        "[GM-Team][国漫][沧元图 第3季][The Demon Hunter Ⅲ][2026][31-34][GB][4K HEVC 10Bit]": set(range(93, 97)),
-        "[GM-Team][国漫][沧元图][The Demon Hunter][2023][01-26][GB][1080P]": set(range(1, 27)),
-        "沧元图 第57集 4K": {57},
-        "沧元图 第二季 全36集": set(range(27, 63)),
-        "[SubsPlease] The Demon Hunter - 12 (1080p)": {12},
-        "The Demon Hunter EP88 2160p": {88},
-        "沧元图 The Demon Hunter 2023 complete": None,
-        "The Demon Hunter S01-S03 2160p WEB-DL": set(range(1, 99)),
-        "The Demon Hunter II [05][1080P]": {31},
-        "[沧元图][番外][01][2160]": None,
-        "The Demon Hunter S00E03 1080p": None,
-        "[沧元图][2160][07]": {7},
+        "Example Show 2023 S01E103 2160p WEB-DL HQ H265 10bit AAC-GRP": {103},
+        "Example Show 2023 S01E05 1080p WEB-DL H264 AAC-GRP": {5},
+        "Example Show 2024 S02 2160p WEB-DL H.265 HQ 10bit DTS-HD7.1-GRP2": set(range(27, 63)),
+        "Example Show S02E03 1080p": {29},
+        "Example Show S02E40 1080p": {40},
+        "[GrpB][动画][示例剧 第3季][Example Show Ⅲ][2026][31-34][GB][4K HEVC 10Bit]": set(range(93, 97)),
+        "[GrpB][动画][示例剧][Example Show][2023][01-26][GB][1080P]": set(range(1, 27)),
+        "示例剧 第57集 4K": {57},
+        "示例剧 第二季 全36集": set(range(27, 63)),
+        "[GrpC] Example Show - 12 (1080p)": {12},
+        "Example Show EP88 2160p": {88},
+        "示例剧 Example Show 2023 complete": None,
+        "Example Show S01-S03 2160p WEB-DL": set(range(1, 99)),
+        "Example Show II [05][1080P]": {31},
+        "[示例剧][番外][01][2160]": None,
+        "Example Show S00E03 1080p": None,
+        "[示例剧][2160][07]": {7},
     }
     assert "apikey" not in strip_key("http://p:9696/1/download?apikey=abc&link=x") and strip_key(None) == ""
     bad = [(t, parse(t, L), want) for t, want in cases.items() if parse(t, L) != want]
     for t, got, want in bad:
         print(f"FAIL {t}\n  got  {got}\n  want {want}")
-    assert relevant("沧元图 第57集", ["沧元图"]) and relevant("The DemonHunter S01", ["The Demon Hunter"])
-    assert not relevant("Demon Slayer S01", ["The Demon Hunter"])
-    assert not relevant("The Demon Hunter's Romance S01 2025 2160p", ["The Demon Hunter"])
-    assert relevant("沧元图.The.Demon.Hunter.S01E01.2023.1080p", ["The Demon Hunter"])
+    assert relevant("示例剧 第57集", ["示例剧"]) and relevant("ExampleShow S01", ["Example Show"])
+    assert not relevant("Example Saga S01", ["Example Show"])
+    assert not relevant("Example Show's Romance S01 2025 2160p", ["Example Show"])
+    assert relevant("示例剧.Example.Show.S01E01.2023.1080p", ["Example Show"])
     assert rng({1, 2, 3, 5, 7, 8}) == "1-3,5,7-8"
-    assert subs("[GM-Team][国漫][沧元图][The Demon Hunter][2023][12][GB][4K HEVC 10Bit]") == "chs"
-    assert subs("[ANi] Sword of the Demon Hunter / 鬼人幻燈抄 - 24 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]") == "hard-cht"
-    assert subs("[XK] 沧元图 [内嵌简繁][1080P]") == "hard-chs+cht"
-    assert subs("The Demon Hunter 2023 S01E97 2160p WEB-DL H265 AAC-GRP") == "?"
+    real_config = globals()["config"]
+    globals()["config"] = lambda: {"sub_groups": {"ALPHA": "hard-chs"}}   # never read the live config
+    try:
+        assert subs("[GrpB][动画][示例剧][Example Show][2023][12][GB][4K HEVC 10Bit]") == "chs"
+        assert subs("[GrpA] Sample Blade / 示例刀 - 24 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]") == "hard-cht"
+        assert subs("[GrpD] 示例剧 [内嵌简繁][1080P]") == "hard-chs+cht"
+        assert subs("Example Show 2023 S01E97 2160p WEB-DL H265 AAC-GRP") == "?"
+        assert subs("Example Show S01 2023 2160p WEB-DL H265 AAC-ALPHA") == "hard-chs"
+        assert subs("Show.S01E01.2160p.WEB-DL.H265-ALPHA.mkv") == "hard-chs"
+        assert subs("Example Show S01 2023 2160p WEB-DL H265 AAC-GRP") == "?"
+        assert subs("[GrpD] 示例剧 [内嵌简繁][1080P] -ALPHA") == "hard-chs+cht"   # title tags win
+    finally:
+        globals()["config"] = real_config
     _selftest_limits()
     sys.exit(1 if bad else print("selftest ok") or 0)
 
