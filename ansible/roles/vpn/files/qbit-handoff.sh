@@ -1,8 +1,8 @@
 #!/bin/bash
-# Hands finished torrents from qbittorrent-ubits (downloads outside the tunnel) to the main
+# Hands finished torrents from the second client (downloads outside the tunnel) to the main
 # qbittorrent (seeds through it). Both mount /mnt/data/downloads at /downloads, so nothing
 # moves: the main instance adds the same .torrent at the same save path, skipping the recheck.
-# Waits HANDOFF_AGE seconds after completion so Sonarr/Radarr import from the ubits client first.
+# Waits HANDOFF_AGE seconds after completion so Sonarr/Radarr import from the second client first.
 # Both WebUIs let the host in without a login (172.18.0.0/16 in their auth whitelist).
 set -euo pipefail
 

@@ -83,12 +83,12 @@ services:
     restart: always
     <<: *loki
 
-  # UBits only, outside the tunnel (home IP). Finished torrents move to qbittorrent above for
-  # seeding: /root/scripts/qbit-ubits-handoff.sh from /etc/cron.d. Same /downloads mount, so the
+  # The second client, outside the tunnel (home IP). Finished torrents move to qbittorrent above for
+  # seeding: the handoff script from /etc/cron.d. Same /downloads mount, so the
   # save paths match. WebUI 8090, torrent port 46882 (forward it; 6881-6889 are tracker-blacklisted).
-  qbittorrent-ubits:
+  {{ vpn_alt_client }}:
     image: ghcr.io/linuxserver/qbittorrent:libtorrentv1-release-5.1.4_v1.2.20-ls112
-    container_name: qbittorrent-ubits
+    container_name: {{ vpn_alt_client }}
     environment:
       - PUID=1000
       - PGID=1000
@@ -97,7 +97,7 @@ services:
       - WEBUI_PORT=8090
       - TORRENTING_PORT=46882
     volumes:
-      - ./qbittorrent-ubits/config:/config
+      - ./{{ vpn_alt_client }}/config:/config
       - /mnt/data/downloads:/downloads
     ports:
       - 8090:8090
