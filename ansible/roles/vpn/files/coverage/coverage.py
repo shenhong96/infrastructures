@@ -5,7 +5,7 @@ Runs on the vpn host. Talks to prowlarr/sonarr/qbittorrent via `docker exec <ctr
 on localhost; API keys are read from each app's config at run time and never stored.
 `query` / `seeding` never touch a site; only `refresh` searches, slowly.
 """
-import argparse, fcntl, hashlib, json, random, re, secrets, sqlite3, subprocess, sys, time, urllib.parse
+import argparse, fcntl, hashlib, json, random, re, secrets, sqlite3, subprocess, sys, time, urllib.parse, urllib.request
 from collections import defaultdict
 from contextlib import closing
 from datetime import datetime, timezone
@@ -657,6 +657,149 @@ def dispatch(c, g):
         pass
     return "sent", "sent to qBittorrent; not visible there yet"
 
+# ---------- grab: Telegram bot (the only holder of the bot token) ----------
+CTRL_RX = re.compile(r"[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+
+def clean(text, n=200):
+    """Untrusted release text -> one short plain line (no control or bidi characters)."""
+    return CTRL_RX.sub(" ", str(text or "")).strip()[:n]
+
+def tg(method, **params):
+    """Telegram Bot API call. Errors never carry the URL, so the token cannot reach a log."""
+    token = config().get("grab_bot_token")
+    if not token:
+        raise RuntimeError(f"{method}: no bot token configured")
+    req = urllib.request.Request(f"https://api.telegram.org/bot{token}/{method}", json.dumps(params).encode(),
+                                 {"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=params.get("timeout", 0) + 30) as r:
+            res = json.load(r)
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"{method} failed: HTTP {e.code}") from None
+    except Exception as e:
+        raise RuntimeError(f"{method} failed: {type(e).__name__}") from None
+    if not res.get("ok"):
+        raise RuntimeError(f"{method} failed: {clean(res.get('description'), 80)}")
+    return res.get("result")
+
+def grab_message(c, g):
+    rel = c.execute("select r.*, s.name site from releases r join sites s on s.id=r.site_id where r.site_id=? and r.guid=?",
+                    (g["site_id"], g["guid"])).fetchone()
+    show = c.execute("select title from shows where id=?", (g["show_id"],)).fetchone()
+    eps, size = grab_usage(c)
+    cfg = grab_cfg()
+    lines = ["Grab request from Hermes",
+             f"{clean((show or {'title': g['show_id']})['title'], 80)} \u2014 fills {rng(json.loads(g['eps']))} ({g['n_eps']} eps)"]
+    if rel:
+        lines += [f"{clean(rel['site'], 40)}: {clean(rel['title'])}",
+                  f"{(rel['size'] or 0) / 1e9:.1f} GB \u00b7 seeders {rel['seeders']} \u00b7 subs {subs(clean(rel['title'], 300))}"]
+    lines.append(f"Today incl. this: {eps}/{cfg['grab_max_eps_day']} eps \u00b7 {size / 1e9:.1f}/{cfg['grab_max_bytes_day'] / 1e9:.0f} GB")
+    return "\n".join(lines)
+
+def _grab_done(c, gid, status, note, decision):
+    c.execute("update grabs set status=?, note=?, decided=? where id=?", (status, note, time.time(), gid))
+    c.execute("insert into actions values(?,?,?)", (time.time(), "grab", f"{gid[:6]} {decision} -> {status}"))
+    c.commit()
+    print(f"grab {gid[:6]} {decision} -> {status}", file=sys.stderr, flush=True)
+
+def _edit(c, g, tail):
+    """Replace the approval message with its outcome (and drop the buttons). Best effort."""
+    if not g["msg_id"]:
+        return
+    try:
+        tg("editMessageText", chat_id=grab_cfg().get("owner_chat_id"), message_id=g["msg_id"],
+           text=grab_message(c, g) + "\n\n" + tail, reply_markup={"inline_keyboard": []})
+    except Exception as e:
+        print("grab edit failed:", e, file=sys.stderr, flush=True)
+
+def announce(c):
+    for g in c.execute("select * from grabs where status='pending' and msg_id is null").fetchall():
+        kb = {"inline_keyboard": [[{"text": "\u2705 Approve", "callback_data": "a:" + g["id"]},
+                                    {"text": "\u274c Deny", "callback_data": "d:" + g["id"]}]]}
+        m = tg("sendMessage", chat_id=grab_cfg().get("owner_chat_id"), text=grab_message(c, g), reply_markup=kb)
+        c.execute("update grabs set msg_id=? where id=?", (m["message_id"], g["id"]))
+        c.commit()
+
+def expire(c):
+    grab_expire(c)
+    for g in c.execute("select * from grabs where status='expired' and msg_id is not null and coalesce(note,'')=''").fetchall():
+        _edit(c, g, "Expired: no answer in 30 minutes.")
+        c.execute("update grabs set note='expired' where id=?", (g["id"],))
+        c.commit()
+
+def handle_callback(c, cb):
+    cfg = grab_cfg()
+    owner = cfg.get("owner_user_id")
+    if owner in (None, "") or str((cb.get("from") or {}).get("id")) != str(owner):
+        return                                  # not the owner: say nothing at all
+    def answer(text):
+        try:
+            tg("answerCallbackQuery", callback_query_id=cb.get("id"), text=text)
+        except Exception:
+            pass
+    m = re.fullmatch(r"([ad]):([\w-]{1,40})", str(cb.get("data") or ""))
+    g = c.execute("select * from grabs where id=?", (m.group(2),)).fetchone() if m else None
+    if not g or g["status"] != "pending":
+        return answer("already handled")
+    if g["created"] < time.time() - GRAB_TTL:
+        grab_expire(c)
+        return answer("expired")
+    if m.group(1) == "d":
+        _grab_done(c, g["id"], "denied", "denied", "deny")
+        _edit(c, g, "Denied.")
+        return answer("denied")
+    # approve: claim the row first so a second tap or a crash can never dispatch twice
+    if c.execute("update grabs set status='approved', decided=? where id=? and status='pending'",
+                 (time.time(), g["id"])).rowcount != 1:
+        return answer("already handled")
+    c.commit()
+    try:
+        grab_check(c, g["show_id"], g["pick"], ignore_id=g["id"])
+    except Refused as e:
+        _grab_done(c, g["id"], "failed", str(e), "approve")
+        _edit(c, g, f"Not fetched: {e}")
+        return answer("not fetched")
+    except Exception as e:
+        _grab_done(c, g["id"], "failed", f"check failed: {type(e).__name__}", "approve")
+        _edit(c, g, f"Not fetched: check failed ({type(e).__name__}).")
+        return answer("not fetched")
+    try:
+        status, note = dispatch(c, g)
+    except Exception as e:                      # may or may not have been added: stay 'approved', never retry
+        c.execute("update grabs set note=? where id=?", (f"approved, result unknown ({type(e).__name__})", g["id"]))
+        c.commit()
+        print(f"grab {g['id'][:6]} dispatch error {type(e).__name__}", file=sys.stderr, flush=True)
+        _edit(c, g, f"Approved, but the result is unknown ({type(e).__name__}). Check qBittorrent before asking again.")
+        return answer("result unknown")
+    _grab_done(c, g["id"], status, note, "approve")
+    _edit(c, g, ("Done: " if status != "failed" else "Not fetched: ") + note)
+    answer(status)
+
+def cmd_bot(a, _c):
+    backoff = 5
+    while True:
+        try:
+            if not grab_cfg()["grab_enabled"]:
+                time.sleep(30)
+                continue
+            with closing(db()) as c:
+                expire(c)
+                announce(c)
+                off = int((c.execute("select v from kv where k='tg_offset'").fetchone() or ["0"])[0])
+                for u in tg("getUpdates", offset=off, timeout=15, allowed_updates=["callback_query"]) or []:
+                    try:
+                        if u.get("callback_query"):
+                            handle_callback(c, u["callback_query"])
+                    except Exception as e:
+                        print("callback error", type(e).__name__, file=sys.stderr, flush=True)
+                    c.execute("insert or replace into kv values('tg_offset', ?)", (str(u["update_id"] + 1),))
+                    c.commit()
+            backoff = 5
+        except Exception as e:
+            print("bot error", type(e).__name__, str(e)[:200], file=sys.stderr, flush=True)
+            time.sleep(backoff)
+            backoff = min(backoff * 2, 300)
+
 # ---------- serve: HTTP API for Hermes (via the read-only proxy) ----------
 # Limits are enforced here, on the home side; they are the only fence (owner chose no approval).
 MAX_SHOWS, MAX_CHANGES_DAY, MAX_REFRESH_DAY, MAX_TERMS, MAX_BODY = 10, 20, 6, 3, 4096
@@ -1073,6 +1216,151 @@ def _selftest_grab_dispatch():
     finally:
         g.update(saved)
 
+def _selftest_grab_bot():
+    """Telegram bot: announce, expire, taps, approval re-check. tg/dispatch faked."""
+    import tempfile
+    g = globals()
+    saved = {k: g[k] for k in ("DB", "config", "layout", "tg", "dispatch")}
+    try:
+        cfgd = {"grab_enabled": True, "grab_bot_token": "BOTTOKEN123", "owner_user_id": 111, "owner_chat_id": 111}
+        g["config"] = lambda: cfgd
+        past = "2020-01-01T00:00:00Z"
+        g["layout"] = lambda sid: [{"seasonNumber": 1, "episodeNumber": i, "airDateUtc": past, "hasFile": i <= 4} for i in range(1, 11)]
+        now = time.time()
+        sent = []
+        def fake_tg(method, **params):
+            sent.append((method, params))
+            return {"message_id": 77} if method == "sendMessage" else {}
+        g["tg"] = fake_tg
+        dispatched = []
+        def fake_dispatch(c, row):
+            dispatched.append(row["guid"])
+            return "queued", "queued: Example"
+        g["dispatch"] = fake_dispatch
+        HOSTILE = "\x1b[31m\u202e[GrpB][动画][示例剧][Example Show][2023][03-06][GB][1080P]" + " ZZZ" * 1500
+        def fresh():
+            g["DB"] = Path(tempfile.mkdtemp()) / "b.db"
+            sent.clear(); dispatched.clear(); cfgd["grab_enabled"] = True
+            with closing(db()) as c:
+                c.execute("insert into sites(id, name) values(1, 'SiteA')")
+                c.execute("insert into shows values(7, 'Example Show', '[\"Example Show\"]', ?)", (now,))
+                c.commit()
+        def seed(guid, title, size=10**9):
+            with closing(db()) as c:
+                c.execute("insert into releases values(?,?,?,?,?,?,?,?,?,?,?,?)",
+                          (guid, 1, 7, title, size, 5, "[]", "", "http://x", "http://localhost:9696/1/download?link=" + guid, now, now))
+                c.commit()
+        def request(guid):
+            with closing(db()) as c:
+                r = c.execute("select * from releases where guid=?", (guid,)).fetchone()
+                grab_request(c, "7", pick_id(r))
+                return c.execute("select id from grabs order by created desc limit 1").fetchone()[0]
+        def row(gid):
+            with closing(db()) as c:
+                return dict(c.execute("select * from grabs where id=?", (gid,)).fetchone())
+        def tap(gid, act="a", user=111):
+            with closing(db()) as c:
+                handle_callback(c, {"id": "cb1", "from": {"id": user}, "data": f"{act}:{gid}"})
+        def methods():
+            return [m for m, _ in sent]
+
+        # announce: plain text, bounded title, one keyboard, sent once
+        fresh()
+        seed("A", HOSTILE)
+        gid = request("A")
+        with closing(db()) as c:
+            announce(c)
+            announce(c)
+        assert methods() == ["sendMessage"], methods()
+        p = sent[0][1]
+        assert p["chat_id"] == 111 and "parse_mode" not in p
+        assert not re.search(r"[\x00-\x1f\x7f-\x9f\u202a-\u202e]", p["text"].replace("\n", " "))
+        assert max(len(x) for x in p["text"].split("\n")) < 400 and "Example Show" in p["text"] and "5, 6" not in p["text"] and "5-6" in p["text"]
+        btn = [b["callback_data"] for b in p["reply_markup"]["inline_keyboard"][0]]
+        assert btn == [f"a:{gid}", f"d:{gid}"] and all(len(b.encode()) <= 64 for b in btn)
+        assert row(gid)["msg_id"] == 77
+        # expire: a 31-minute-old pending row is expired and its message edited once
+        with closing(db()) as c:
+            c.execute("update grabs set created=? where id=?", (now - 1860, gid)); c.commit()
+            sent.clear(); expire(c); expire(c)
+        assert row(gid)["status"] == "expired" and methods() == ["editMessageText"], methods()
+        sent.clear(); tap(gid)                                        # tap after expiry: nothing dispatched
+        assert dispatched == [] and row(gid)["status"] == "expired"
+
+        # taps
+        fresh(); seed("A", "[GrpB][动画][示例剧][Example Show][2023][03-06][GB][1080P]")
+        gid = request("A")
+        with closing(db()) as c:
+            announce(c)
+        sent.clear()
+        tap(gid, user=222); tap(gid, "d", user=222)                   # someone else: ignored, silent
+        assert row(gid)["status"] == "pending" and sent == [] and dispatched == []
+        tap(gid); tap(gid)                                            # owner approves, second tap is a no-op
+        assert dispatched == ["A"] and row(gid)["status"] == "queued" and "queued" in row(gid)["note"]
+        assert "editMessageText" in methods() and "answerCallbackQuery" in methods()
+        fresh(); seed("A", "[GrpB][动画][示例剧][Example Show][2023][03-06][GB][1080P]")
+        gid = request("A"); tap(gid, "d")
+        assert row(gid)["status"] == "denied" and dispatched == []
+        tap(gid, "a"); assert dispatched == []                        # approve after deny: nothing
+
+        # approval re-checks everything on fresh data
+        for what in ("unwatched", "changed", "cap", "disabled"):
+            fresh(); seed("A", "[GrpB][动画][示例剧][Example Show][2023][03-06][GB][1080P]")
+            gid = request("A")
+            with closing(db()) as c:
+                if what == "unwatched":
+                    c.execute("delete from shows")
+                elif what == "changed":
+                    c.execute("update releases set title=title||' v2'")
+                elif what == "cap":
+                    c.execute("insert into grabs values('big',7,9,'z','0000000000','[]',29,0,'queued',?,NULL,NULL,'')", (now,))
+                c.commit()
+            if what == "disabled":
+                cfgd["grab_enabled"] = False
+            tap(gid)
+            assert dispatched == [] and row(gid)["status"] == "failed" and row(gid)["note"], (what, row(gid))
+            cfgd["grab_enabled"] = True
+
+        # dispatch blows up: row stays approved, loop-safe, never dispatched twice
+        fresh(); seed("A", "[GrpB][动画][示例剧][Example Show][2023][03-06][GB][1080P]")
+        gid = request("A")
+        def boom(c, r):
+            dispatched.append("boom")
+            raise RuntimeError("docker died")
+        g["dispatch"] = boom
+        tap(gid)
+        assert row(gid)["status"] == "approved" and "unknown" in row(gid)["note"] and dispatched == ["boom"]
+        tap(gid)
+        assert dispatched == ["boom"]
+        g["dispatch"] = fake_dispatch
+
+        # no owner configured -> every tap is ignored
+        fresh(); seed("A", "[GrpB][动画][示例剧][Example Show][2023][03-06][GB][1080P]")
+        gid = request("A"); cfgd["owner_user_id"] = None
+        tap(gid, user=None)
+        assert dispatched == [] and row(gid)["status"] == "pending"
+        cfgd["owner_user_id"] = 111
+
+        # the token never lands in the db and never in an error text
+        with closing(db()) as c:
+            assert "BOTTOKEN123" not in repr(c.execute("select * from grabs").fetchall()) + repr(c.execute("select * from actions").fetchall())
+        import urllib.error, urllib.request
+        real_open = urllib.request.urlopen
+        def failing(req, timeout=None):
+            raise urllib.error.URLError("boom " + req.full_url)
+        urllib.request.urlopen = failing
+        g["tg"] = saved["tg"]
+        try:
+            tg("getMe")
+            raise AssertionError("tg should raise")
+        except RuntimeError as e:
+            assert "BOTTOKEN123" not in str(e) and "getMe" in str(e)
+        finally:
+            urllib.request.urlopen = real_open
+        assert clean("a\x1bb\u202ec" + "x" * 500) == "a b c" + "x" * 195
+    finally:
+        g.update(saved)
+
 def selftest():
     L = {1: 26, 2: 36, 3: 36}
     cases = {
@@ -1120,6 +1408,7 @@ def selftest():
     _selftest_grab_basics()
     _selftest_grab_request()
     _selftest_grab_dispatch()
+    _selftest_grab_bot()
     sys.exit(1 if bad else print("selftest ok") or 0)
 
 def main():
