@@ -5,7 +5,7 @@ Runs on the vpn host. Talks to prowlarr/sonarr/qbittorrent via `docker exec <ctr
 on localhost; API keys are read from each app's config at run time and never stored.
 `query` / `seeding` never touch a site; only `refresh` searches, slowly.
 """
-import argparse, fcntl, hashlib, json, random, re, sqlite3, subprocess, sys, time, urllib.parse
+import argparse, fcntl, hashlib, json, random, re, secrets, sqlite3, subprocess, sys, time, urllib.parse
 from collections import defaultdict
 from contextlib import closing
 from datetime import datetime, timezone
@@ -506,6 +506,91 @@ def cmd_seeding(a, c):
     for h, (n, sz) in sorted(by.items(), key=lambda kv: -kv[1][0]):
         print(f"{n:5}  {sz / 2**40:6.2f} TiB  {h}")
 
+# ---------- grab: request side (HTTP API and CLI) ----------
+GRAB_TTL, GRAB_PENDING_MAX, GRAB_REQ_DAY = 1800, 5, 20
+GRAB_LIVE = "('pending','approved','queued','sent')"    # states that hold part of the daily caps
+PICK_RX = re.compile(r"^[0-9a-f]{10}$")
+
+def grab_expire(c):
+    now = time.time()
+    c.execute("update grabs set status='expired', decided=? where status='pending' and created<?", (now, now - GRAB_TTL))
+    c.commit()
+
+def grab_usage(c, ignore_id=None):
+    """(episodes, bytes) held by requests in the last 24 h; ignore_id is the row being approved."""
+    return tuple(c.execute(f"select coalesce(sum(n_eps),0), coalesce(sum(size),0) from grabs "
+                           f"where status in {GRAB_LIVE} and created>? and id is not ?",
+                           (time.time() - 86400, ignore_id)).fetchone())
+
+def grab_check(c, show, pick, ignore_id=None):
+    """Everything that must hold at request time AND again at approval time.
+    Returns (show_row, release_dict, missing_eps) or raises Refused."""
+    cfg = grab_cfg()
+    if not cfg["grab_enabled"]:
+        raise Refused("grab is disabled")
+    if not isinstance(pick, str) or not PICK_RX.match(pick):
+        raise Refused("'pick' must be the 10-character id printed on a release line")
+    try:
+        sh = show_row(c, str(show), exact=True)
+    except SystemExit as e:
+        raise Refused(str(e.code))
+    _, aired, have, cov, _ = coverage(c, sh)
+    found = {}
+    for by_ep in cov.values():
+        for ep, rels in by_ep.items():
+            for r in rels:
+                if pick_id(r) == pick:
+                    found.setdefault((r["site_id"], r["guid"]), (r, set()))[1].add(ep)
+    if not found:
+        raise Refused("stale pick: that release is gone or changed; run missing again")
+    rel, got = next(iter(found.values()))
+    fills = sorted(got & (aired - have))
+    if not fills:
+        raise Refused("nothing missing in this release")
+    if c.execute("select count(*) from grabs where site_id=? and guid=? and status not in ('denied','expired') "
+                 "and id is not ?", (rel["site_id"], rel["guid"], ignore_id)).fetchone()[0]:
+        raise Refused("this release was already requested")
+    eps_used, bytes_used = grab_usage(c, ignore_id)
+    size = rel["size"] or 0
+    if eps_used + len(fills) > grab_cfg()["grab_max_eps_day"]:
+        raise Refused(f"daily episode cap: {eps_used} used + {len(fills)} would pass {grab_cfg()['grab_max_eps_day']}")
+    if bytes_used + size > grab_cfg()["grab_max_bytes_day"]:
+        raise Refused(f"daily size cap: {bytes_used / 1e9:.0f} GB used + {size / 1e9:.1f} GB would pass "
+                      f"{grab_cfg()['grab_max_bytes_day'] / 1e9:.0f} GB")
+    return sh, rel, fills
+
+def grab_request(c, show, pick):
+    """Hermes (or the owner CLI) asks; the owner approves in Telegram. Nothing is fetched here."""
+    cfg = grab_cfg()
+    if not cfg["grab_enabled"]:
+        raise Refused("grab is disabled")
+    grab_expire(c)
+    if c.execute("select count(*) from grabs where status='pending'").fetchone()[0] >= GRAB_PENDING_MAX:
+        raise Refused(f"{GRAB_PENDING_MAX} requests are already waiting for the owner")
+    _budget(c, "grab_req", GRAB_REQ_DAY)
+    sh, rel, fills = grab_check(c, show, pick)
+    gid = secrets.token_urlsafe(12)
+    c.execute("insert into grabs values(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+              (gid, sh["id"], rel["site_id"], rel["guid"], pick, json.dumps(fills), len(fills),
+               rel["size"] or 0, "pending", time.time(), None, None, ""))
+    c.execute("insert into actions values(?,?,?)", (time.time(), "grab_req", f"{sh['id']} {rel['site_id']}:{rel['guid']} {rng(fills)}"))
+    c.commit()
+    return (f"request {gid[:6]} for {sh['title']} episodes {rng(fills)} is waiting for the owner to approve "
+            f"in Telegram (30 min); no need to poll, check GET /coverage/grabs once later if asked")
+
+def grab_list(c):
+    now = time.time()
+    rows = c.execute("select g.*, s.title as show from grabs g left join shows s on s.id=g.show_id "
+                     "where g.created>? order by g.created", (now - 86400,)).fetchall()
+    eps, size = grab_usage(c)
+    cfg = grab_cfg()
+    out = [f"today: {eps}/{cfg['grab_max_eps_day']} eps \u00b7 {size / 1e9:.1f}/{cfg['grab_max_bytes_day'] / 1e9:.0f} GB"]
+    for r in rows:
+        st = "expired" if r["status"] == "pending" and r["created"] < now - GRAB_TTL else r["status"]
+        out.append(f"{r['id'][:6]}  {st:9} {r['show'] or r['show_id']}  eps {rng(json.loads(r['eps']))}  "
+                   f"{(r['size'] or 0) / 1e9:.1f} GB  {r['note'] or ''}".rstrip())
+    return "\n".join(out)
+
 # ---------- serve: HTTP API for Hermes (via the read-only proxy) ----------
 # Limits are enforced here, on the home side; they are the only fence (owner chose no approval).
 MAX_SHOWS, MAX_CHANGES_DAY, MAX_REFRESH_DAY, MAX_TERMS, MAX_BODY = 10, 20, 6, 3, 4096
@@ -539,6 +624,8 @@ def api_read(path, q):
             return _capture(cmd_sites, ns(action="list", names=[]), c)
         if path == "/coverage/seeding":
             return _capture(cmd_seeding, ns(), c)
+        if path == "/coverage/grabs":
+            return grab_list(c)
         what = path.rsplit("/", 1)[-1]
         if what in ("missing", "site", "gaps", "unclear"):
             if not q.get("show") or (what in ("site", "gaps") and not q.get("site")):
@@ -577,6 +664,10 @@ def api_write(path, body):
             out = ("refresh started for all watched shows; it keeps the usual pacing (12 h per show and site, "
                    "60 searches per run), so new data arrives over the next minutes")
             kind = "refresh"
+        elif path == "/coverage/grab":
+            if set(body) != {"show", "pick"}:
+                raise Refused("body must be exactly {\"show\": ..., \"pick\": ...}")
+            return grab_request(c, show, body["pick"])      # writes its own actions row
         else:
             raise Refused("unknown path")
         c.execute("insert into actions values(?,?,?)", (time.time(), kind, f"{path} {show}"))
@@ -717,6 +808,130 @@ def _selftest_grab_basics():
     finally:
         g.update(saved)
 
+def _selftest_grab_request():
+    """grab request API: eligibility, caps, limits. Sonarr layout faked, no network."""
+    import tempfile
+    g = globals()
+    saved = {k: g[k] for k in ("DB", "config", "layout")}
+    try:
+        cfgd = {"grab_enabled": True}
+        g["config"] = lambda: cfgd
+        past = "2020-01-01T00:00:00Z"
+        g["layout"] = lambda sid: [{"seasonNumber": 1, "episodeNumber": i, "airDateUtc": past, "hasFile": i <= 4}
+                                   for i in range(1, 11)]
+        now = time.time()
+        def fresh():
+            g["DB"] = Path(tempfile.mkdtemp()) / "r.db"
+            with closing(db()) as c:
+                c.execute("insert into sites(id, name) values(1, 'SiteA')")
+                c.execute("insert into shows values(7, 'Example Show', '[\"Example Show\"]', ?)", (now,))
+                c.commit()
+        def seed(guid, title, size=10**9):
+            with closing(db()) as c:
+                c.execute("insert into releases values(?,?,?,?,?,?,?,?,?,?,?,?)",
+                          (guid, 1, 7, title, size, 5, "[]", "", "http://x",
+                           "http://localhost:9696/1/download?link=" + guid, now, now))
+                c.commit()
+        def pk(guid):
+            with closing(db()) as c:
+                return pick_id(c.execute("select * from releases where guid=?", (guid,)).fetchone())
+        def filler(i, n, size, status, created=None):
+            with closing(db()) as c:
+                c.execute("insert into grabs values(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                          (i, 7, 9, "f" + i, "0" * 10, "[]", n, size, status, created or now, None, None, ""))
+                c.commit()
+        def refused(body):
+            try:
+                api_write("/coverage/grab", body)
+            except Refused:
+                return True
+            return False
+        def req(guid, show="7"):
+            return api_write("/coverage/grab", {"show": show, "pick": pk(guid)})
+        def status_of(i):
+            with closing(db()) as c:
+                return c.execute("select status from grabs where id=?", (i,)).fetchone()[0]
+
+        fresh()
+        seed("A", "[GrpB][动画][示例剧][Example Show][2023][03-06][GB][1080P]")   # covers 3-6; 3,4 owned -> fills 5,6
+        seed("B", "Example Show S01E02 1080p")                                     # only an owned episode
+        seed("C", "Example Show S01E07 1080p")
+        seed("D", "Example Show S01E08 1080p")
+        cfgd["grab_enabled"] = False
+        assert refused({"show": "7", "pick": pk("A")})                              # disabled
+        cfgd["grab_enabled"] = True
+        assert refused({"show": "999", "pick": pk("A")})                            # not watched
+        assert refused({"show": "7", "pick": "ZZ"}) and refused({"show": "7"})      # bad / missing pick
+        assert refused({"show": "7", "pick": pk("A"), "url": "http://evil"})        # smuggled key
+        old = pk("A")
+        with closing(db()) as c:
+            c.execute("update releases set title=title||' x' where guid='A'"); c.commit()
+        assert refused({"show": "7", "pick": old})                                  # stale pick
+        with closing(db()) as c:
+            c.execute("update releases set title=substr(title,1,length(title)-2) where guid='A'"); c.commit()
+        assert pk("A") == old
+        assert refused({"show": "7", "pick": pk("B")})                              # nothing missing
+        out = req("A")
+        assert "Telegram" in out and "http" not in out
+        with closing(db()) as c:
+            row = c.execute("select * from grabs").fetchone()
+            assert row["status"] == "pending" and row["n_eps"] == 2 and json.loads(row["eps"]) == [5, 6]
+            assert c.execute("select count(*) from actions where kind='grab_req'").fetchone()[0] == 1
+        assert refused({"show": "7", "pick": pk("A")})                              # same release twice
+        with closing(db()) as c:
+            c.execute("update grabs set status='denied'"); c.commit()
+        req("A")                                                                    # denied -> may ask again
+        shown = api_read("/coverage/grabs", {})
+        assert "2/30 eps" in shown and "http" not in shown and "Example Show" in shown
+
+        # episode cap: 2 pending + filler 27 = 29 -> one more episode fits, two don't
+        filler("f1", 27, 0, "pending")
+        req("C")                                                                    # 30 of 30
+        assert refused({"show": "7", "pick": pk("D")})                              # 31st episode
+        with closing(db()) as c:
+            c.execute("update grabs set status='denied' where id='f1'"); c.commit()
+        req("D")                                                                    # freed share
+
+        # byte cap
+        fresh()
+        seed("E", "Example Show S01E09 1080p", 2 * 10**9)
+        seed("F", "Example Show S01E10 1080p", 10**9)
+        filler("f2", 0, 199 * 10**9, "queued")
+        assert refused({"show": "7", "pick": pk("E")})                              # 201 GB
+        req("F")                                                                    # 200 GB exactly
+        # rows older than 24 h fall out of the window
+        fresh()
+        seed("E", "Example Show S01E09 1080p", 2 * 10**9)
+        filler("f3", 0, 199 * 10**9, "sent", created=now - 90000)
+        req("E")
+
+        # pending cap and request budget
+        fresh()
+        for i in range(5):
+            filler(f"p{i}", 0, 0, "pending")
+        seed("G", "Example Show S01E09 1080p")
+        assert refused({"show": "7", "pick": pk("G")})                              # 6th pending
+        with closing(db()) as c:
+            c.execute("update grabs set status='expired' where id='p0'")
+            c.commit()
+        req("G")                                                                    # slot freed
+        fresh()
+        seed("G", "Example Show S01E09 1080p")
+        with closing(db()) as c:
+            for _ in range(20):
+                c.execute("insert into actions values(?,?,?)", (now, "grab_req", "x"))
+            c.commit()
+        assert refused({"show": "7", "pick": pk("G")})                              # 21st request in 24 h
+
+        # stale pending rows expire on the next request
+        fresh()
+        seed("G", "Example Show S01E09 1080p")
+        filler("old", 0, 0, "pending", created=now - 2 * GRAB_TTL)
+        req("G")
+        assert status_of("old") == "expired"
+    finally:
+        g.update(saved)
+
 def selftest():
     L = {1: 26, 2: 36, 3: 36}
     cases = {
@@ -762,6 +977,7 @@ def selftest():
         globals()["config"] = real_config
     _selftest_limits()
     _selftest_grab_basics()
+    _selftest_grab_request()
     sys.exit(1 if bad else print("selftest ok") or 0)
 
 def main():
