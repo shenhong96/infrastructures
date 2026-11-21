@@ -1361,6 +1361,39 @@ def _selftest_grab_bot():
     finally:
         g.update(saved)
 
+def _selftest_grab_cli():
+    """`bot` refuses to start without its keys and never echoes the token; `grab` needs show and pick."""
+    import io, contextlib
+    g = globals()
+    saved = {k: g[k] for k in ("config", "cmd_bot")}
+    argv = sys.argv
+    try:
+        started = []
+        g["cmd_bot"] = lambda a, c: started.append(1)
+        g["config"] = lambda: {"grab_enabled": True, "grab_bot_token": "BOTTOKEN123"}
+        sys.argv = ["coverage.py", "bot"]
+        err = io.StringIO()
+        try:
+            with contextlib.redirect_stderr(err):
+                main()
+            raise AssertionError("bot started without owner ids")
+        except SystemExit as e:
+            assert e.code != 0
+        assert "owner_user_id" in err.getvalue() and "BOTTOKEN123" not in err.getvalue() and not started
+        g["config"] = lambda: {"grab_bot_token": "BOTTOKEN123", "owner_user_id": 1, "owner_chat_id": 1}
+        main()
+        assert started == [1]
+        sys.argv = ["coverage.py", "grab", "Example Show"]               # pick missing
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                main()
+            raise AssertionError("grab ran without a pick")
+        except SystemExit as e:
+            assert e.code != 0
+    finally:
+        sys.argv = argv
+        g.update(saved)
+
 def selftest():
     L = {1: 26, 2: 36, 3: 36}
     cases = {
@@ -1409,6 +1442,7 @@ def selftest():
     _selftest_grab_request()
     _selftest_grab_dispatch()
     _selftest_grab_bot()
+    _selftest_grab_cli()
     sys.exit(1 if bad else print("selftest ok") or 0)
 
 def main():
@@ -1423,6 +1457,9 @@ def main():
     q.add_argument("show"); q.add_argument("site", nargs="?")
     q.add_argument("--download-links", action="store_true", help="also print Prowlarr download links (LAN only, embed a key)")
     sp.add_parser("seeding"); sp.add_parser("selftest")
+    gr = sp.add_parser("grab", help="ask for a release to be fetched; the owner approves in Telegram")
+    gr.add_argument("show"); gr.add_argument("pick")
+    sp.add_parser("bot", help="Telegram approval bot for grab requests (long-running)")
     sv = sp.add_parser("serve", help="HTTP API for Hermes, behind the read-only proxy")
     sv.add_argument("--bind"); sv.add_argument("--port", type=int)
     sv.add_argument("--allow", action="append", default=[], help="client IP allowed (repeatable); default: config.json")
@@ -1433,6 +1470,20 @@ def main():
         p.error("watch add/remove needs a show")
     if a.cmd == "query" and a.what in ("site", "gaps") and not a.site:
         p.error(f"query {a.what} needs a site")
+    if a.cmd == "bot":
+        cf = config()
+        missing = [k for k in ("grab_bot_token", "owner_user_id", "owner_chat_id") if not cf.get(k)]
+        if missing:   # fail closed; names only, never values
+            p.error(f"bot needs {', '.join(missing)} in {CONFIG}")
+        db().close()
+        return cmd_bot(a, None)
+    if a.cmd == "grab":
+        try:
+            with closing(db()) as c:
+                print(grab_request(c, a.show, a.pick))
+        except Refused as e:
+            sys.exit(f"refused: {e}")
+        return
     if a.cmd == "serve":
         cf = config()
         a.bind, a.port = a.bind or cf.get("bind"), a.port or cf.get("port")
