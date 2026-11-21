@@ -106,7 +106,8 @@ class ReadOnlyProxy(unittest.TestCase):
         block = re.search(r'map "\$request_method:\$uri" \$method_ok \{(.*?)\}', conf, re.S).group(1)
         allowed = re.findall(r'^\s*"([^"]+)"\s+1;', block, re.M)
         self.assertEqual(sorted(allowed), sorted(["~^GET:", "POST:/coverage/watch",
-                                                  "POST:/coverage/unwatch", "POST:/coverage/refresh"]))
+                                                  "POST:/coverage/unwatch", "POST:/coverage/refresh",
+                                                  "POST:/coverage/grab"]))
         paths = re.findall(r"^\s*location\s+(?:[=~]\s+)?(\S+)", conf, re.M)
         self.assertEqual(sorted(paths), sorted(["/", "/api/v1/query", "/api/v1/query_range", "/api/v1/series",
                                                 "/api/v1/labels", "/api/v1/metadata",
