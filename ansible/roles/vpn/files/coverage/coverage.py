@@ -397,6 +397,10 @@ def subs(title):
     lang = next((k for k, rx in SUB_LANG if re.search(rx, title, re.I)), "")
     if not kind and re.search(r"\[Baha\]", title):  # ANi Baha rips are hardsubbed CHT
         kind, lang = "hard", lang or "cht"
+    if not kind and not lang:  # release groups with a known house style; private, so from config
+        m = re.search(r"-([A-Za-z0-9]+)(\.\w{2,4})?$", title.strip())
+        known = config().get("sub_groups", {}) if m else {}
+        return known.get(m.group(1), "?") if m else "?"
     return "-".join(x for x in (kind, lang) if x) or "?"
 
 def fmt_rel(r, dl):
@@ -704,6 +708,15 @@ def selftest():
     assert subs("[ANi] Sword of the Demon Hunter / 鬼人幻燈抄 - 24 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]") == "hard-cht"
     assert subs("[XK] 沧元图 [内嵌简繁][1080P]") == "hard-chs+cht"
     assert subs("The Demon Hunter 2023 S01E97 2160p WEB-DL H265 AAC-GRP") == "?"
+    real_config = globals()["config"]
+    globals()["config"] = lambda: {"sub_groups": {"ALPHA": "hard-chs"}}
+    try:
+        assert subs("The Demon Hunter S01 2023 2160p WEB-DL H265 AAC-ALPHA") == "hard-chs"
+        assert subs("Show.S01E01.2160p.WEB-DL.H265-ALPHA.mkv") == "hard-chs"
+        assert subs("The Demon Hunter S01 2023 2160p WEB-DL H265 AAC-GRP") == "?"
+        assert subs("[XK] 沧元图 [内嵌简繁][1080P] -ALPHA") == "hard-chs+cht"   # title tags win
+    finally:
+        globals()["config"] = real_config
     _selftest_limits()
     sys.exit(1 if bad else print("selftest ok") or 0)
 
