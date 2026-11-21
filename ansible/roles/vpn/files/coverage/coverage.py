@@ -5,7 +5,7 @@ Runs on the vpn host. Talks to prowlarr/sonarr/qbittorrent via `docker exec <ctr
 on localhost; API keys are read from each app's config at run time and never stored.
 `query` / `seeding` never touch a site; only `refresh` searches, slowly.
 """
-import argparse, fcntl, json, random, re, sqlite3, subprocess, sys, time, urllib.parse
+import argparse, fcntl, hashlib, json, random, re, sqlite3, subprocess, sys, time, urllib.parse
 from collections import defaultdict
 from contextlib import closing
 from datetime import datetime, timezone
@@ -72,6 +72,12 @@ def db(ro=False):
     create table if not exists fetches(show_id integer, site_id integer, term text,
         next_offset integer default 0, backfilled integer default 0, last_ok real default 0,
         last_result text, primary key(show_id, site_id, term));
+    create table if not exists grabs(
+        id text primary key, show_id integer, site_id integer, guid text, pick text,
+        eps text, n_eps integer, size integer, status text,
+        created real, decided real, msg_id integer, note text);
+    create index if not exists grabs_created on grabs(created);
+    create table if not exists kv(k text primary key, v text);
     """)
     return c
 
@@ -403,11 +409,23 @@ def subs(title):
         return known.get(m.group(1), "?") if m else "?"
     return "-".join(x for x in (kind, lang) if x) or "?"
 
+# ---------- grab: Hermes asks, the owner approves in Telegram ----------
+GRAB_DEFAULTS = {"grab_enabled": False, "grab_category": "tv-sonarr",
+                 "grab_max_eps_day": 30, "grab_max_bytes_day": 200 * 10**9}
+
+def grab_cfg():
+    return {**GRAB_DEFAULTS, **config()}
+
+def pick_id(r):
+    """10 hex chars over the fields a grab depends on: changes if the daily refresh rewrites the row."""
+    raw = "\x1f".join(str(r[k] or "") for k in ("site_id", "guid", "title", "download_url"))
+    return hashlib.sha256(raw.encode()).hexdigest()[:10]
+
 def fmt_rel(r, dl):
     flags = ",".join(json.loads(r["flags"] or "[]"))
     days = int((time.time() - r["last_seen"]) / 86400)   # old pages aren't re-read, so seeders/flags age
     old = f" (as of {days}d ago)" if days >= 2 else ""
-    line = f"{r['site']}: {r['title']} | subs {subs(r['title'])} | {(r['size'] or 0) / 2**30:.1f}G seed {r['seeders']}{' ' + flags if flags else ''}{old}\n      {r['info_url']}"
+    line = f"{r['site']}: {r['title']} | subs {subs(r['title'])} | {(r['size'] or 0) / 2**30:.1f}G seed {r['seeders']}{' ' + flags if flags else ''} | pick {pick_id(r)}{old}\n      {r['info_url']}"
     return line + (f"\n      {r['download_url']}&apikey={_key('prowlarr')}" if dl and r["download_url"] else "")
 
 def best_releases(cov, sites, want, dl, top=8):
@@ -674,6 +692,31 @@ def _selftest_limits():
         g.update(saved)
         subprocess.run = real_run
 
+def _selftest_grab_basics():
+    """pick ids, grab config defaults and the grabs/kv tables."""
+    import tempfile
+    g = globals()
+    saved = {k: g[k] for k in ("DB", "config")}
+    try:
+        g["DB"] = Path(tempfile.mkdtemp()) / "g.db"
+        g["config"] = lambda: {}
+        r = {"site_id": 1, "guid": "g1", "title": "Example Show S01E05 1080p", "download_url": "http://localhost:9696/1/download?link=a",
+             "site": "SiteA", "size": 2**30, "seeders": 5, "flags": "[]", "info_url": "http://x", "last_seen": time.time()}
+        pid = pick_id(r)
+        assert re.fullmatch(r"[0-9a-f]{10}", pid) and pick_id(dict(r)) == pid
+        assert pick_id({**r, "title": "changed"}) != pid and pick_id({**r, "download_url": "http://localhost:9696/2/download"}) != pid
+        assert f"pick {pid}" in fmt_rel(r, False)
+        cfg = grab_cfg()
+        assert cfg["grab_enabled"] is False and cfg["grab_category"] == "tv-sonarr"
+        assert cfg["grab_max_eps_day"] == 30 and cfg["grab_max_bytes_day"] == 200_000_000_000
+        g["config"] = lambda: {"grab_enabled": True, "grab_max_eps_day": 5}
+        assert grab_cfg()["grab_enabled"] is True and grab_cfg()["grab_max_eps_day"] == 5 and grab_cfg()["grab_max_bytes_day"] == 200_000_000_000
+        with closing(db()) as c:
+            names = {x[0] for x in c.execute("select name from sqlite_master where type='table'")}
+            assert {"grabs", "kv"} <= names
+    finally:
+        g.update(saved)
+
 def selftest():
     L = {1: 26, 2: 36, 3: 36}
     cases = {
@@ -718,6 +761,7 @@ def selftest():
     finally:
         globals()["config"] = real_config
     _selftest_limits()
+    _selftest_grab_basics()
     sys.exit(1 if bad else print("selftest ok") or 0)
 
 def main():
