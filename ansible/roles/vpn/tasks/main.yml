@@ -57,3 +57,57 @@
     mode: "0600"
   no_log: true
   diff: false
+
+# Episode coverage: which indexer has which episodes of watched shows; Hermes reads it over
+# HTTP through the read-only proxy. Its data (coverage.db) stays on the machine. Default sites
+# and the API's bind/port/allowed client are private: coverage_config in secrets.sops.yml.
+- name: Episode coverage folder
+  ansible.builtin.file:
+    path: /root/coverage
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Episode coverage script
+  ansible.builtin.copy:
+    src: coverage/coverage.py
+    dest: /root/coverage/coverage.py
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart episode coverage API
+
+- name: Episode coverage config
+  ansible.builtin.template:
+    src: coverage-config.json.j2
+    dest: /root/coverage/config.json
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+  diff: false
+  notify: Restart episode coverage API
+
+- name: Episode coverage units
+  ansible.builtin.copy:
+    src: "coverage/{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - episode-coverage.service
+    - episode-coverage.timer
+    - episode-coverage-api.service
+  notify: Restart episode coverage API
+
+- name: Episode coverage timer and API running
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+    daemon_reload: true
+  loop:
+    - episode-coverage.timer
+    - episode-coverage-api.service

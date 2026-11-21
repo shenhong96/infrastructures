@@ -1,0 +1,14 @@
+[Unit]
+Description=Episode coverage HTTP API for Hermes (only the read-only proxy may call it)
+After=docker.service network-online.target
+
+[Service]
+# bind, port and allowed client come from /root/coverage/config.json
+ExecStart=/usr/bin/python3 /root/coverage/coverage.py serve
+Restart=on-failure
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
