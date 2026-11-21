@@ -1,0 +1,15 @@
+[Unit]
+Description=Episode coverage approval bot (Telegram buttons for grab requests)
+After=docker.service network-online.target
+
+[Service]
+# token and owner ids come from /root/coverage/config.json; refuses to start without them
+ExecStart=/usr/bin/python3 /root/coverage/coverage.py bot
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

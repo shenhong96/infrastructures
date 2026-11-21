@@ -77,7 +77,9 @@
     owner: root
     group: root
     mode: "0755"
-  notify: Restart episode coverage API
+  notify:
+    - Restart episode coverage API
+    - Restart episode coverage bot
 
 - name: Episode coverage config
   ansible.builtin.template:
@@ -88,7 +90,9 @@
     mode: "0600"
   no_log: true
   diff: false
-  notify: Restart episode coverage API
+  notify:
+    - Restart episode coverage API
+    - Restart episode coverage bot
 
 - name: Episode coverage units
   ansible.builtin.copy:
@@ -101,7 +105,10 @@
     - episode-coverage.service
     - episode-coverage.timer
     - episode-coverage-api.service
-  notify: Restart episode coverage API
+    - episode-coverage-bot.service
+  notify:
+    - Restart episode coverage API
+    - Restart episode coverage bot
 
 - name: Episode coverage timer and API running
   ansible.builtin.systemd_service:
@@ -112,3 +119,13 @@
   loop:
     - episode-coverage.timer
     - episode-coverage-api.service
+
+# The approval bot only runs once its keys are in coverage_config (grab_bot_token,
+# owner_user_id, owner_chat_id); without them `coverage.py bot` refuses to start.
+- name: Episode coverage approval bot running
+  ansible.builtin.systemd_service:
+    name: episode-coverage-bot.service
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: coverage_config.grab_bot_token is defined

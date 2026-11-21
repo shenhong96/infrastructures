@@ -3,3 +3,10 @@
     name: episode-coverage-api.service
     state: restarted
     daemon_reload: true
+
+- name: Restart episode coverage bot
+  ansible.builtin.systemd_service:
+    name: episode-coverage-bot.service
+    state: restarted
+    daemon_reload: true
+  when: coverage_config.grab_bot_token is defined
