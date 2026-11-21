@@ -1,0 +1,5 @@
+- name: Restart episode coverage API
+  ansible.builtin.systemd_service:
+    name: episode-coverage-api.service
+    state: restarted
+    daemon_reload: true

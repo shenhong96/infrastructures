@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily episode coverage refresh
+
+[Timer]
+OnCalendar=*-*-* 04:00
+RandomizedDelaySec=3h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

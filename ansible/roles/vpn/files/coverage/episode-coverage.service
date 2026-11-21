@@ -1,0 +1,9 @@
+[Unit]
+Description=Episode coverage refresh (slow Prowlarr search for watched shows)
+After=docker.service
+
+[Service]
+Type=oneshot
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /root/coverage/coverage.py refresh
+TimeoutStartSec=3h
