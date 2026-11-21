@@ -591,6 +591,72 @@ def grab_list(c):
                    f"{(r['size'] or 0) / 1e9:.1f} GB  {r['note'] or ''}".rstrip())
     return "\n".join(out)
 
+# ---------- grab: dispatch (only the bot calls this, after the owner's tap) ----------
+DL_PATH_RX = re.compile(r"^/\d+/download$")
+MAGNET_RX = re.compile(r"^magnet:\?xt=urn:bt[im]h:[0-9A-Za-z]{32,40}(&[^\s]{0,1500})?$")
+CATEGORY_RX = re.compile(r"^[\w.-]{1,40}$")
+
+def check_download_url(url):
+    """Only the internal Prowlarr gateway, never a URL we did not build."""
+    u = urllib.parse.urlsplit(url or "")
+    if len(url or "") > 2048 or u.scheme != "http" or u.netloc != "localhost:9696" or not DL_PATH_RX.match(u.path):
+        raise Refused("download link is not an internal gateway link")
+    return url
+
+def docker_curl(ctr, args, stdin=None, timeout=90):
+    """The only place a write goes through: `docker exec [-i] <ctr> curl <args>`. Returns (returncode, stdout)."""
+    cmd = ["docker", "exec"] + (["-i"] if stdin is not None else []) + [ctr, "curl"] + list(args)
+    try:
+        r = subprocess.run(cmd, input=stdin, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 124, b""
+    return r.returncode, r.stdout
+
+def qb_port():
+    return subprocess.check_output(["docker", "exec", "qbittorrent", "sh", "-c", "echo ${WEBUI_PORT:-8080}"], text=True).strip()
+
+def dispatch(c, g):
+    """Fetch the release through Prowlarr, hand the file (or magnet) to qBittorrent. -> (status, note).
+    Never retried by the caller: a failure here may still have added the item."""
+    rel = c.execute("select * from releases where site_id=? and guid=?", (g["site_id"], g["guid"])).fetchone()
+    if not rel:
+        return "failed", "release row is gone"
+    cat = grab_cfg()["grab_category"]
+    if not CATEGORY_RX.match(str(cat)):
+        return "failed", "bad grab_category in config"
+    try:
+        url = check_download_url(rel["download_url"])
+    except Refused as e:
+        return "failed", str(e)
+    key = _key("prowlarr")
+    rc, out = docker_curl("prowlarr", ["-s", "-m", "60", "--max-redirs", "0", "--max-filesize", "5M", "-o", "-",
+                                       "-w", "\n%{http_code} %{redirect_url}",
+                                       url + ("&" if "?" in url else "?") + "apikey=" + key], timeout=90)
+    body, _, tail = out.rpartition(b"\n")
+    code, _, loc = tail.decode(errors="replace").partition(" ")
+    if rc != 0:
+        return "failed", "could not fetch the link from Prowlarr"
+    port = qb_port()
+    base = ["-s", "-m", "30", "-w", "\n%{http_code}", "--form-string", "category=" + cat]
+    if code == "200" and body.startswith(b"d") and b"4:info" in body:
+        rc, res = docker_curl("qbittorrent", base + ["-F", "torrents=@-;filename=x.torrent", f"localhost:{port}/api/v2/torrents/add"],
+                              stdin=body, timeout=60)
+    elif code in ("301", "302", "303", "307", "308") and MAGNET_RX.match(loc.strip()):
+        rc, res = docker_curl("qbittorrent", base + ["--form-string", "urls=" + loc.strip(), f"localhost:{port}/api/v2/torrents/add"],
+                              timeout=60)
+    else:
+        return "failed", f"link returned HTTP {code or 'none'}, not a torrent file or magnet"
+    if rc != 0 or not res.startswith(b"Ok"):
+        return "failed", "qBittorrent did not accept it"
+    try:
+        qs = urllib.parse.urlencode({"category": cat, "sort": "added_on", "reverse": "true", "limit": 5})
+        for t in api("qbittorrent", port, "/api/v2/torrents/info?" + qs, auth=False) or []:
+            if t.get("added_on", 0) > time.time() - 60:
+                return "queued", "queued: " + re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", str(t.get("name")))[:80]
+    except Exception:
+        pass
+    return "sent", "sent to qBittorrent; not visible there yet"
+
 # ---------- serve: HTTP API for Hermes (via the read-only proxy) ----------
 # Limits are enforced here, on the home side; they are the only fence (owner chose no approval).
 MAX_SHOWS, MAX_CHANGES_DAY, MAX_REFRESH_DAY, MAX_TERMS, MAX_BODY = 10, 20, 6, 3, 4096
@@ -932,6 +998,81 @@ def _selftest_grab_request():
     finally:
         g.update(saved)
 
+def _selftest_grab_dispatch():
+    """grab dispatch: URL validation, Prowlarr fetch, qBittorrent add. docker_curl/api/_key faked."""
+    import tempfile
+    g = globals()
+    saved = {k: g[k] for k in ("DB", "config", "docker_curl", "api", "_key", "qb_port")}
+    try:
+        g["DB"] = Path(tempfile.mkdtemp()) / "d.db"
+        g["config"] = lambda: {"grab_enabled": True, "grab_bot_token": "BOTTOKEN123"}
+        g["_key"] = lambda ctr: "PROWLARRKEY"
+        g["qb_port"] = lambda: "8080"
+        calls, replies, listing = [], [], []
+        def fake(ctr, args, stdin=None, timeout=90):
+            calls.append((ctr, list(args), stdin))
+            return replies.pop(0)
+        g["docker_curl"] = fake
+        g["api"] = lambda ctr, port, path, auth=True, timeout=150: listing
+        good = "http://localhost:9696/3/download?link=abc&file=x"
+        for bad in ("https://localhost:9696/3/download?link=a", "http://localhost:9697/3/download", "http://user@localhost:9696/3/download",
+                    "http://localhost:9696/3/other", "http://evil.example/3/download", "http://localhost:9696/3/download?" + "a" * 2100, ""):
+            try:
+                check_download_url(bad)
+                raise AssertionError("accepted " + bad[:40])
+            except Refused:
+                pass
+        assert check_download_url(good) == good
+        now = time.time()
+        with closing(db()) as c:
+            def seed(guid, url=good):
+                c.execute("insert into releases values(?,?,?,?,?,?,?,?,?,?,?,?)", (guid, 1, 7, "t", 10**9, 5, "[]", "", "http://x", url, now, now))
+                c.commit()
+            torrent = b"d8:announce3:abc4:infod6:lengthi1eee\n\x00\xffbinary"
+            magnet = "magnet:?xt=urn:btih:" + "a" * 40 + "&dn=Example"
+            def run(guid, prowlarr, qb=None, url=good):
+                seed(guid, url)
+                calls.clear(); replies.clear()
+                replies.append(prowlarr)
+                if qb is not None:
+                    replies.append(qb)
+                return dispatch(c, {"site_id": 1, "guid": guid})
+            # .torrent body -> uploaded from stdin, fixed fields, no savepath
+            listing[:] = [{"name": "Example.S01E05", "added_on": now}]
+            st, note = run("T1", (0, torrent + b"\n200 "), (0, b"Ok.\n200"))
+            assert st == "queued" and "Example.S01E05" in note, (st, note)
+            assert len(calls) == 2 and calls[0][0] == "prowlarr" and calls[1][0] == "qbittorrent"
+            assert "PROWLARRKEY" in " ".join(calls[0][1]) and "--max-redirs" in calls[0][1] and "--max-filesize" in calls[0][1]
+            q = calls[1][1]
+            assert calls[1][2] == torrent and "torrents=@-;filename=x.torrent" in q and "category=tv-sonarr" in q
+            assert not any("savepath" in a for a in q) and "PROWLARRKEY" not in " ".join(q) and "PROWLARRKEY" not in note
+            # magnet redirect -> urls=, no stdin
+            st, note = run("T2", (0, b"\n302 " + magnet.encode()), (0, b"Ok.\n200"))
+            assert st == "queued" and calls[1][2] is None and "urls=" + magnet in calls[1][1]
+            assert any(a == "--form-string" for a in calls[1][1])
+            # not visible yet -> sent
+            listing[:] = []
+            st, _ = run("T3", (0, torrent + b"\n200 "), (0, b"Ok.\n200"))
+            assert st == "sent"
+            listing[:] = [{"name": "old", "added_on": now - 3600}]
+            assert run("T3b", (0, torrent + b"\n200 "), (0, b"Ok.\n200"))[0] == "sent"
+            # anything else: failed, qBittorrent never called
+            for i, rep in enumerate([(0, b"\n302 http://evil.example/x"), (0, b"<html>no</html>\n200 "), (0, b"\n200 "),
+                                     (0, b"\n302 magnet:?xt=urn:btih:short"), (1, b""), (0, b"\n500 ")]):
+                st, note = run(f"X{i}", rep)
+                assert st == "failed" and len(calls) == 1 and "PROWLARRKEY" not in note, (i, st, note)
+            # bad url in the DB row: no docker call at all
+            st, _ = run("U1", (0, b""), url="http://evil.example/3/download")
+            assert st == "failed" and calls == []
+            # qBittorrent refuses
+            st, note = run("Q1", (0, torrent + b"\n200 "), (0, b"Fails.\n200"))
+            assert st == "failed"
+            # missing row
+            assert dispatch(c, {"site_id": 1, "guid": "nope"})[0] == "failed"
+        assert "BOTTOKEN123" not in repr(calls)
+    finally:
+        g.update(saved)
+
 def selftest():
     L = {1: 26, 2: 36, 3: 36}
     cases = {
@@ -978,6 +1119,7 @@ def selftest():
     _selftest_limits()
     _selftest_grab_basics()
     _selftest_grab_request()
+    _selftest_grab_dispatch()
     sys.exit(1 if bad else print("selftest ok") or 0)
 
 def main():
