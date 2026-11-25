@@ -42,3 +42,14 @@ slashes and descendants. The former can search trackers and the latter can
 download reports or record redirects. The JSON-only response filter is not a
 side-effect boundary. This closes those routes; it is not a claim that every
 remaining GET in every upstream version has been audited.
+
+## Qui client settings
+
+Only the exact `/api/client-settings` path is additionally allowed for qui.
+In pinned qui v1.33.1, `internal/api/server.go` registers its GET under the
+authenticated group; `GetClientSettings` reads the stored key-value map without
+changing it. `web/src/lib/client-settings.ts` includes `qui-incognito-mode`
+among the synced settings. The existing server-side API-key credential remains
+required. PUT is denied locally; this does not allow a settings subtree or
+any adjacent API-key/authentication routes. The response receives the same
+readiness gate, redaction, size limits and tripwire as other app responses.

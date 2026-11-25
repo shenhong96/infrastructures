@@ -28,7 +28,7 @@ SERVARR_DENY = ('release', 'search', 'indexer/test', 'filesystem', 'mediacover',
 APPS = {
     'qbit': {'prefixes': ['/api/v2/'], 'deny': ['/api/v2/torrents/export', '/api/v2/torrents/downloadfile', '/api/v2/log', '/api/v2/app/shutdown', '/api/v2/auth']},
     'qbit-ubits': {'prefixes': ['/api/v2/'], 'deny': ['/api/v2/torrents/export', '/api/v2/torrents/downloadfile', '/api/v2/log', '/api/v2/app/shutdown', '/api/v2/auth']},
-    'qui': {'prefixes': ['/api/instances', '/api/health', '/api/version'], 'deny_contains': ['export', 'backup', 'api-keys', 'apikeys', 'auth', 'logs']},
+    'qui': {'prefixes': ['/api/instances', '/api/health', '/api/version'], 'exact': ['/api/client-settings'], 'deny_contains': ['export', 'backup', 'api-keys', 'apikeys', 'auth', 'logs']},
     'sonarr': {'prefixes': ['/api/v3/'], 'deny': ['/api/v3/' + p for p in SERVARR_DENY]},
     'radarr': {'prefixes': ['/api/v3/'], 'deny': ['/api/v3/' + p for p in SERVARR_DENY]},
     # Prowlarr 2.7 NewznabController performs searches/downloads on these GETs.
@@ -80,6 +80,8 @@ def check_path(app, path):
     for pattern in rules.get('deny_regex', []):
         if re.match(pattern, path):
             return 'deny:' + pattern
+    if path in rules.get('exact', []):
+        return None
     prefixes = rules['prefixes']
     if not any((re.match(r'^/users/[^/]+/items(?:/|$)', path) if p == '/users/*/items' else _matches(path, p)) for p in prefixes):
         return 'prefix'

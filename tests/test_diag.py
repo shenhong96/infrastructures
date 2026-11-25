@@ -49,6 +49,11 @@ class PathRules(unittest.TestCase):
             self.assertTrue(rule.startswith('deny:'), path)
         self.assertIsNone(diag.check_path('prowlarr', '/api/v1/indexer/1'))
 
+    def test_qui_client_settings_is_an_exact_read_route(self):
+        self.assertIsNone(diag.check_path('qui', '/api/client-settings'))
+        for path in ['/api/client-settings/other', '/api/client-settings-extra']:
+            self.assertEqual(diag.check_path('qui', path), 'prefix')
+
 
 class Redaction(unittest.TestCase):
     def setUp(self):
@@ -283,6 +288,23 @@ class Handler(unittest.TestCase):
                 self.assertTrue(json.load(cm.exception)['rule'].startswith('deny:'))
                 cm.exception.close()
             fetch.assert_not_called()
+
+    def test_qui_incognito_setting_is_readable_but_not_writable(self):
+        state = diag.HarvestState()
+        state.finish(state.begin(), True)
+        base = self.start_server({'apps': {'qui': {}}}, state)
+        payload = json.dumps({'qui-incognito-mode': 'true', 'apiKey': 'withhold-me'}).encode()
+        with patch.object(diag, 'fetch', return_value=(200, 'application/json', payload)) as fetch:
+            with urlopen(base + '/diag/qui/api/client-settings', timeout=5) as response:
+                data = json.load(response)['untrusted_data']
+                self.assertEqual(data['qui-incognito-mode'], 'true')
+                self.assertEqual(data['apiKey'], '[REDACTED]')
+            with self.assertRaises(HTTPError) as cm:
+                urlopen(Request(base + '/diag/qui/api/client-settings', method='PUT'), timeout=5)
+            self.assertEqual(cm.exception.code, 405)
+            cm.exception.close()
+            fetch.assert_called_once()
+            self.assertEqual(fetch.call_args.args[:2], ('qui', '/api/client-settings'))
 
     def test_methods_paths_and_redaction(self):
         class Upstream(BaseHTTPRequestHandler):
