@@ -44,7 +44,7 @@ class PathRules(unittest.TestCase):
 class Redaction(unittest.TestCase):
     def setUp(self):
         self.s = diag.Secrets()
-        self.key = 'cAnArYpAsSkEy123456'
+        self.key = 'cAnArY' + 'x' * 13  # built at runtime so gitleaks sees no key literal
         self.s.add(self.key, 'prowlarr')
 
     def test_exact_value_in_free_text(self):
@@ -96,8 +96,9 @@ class Harvest(unittest.TestCase):
         self.assertEqual(sorted(diag.harvest_provider_fields(items)), ['c' * 20, 'k' * 20])
 
     def test_tracker_urls(self):
-        got = diag.harvest_tracker_urls(['https://t.example/announce.php?passkey=ABCDEF0123456789', 'udp://open.example:1337/announce'])
-        self.assertEqual(got, ['ABCDEF0123456789'])
+        fake = 'F' * 16  # built at runtime so gitleaks sees no key literal
+        got = diag.harvest_tracker_urls(['https://t.example/announce.php?passkey=' + fake, 'udp://open.example:1337/announce'])
+        self.assertEqual(got, [fake])
 
     def test_cache_resumes(self):
         with tempfile.TemporaryDirectory() as d:
