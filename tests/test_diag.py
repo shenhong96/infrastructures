@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -394,6 +395,81 @@ class Handler(unittest.TestCase):
             server.server_close()
             upstream.shutdown()
             upstream.server_close()
+
+
+class FetchDeadline(unittest.TestCase):
+    def start_upstream(self, handler):
+        server = ThreadingHTTPServer(('127.0.0.1', 0), handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return {'apps': {'sonarr': {'base': f'http://127.0.0.1:{server.server_port}', 'headers': {}}}}
+
+    def test_header_body_and_chunk_trickles_share_one_deadline(self):
+        stop = threading.Event()
+        class Slow(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+            def do_GET(self):
+                body = b'{"ok":true}'
+                headers = b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n'
+                if self.path == '/chunked':
+                    headers += b'Transfer-Encoding: chunked\r\n\r\n'
+                    chunks = [headers] + [b'1\r\n' + bytes([ch]) + b'\r\n' for ch in body] + [b'0\r\n\r\n']
+                else:
+                    headers += b'Content-Length: ' + str(len(body)).encode() + b'\r\n\r\n'
+                    chunks = [bytes([ch]) for ch in headers] + [body] if self.path == '/headers' else [headers] + [bytes([ch]) for ch in body]
+                if self.path == '/combined':
+                    stop.wait(0.08)
+                try:
+                    for chunk in chunks:
+                        if stop.is_set():
+                            return
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                        stop.wait(0.025)
+                except OSError:
+                    pass  # the deadline intentionally closes the socket mid-stream
+        cfg = self.start_upstream(Slow)
+        self.addCleanup(stop.set)
+        for path in ['/headers', '/body', '/chunked', '/combined']:
+            with self.subTest(path=path), patch.object(diag, 'TIMEOUT', 0.15):
+                start = time.monotonic()
+                status, _, body = diag.fetch('sonarr', path, cfg)
+                elapsed = time.monotonic() - start
+                self.assertEqual(status, 502)
+                self.assertEqual(json.loads(body), {'error': 'upstream unreachable'})
+                self.assertLess(elapsed, 0.6)
+
+    def test_fast_response_and_upstream_size_cap(self):
+        seen = []
+        class Fast(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+            def do_GET(self):
+                seen.append((self.command, self.headers.get('X-Api-Key')))
+                body = b'{"ok":true}' if self.path == '/small' else b'[' + b'0,' * 100 + b'0]'
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+        cfg = self.start_upstream(Fast)
+        cfg['apps']['sonarr']['headers']['X-Api-Key'] = 'fake-header-' + 'Z' * 16
+        with patch.object(diag, 'TIMEOUT', 0.3), patch.object(diag, 'MAX_UPSTREAM', 64), \
+                patch.dict(diag.os.environ, {'http_proxy': 'http://127.0.0.1:9', 'HTTP_PROXY': 'http://127.0.0.1:9', 'no_proxy': '', 'NO_PROXY': ''}):
+            status, _, body = diag.fetch('sonarr', '/small', cfg)
+            self.assertEqual((status, json.loads(body)), (200, {'ok': True}))
+            self.assertEqual(diag.fetch('sonarr', '/large', cfg)[0], 413)
+        self.assertEqual(seen, [('GET', cfg['apps']['sonarr']['headers']['X-Api-Key'])] * 2)
+
+    def test_invalid_bases_never_open_a_connection(self):
+        with patch.object(diag, 'DeadlineConnection') as connection:
+            for base in ['http://example.com', 'https://127.0.0.1', 'http://127.0.0.1/api',
+                         'http://u:p@127.0.0.1', 'http://127.0.0.1?x=y']:
+                cfg = {'apps': {'sonarr': {'base': base}}}
+                self.assertEqual(diag.fetch('sonarr', '/api/v3/health', cfg)[0], 502)
+            connection.assert_not_called()
 
 
 class Selftest(unittest.TestCase):

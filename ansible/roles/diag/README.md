@@ -75,3 +75,19 @@ to populate its documented identity fields with identities, not uncollected
 credentials. It cannot distinguish an unknown secret deliberately substituted
 into a trusted identity slot. Unknown schemas and additional cache-key shapes
 stay fail-closed until audited; extend the fixtures when upgrading Jellyfin.
+
+## Overall upstream deadline
+
+One monotonic 20-second budget covers connection, request transmission, response
+headers, chunk framing and body reading. The HTTP reader recomputes the remaining
+socket timeout on each receive; a peer cannot extend the budget by trickling
+bytes. Budget exhaustion returns the fixed upstream-unreachable error, and both
+connection and response descriptors are closed. No global signal or background
+fetch worker is left running after a timeout.
+
+The transport supports the design's fixed numeric IPv4 HTTP app bases only.
+Hostnames, userinfo and base URL paths/queries/fragments are rejected rather
+than introducing DNS or unaudited endpoint rewriting. Redirects are returned
+without following them, and environment proxies are never used. Supporting
+HTTPS or hostname-based apps requires an explicit transport extension and
+deadline tests; none of the configured app bases needs either today.

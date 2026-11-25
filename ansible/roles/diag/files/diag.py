@@ -3,17 +3,19 @@
 import argparse
 import base64
 from contextlib import contextmanager
+from http.client import HTTPConnection
+from ipaddress import IPv4Address
+import io
 import json
 import logging
 import os
 from pathlib import Path
 import re
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.error import HTTPError
 from urllib.parse import parse_qs, quote, unquote, urlsplit
-from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 CONFIG = Path('/etc/diag/config.json')
 STATE = Path('/var/lib/diag/trackers.jsonl')
@@ -360,28 +362,92 @@ def shape(app, path, status, content_type, body, secrets, stats=None):
         return 502, {'error': 'response withheld'}
 
 
-class NoRedirect(HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
+def time_left(deadline):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError('upstream deadline exceeded')
+    return remaining
+
+
+class DeadlineReader(io.RawIOBase):
+    def __init__(self, sock, deadline):
+        self.sock, self.deadline = sock, deadline
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        # BufferedReader uses this for headers, chunk framing AND response bodies.
+        # Recompute the budget for every recv, not merely every response.read().
+        self.sock.settimeout(time_left(self.deadline))
+        size = self.sock.recv_into(buffer)
+        time_left(self.deadline)
+        return size
+
+    def close(self):
+        try:
+            self.sock.close()
+        finally:
+            super().close()
+
+
+class DeadlineSocket(socket.socket):
+    def __init__(self, deadline):
+        super().__init__(socket.AF_INET, socket.SOCK_STREAM)
+        self.deadline = deadline
+
+    def sendall(self, data, flags=0):
+        self.settimeout(time_left(self.deadline))
+        super().sendall(data, flags)
+        time_left(self.deadline)
+
+    def makefile(self, mode='r', buffering=None, **kwargs):
+        if mode != 'rb':
+            raise ValueError('only binary response reads are supported')
+        # HTTPConnection may close its socket after parsing Connection: close.
+        # The response owns a duplicate until its buffered reader is closed.
+        reader_sock = socket.socket(fileno=os.dup(self.fileno()))
+        return io.BufferedReader(DeadlineReader(reader_sock, self.deadline))
+
+
+class DeadlineConnection(HTTPConnection):
+    def __init__(self, host, port, deadline):
+        super().__init__(host, port, timeout=time_left(deadline))
+        self.deadline = deadline
+
+    def connect(self):
+        self.sock = DeadlineSocket(self.deadline)
+        self.sock.settimeout(time_left(self.deadline))
+        self.sock.connect((self.host, self.port))
+        time_left(self.deadline)
 
 
 def fetch(app, path_qs, cfg):
+    deadline = time.monotonic() + TIMEOUT
+    connection = None
     try:
         config = cfg['apps'][app]
-        request = Request(config['base'].rstrip('/') + path_qs, headers=config.get('headers', {}), method='GET')
-        opener = build_opener(ProxyHandler({}), NoRedirect())
-        try:
-            response = opener.open(request, timeout=TIMEOUT)
-        except HTTPError as err:
-            response = err
-        with response:
+        base = urlsplit(config['base'])
+        # All configured apps use fixed LAN IPv4 HTTP bases. Reject hostnames
+        # rather than hiding an unbounded resolver operation outside the budget.
+        if base.scheme != 'http' or base.username is not None or base.password is not None or base.path not in ('', '/') or base.query or base.fragment:
+            raise ValueError('invalid app base')
+        host = str(IPv4Address(base.hostname))
+        connection = DeadlineConnection(host, base.port or 80, deadline)
+        # http.client neither follows redirects nor consults proxy environment.
+        connection.request('GET', path_qs, headers=config.get('headers', {}))
+        with connection.getresponse() as response:
             body = response.read(MAX_UPSTREAM + 1)
+            time_left(deadline)
             if len(body) > MAX_UPSTREAM:
                 return 413, 'application/json', b'{"error":"upstream response too large"}'
             return response.status, response.headers.get('Content-Type', ''), body
     except Exception:
         logging.warning('upstream request failed app=%s', app)
         return 502, 'application/json', b'{"error":"upstream unreachable"}'
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 class HarvestState:
