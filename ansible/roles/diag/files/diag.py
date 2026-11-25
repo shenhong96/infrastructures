@@ -167,6 +167,92 @@ def tripwire(text):
     return None
 
 
+def jellyfin_scan_view(path, data):
+    """Exclude only schema-defined identities from the generic hex detector.
+
+    This is an inspection copy AFTER exact/field redaction, never the response.
+    Free text, unknown nested objects and client-supplied device IDs stay scanned.
+    """
+    def identity(value):
+        return '[jellyfin identifier]' if isinstance(value, str) and re.fullmatch(r'[a-fA-F0-9]{32}', value) else value
+
+    def fields(obj, names):
+        if not isinstance(obj, dict):
+            return obj
+        return {key: identity(value) if key in names else value for key, value in obj.items()}
+
+    image_types = {'Primary', 'Art', 'Backdrop', 'Banner', 'Logo', 'Thumb', 'Disc', 'Box', 'BoxRear', 'Menu', 'Screenshot'}
+
+    def item(obj):
+        out = fields(obj, {'Id', 'ServerId', 'ChannelId', 'ParentId', 'SeriesId', 'SeasonId', 'AlbumId',
+                           'ParentLogoItemId', 'ParentBackdropItemId', 'ParentArtItemId', 'ParentThumbItemId',
+                           'ParentPrimaryImageItemId', 'DisplayPreferencesId', 'Etag', 'ParentLogoImageTag',
+                           'ParentThumbImageTag', 'ParentArtImageTag', 'SeriesThumbImageTag', 'ParentPrimaryImageTag',
+                           'ChannelPrimaryImageTag', 'SeriesPrimaryImageTag', 'AlbumPrimaryImageTag'})
+        if not isinstance(out, dict):
+            return out
+        for key in ('Studios', 'GenreItems', 'ArtistItems', 'AlbumArtists', 'People'):
+            if isinstance(out.get(key), list):
+                out[key] = [fields(value, {'Id', 'PrimaryImageTag'} if key == 'People' else {'Id'}) for value in out[key]]
+        if isinstance(out.get('UserData'), dict):
+            out['UserData'] = fields(out['UserData'], {'ItemId'})
+        if isinstance(out.get('MediaSources'), list):
+            out['MediaSources'] = [fields(value, {'Id'}) for value in out['MediaSources']]
+        if isinstance(out.get('ImageTags'), dict):
+            out['ImageTags'] = {key: identity(value) if key in image_types else value for key, value in out['ImageTags'].items()}
+        for key in ('BackdropImageTags', 'ParentBackdropImageTags', 'ScreenshotImageTags'):
+            if isinstance(out.get(key), list):
+                out[key] = [identity(value) for value in out[key]]
+        if isinstance(out.get('ImageBlurHashes'), dict):
+            out['ImageBlurHashes'] = {
+                kind: {identity(key): value for key, value in tags.items()} if kind in image_types and isinstance(tags, dict) else tags
+                for kind, tags in out['ImageBlurHashes'].items()
+            }
+        return out
+
+    route = path.lower().rstrip('/')
+    guid = r'(?:[a-f0-9]{32}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})'
+    items_root = rf'/(?:users/{guid}/)?items'
+    list_route = re.fullmatch(items_root + rf'(?:/(?:latest|resume)|/{guid}/(?:similar|ancestors))?', route)
+    item_route = re.fullmatch(items_root + '/' + guid, route)
+    if list_route:
+        if isinstance(data, dict) and isinstance(data.get('Items'), list):
+            data = dict(data, Items=[item(value) for value in data['Items']])
+        elif isinstance(data, list):
+            data = [item(value) for value in data]
+    elif item_route:
+        data = item(data)
+    elif route in ('/system/info', '/system/info/public'):
+        data = fields(data, {'Id'})
+    elif route == '/sessions' and isinstance(data, list):
+        sessions = []
+        for value in data:
+            value = fields(value, {'Id', 'UserId', 'ServerId', 'UserPrimaryImageTag'})
+            if isinstance(value, dict) and isinstance(value.get('NowPlayingItem'), dict):
+                value['NowPlayingItem'] = item(value['NowPlayingItem'])
+            if isinstance(value, dict) and isinstance(value.get('NowPlayingQueue'), list):
+                value['NowPlayingQueue'] = [fields(entry, {'Id'}) for entry in value['NowPlayingQueue']]
+            sessions.append(value)
+        data = sessions
+    elif route in ('/plugins', '/scheduledtasks', '/library/virtualfolders') and isinstance(data, list):
+        data = [fields(value, {'ItemId', 'PrimaryImageItemId'} if route == '/library/virtualfolders' else {'Id'}) for value in data]
+        if route == '/scheduledtasks':
+            for value in data:
+                if isinstance(value, dict) and isinstance(value.get('LastExecutionResult'), dict):
+                    value['LastExecutionResult'] = fields(value['LastExecutionResult'], {'Id'})
+    elif re.fullmatch('/scheduledtasks/' + guid, route):
+        data = fields(data, {'Id'})
+        if isinstance(data, dict) and isinstance(data.get('LastExecutionResult'), dict):
+            data['LastExecutionResult'] = fields(data['LastExecutionResult'], {'Id'})
+    if list_route or item_route or re.fullmatch('/scheduledtasks/' + guid, route):
+        parts = path.split('/')
+        for index in (2, 4):
+            if index < len(parts):
+                parts[index] = identity(parts[index])
+        path = '/'.join(parts)
+    return path, data
+
+
 def harvest_provider_fields(items):
     if not isinstance(items, list):
         raise ValueError('invalid provider inventory')
@@ -261,6 +347,10 @@ def shape(app, path, status, content_type, body, secrets, stats=None):
             if len(encoded()) > MAX_RESPONSE:
                 return 413, {'error': 'response too large'}
         rule = tripwire(encoded().decode('utf-8'))
+        if rule == 'hex-key' and app == 'jellyfin' and status == 200:
+            scan_path, scan_data = jellyfin_scan_view(safe_path, result['untrusted_data'])
+            scan = dict(result, path=scan_path, untrusted_data=scan_data)
+            rule = tripwire(json.dumps(scan, ensure_ascii=True, allow_nan=False))
         if rule:
             if stats is not None:
                 stats['tripwire'] = rule
