@@ -2,6 +2,7 @@
 """Read-only, redacting gateway for selected home-lab application APIs."""
 import argparse
 import base64
+from contextlib import contextmanager
 import json
 import logging
 import os
@@ -19,6 +20,8 @@ STATE = Path('/var/lib/diag/trackers.jsonl')
 MAX_RESPONSE = 262144
 MAX_UPSTREAM = 16 * 1024 * 1024
 TIMEOUT = 20
+HARVEST_INTERVAL = 1800
+HARVEST_RETRY = 60
 FIELD_RE = re.compile(r'pass(word|key)?|secret|token|api_?key|rss_?key|auth|cookie|session|credential|private', re.I)
 SERVARR_DENY = ('release', 'search', 'indexer/test', 'filesystem', 'mediacover',
                 'system/backup', 'log', 'config/host', 'command', 'update', 'apikey')
@@ -161,13 +164,15 @@ def tripwire(text):
 
 
 def harvest_provider_fields(items):
+    if not isinstance(items, list):
+        raise ValueError('invalid provider inventory')
     found = []
     for item in items:
-        if not isinstance(item, dict):
-            continue
-        for field in item.get('fields', []):
-            if not isinstance(field, dict):
-                continue
+        if not isinstance(item, dict) or not isinstance(item.get('fields'), list):
+            raise ValueError('invalid provider fields')
+        for field in item['fields']:
+            if not isinstance(field, dict) or not isinstance(field.get('name'), str):
+                raise ValueError('invalid provider field')
             value, name = field.get('value'), field.get('name')
             if isinstance(value, str) and value and (field.get('privacy') in ('apiKey', 'password', 'userName') or (isinstance(name, str) and FIELD_RE.search(name))):
                 found.append(value)
@@ -285,7 +290,37 @@ def fetch(app, path_qs, cfg):
         return 502, 'application/json', b'{"error":"upstream unreachable"}'
 
 
+class HarvestState:
+    """Authorize responses only within a completed, fresh harvest generation."""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._generation = 0
+        self._expires = 0
+
+    def begin(self):
+        with self._lock:
+            self._generation += 1
+            self._expires = 0
+            return self._generation
+
+    def finish(self, generation, success):
+        with self._lock:
+            if generation == self._generation:
+                self._expires = time.monotonic() + HARVEST_INTERVAL if success else 0
+
+    def ticket(self):
+        with self._lock:
+            return self._generation if time.monotonic() < self._expires else None
+
+    @contextmanager
+    def response_guard(self, ticket):
+        # Keep refresh from invalidating the inventory between redaction and send.
+        with self._lock:
+            yield ticket is not None and ticket == self._generation and time.monotonic() < self._expires
+
+
 def harvest_once(cfg, secrets, cache):
+    complete = True
     for value in cache.values():
         secrets.add(value, 'tracker')
     for app, paths in PROVIDER_PATHS.items():
@@ -294,11 +329,13 @@ def harvest_once(cfg, secrets, cache):
         for path in paths:
             status, _, body = fetch(app, path, cfg)
             if status != 200:
+                complete = False
                 continue
             try:
                 for value in harvest_provider_fields(json.loads(body)):
                     secrets.add(value, app)
             except (ValueError, TypeError):
+                complete = False
                 logging.warning('harvest failed app=%s', app)
     for app in ('qbit', 'qbit-ubits'):
         if app not in cfg['apps']:
@@ -306,33 +343,52 @@ def harvest_once(cfg, secrets, cache):
         done = cache.done_hashes()
         status, _, body = fetch(app, '/api/v2/torrents/info', cfg)
         if status != 200:
+            complete = False
             continue
         try:
             torrents = json.loads(body)
+            if not isinstance(torrents, list):
+                raise ValueError('invalid torrent inventory')
             for torrent in torrents:
                 torrent_hash = torrent.get('hash', '')
                 cache_key = app + ':' + torrent_hash
-                if not re.fullmatch(r'[a-fA-F0-9]{40,64}', torrent_hash) or cache_key in done:
+                if not re.fullmatch(r'(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})', torrent_hash):
+                    raise ValueError('invalid torrent hash')
+                if cache_key in done:
                     continue
                 status, _, body = fetch(app, '/api/v2/torrents/trackers?hash=' + torrent_hash, cfg)
                 if status != 200:
+                    complete = False
                     continue
                 trackers = json.loads(body)
-                values = harvest_tracker_urls([t.get('url', '') for t in trackers if isinstance(t, dict)])
+                if not isinstance(trackers, list) or any(not isinstance(t, dict) or not isinstance(t.get('url'), str) for t in trackers):
+                    raise ValueError('invalid tracker inventory')
+                values = harvest_tracker_urls([t['url'] for t in trackers])
                 for value in values:
                     secrets.add(value, app)
                 cache.add(cache_key, values)
         except (ValueError, TypeError, AttributeError):
+            complete = False
             logging.warning('tracker harvest failed app=%s', app)
+    return complete
 
 
-def harvest_loop(cfg, secrets, cache):
+def harvest_cycle(cfg, secrets, cache, state):
+    generation = state.begin()
+    success = False
+    try:
+        success = harvest_once(cfg, secrets, cache)
+    except Exception:
+        logging.error('harvest failed')
+    finally:
+        state.finish(generation, success)
+    return success
+
+
+def harvest_loop(cfg, secrets, cache, state):
     while True:
-        try:
-            harvest_once(cfg, secrets, cache)
-        except Exception:
-            logging.error('harvest failed')
-        time.sleep(1800)
+        success = harvest_cycle(cfg, secrets, cache, state)
+        time.sleep(HARVEST_INTERVAL if success else HARVEST_RETRY)
 
 
 class DiagHandler(BaseHTTPRequestHandler):
@@ -361,7 +417,8 @@ class DiagHandler(BaseHTTPRequestHandler):
             return self.respond(403, {'error': 'client forbidden'})
         parts = urlsplit(self.path)
         if parts.path == '/diag/':
-            return self.respond(200, {'apps': sorted(self.server.cfg['apps'])})
+            return self.respond(200, {'apps': sorted(self.server.cfg['apps']),
+                                      'redaction_ready': self.server.harvest.ticket() is not None})
         match = re.fullmatch(r'/diag/([^/]+)(/.*)', parts.path)
         if not match:
             return self.respond(404, {'error': 'not found'})
@@ -372,12 +429,18 @@ class DiagHandler(BaseHTTPRequestHandler):
             return self.respond(403, {'error': 'blocked', 'rule': rule})
         if app not in self.server.cfg['apps']:
             return self.respond(403, {'error': 'blocked', 'rule': 'unknown-app'})
+        ticket = self.server.harvest.ticket()
+        if ticket is None:
+            return self.respond(503, {'error': 'secret inventory unavailable', 'retry_after': HARVEST_RETRY})
         status, content_type, body = fetch(app, path + ('?' + parts.query if parts.query else ''), self.server.cfg)
         if status == 502 and body == b'{"error":"upstream unreachable"}':
             return self.respond(502, {'error': 'upstream unreachable', 'app': app})
-        self.stats = {}
-        status, result = shape(app, path, status, content_type, body, self.server.secrets, self.stats)
-        return self.respond(status, result)
+        with self.server.harvest.response_guard(ticket) as ready:
+            if not ready:
+                return self.respond(503, {'error': 'secret inventory unavailable', 'retry_after': HARVEST_RETRY})
+            self.stats = {}
+            status, result = shape(app, path, status, content_type, body, self.server.secrets, self.stats)
+            return self.respond(status, result)
 
     def do_POST(self):
         self.respond(405, {'error': 'method not allowed'})
@@ -385,9 +448,10 @@ class DiagHandler(BaseHTTPRequestHandler):
     do_HEAD = do_OPTIONS = do_POST
 
 
-def create_server(cfg, secrets):
+def create_server(cfg, secrets, harvest=None):
     server = ThreadingHTTPServer((cfg.get('bind', '0.0.0.0'), cfg.get('port', 8796)), DiagHandler)
     server.cfg, server.secrets = cfg, secrets
+    server.harvest = harvest if harvest is not None else HarvestState()
     return server
 
 
@@ -419,8 +483,9 @@ def main():
     cache = HarvestCache(STATE)
     for value in cache.values():
         secrets.add(value, 'tracker')
-    threading.Thread(target=harvest_loop, args=(cfg, secrets, cache), daemon=True).start()
-    create_server(cfg, secrets).serve_forever()
+    harvest = HarvestState()
+    threading.Thread(target=harvest_loop, args=(cfg, secrets, cache, harvest), daemon=True).start()
+    create_server(cfg, secrets, harvest).serve_forever()
 
 
 if __name__ == '__main__':

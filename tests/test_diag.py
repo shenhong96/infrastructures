@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.error import HTTPError
 from urllib.parse import quote
@@ -111,6 +112,66 @@ class Harvest(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
 
+class HarvestReadiness(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cache = diag.HarvestCache(Path(self.tmp.name) / 'cache.jsonl')
+        self.secrets = diag.Secrets()
+        self.state = diag.HarvestState()
+        self.canary = 'provider-canary-' + 'Z' * 16
+        self.hash = 'a' * 40
+        self.cfg = {'apps': {'sonarr': {}, 'qbit': {}}}
+
+    def fetch(self, app, path, cfg):
+        if path.endswith('/torrents/info'):
+            data = [{'hash': self.hash}]
+        elif '/torrents/trackers?' in path:
+            data = [{'url': 'https://t.example/' + self.canary}]
+        else:
+            data = [{'fields': [{'name': 'apiKey', 'value': self.canary}]}]
+        return 200, 'application/json', json.dumps(data).encode()
+
+    def test_complete_snapshot_redacts_free_text(self):
+        self.assertIsNone(self.state.ticket())
+        with patch.object(diag, 'fetch', side_effect=self.fetch):
+            self.assertTrue(diag.harvest_cycle(self.cfg, self.secrets, self.cache, self.state))
+        self.assertIsNotNone(self.state.ticket())
+        status, body = diag.shape('sonarr', '/api/v3/health', 200, 'application/json',
+                                  json.dumps({'message': self.canary}).encode(), self.secrets)
+        self.assertEqual(status, 200)
+        self.assertNotIn(self.canary, json.dumps(body))
+        # Persisted tracker progress is not proof of provider readiness after a restart.
+        self.assertIsNone(diag.HarvestState().ticket())
+
+    def test_partial_failure_and_malformed_sources_fail_closed(self):
+        for index, (bad_path, reply) in enumerate([
+            ('/api/v3/notification', (502, 'application/json', b'{}')),
+            ('/api/v3/indexer', (200, 'application/json', b'{}')),
+            ('/api/v3/indexer', (200, 'application/json', b'[{"fields":null}]')),
+            ('/api/v2/torrents/info', (200, 'application/json', b'[{"hash":"bad"}]')),
+            ('/api/v2/torrents/trackers?hash=' + 'a' * 40, (502, 'application/json', b'{}')),
+            ('/api/v2/torrents/trackers?hash=' + 'a' * 40, (200, 'application/json', b'[{}]')),
+        ]):
+            with self.subTest(path=bad_path, reply=reply):
+                cache = diag.HarvestCache(Path(self.tmp.name) / f'case-{index}.jsonl')
+                def fetch(app, path, cfg):
+                    return reply if path == bad_path else self.fetch(app, path, cfg)
+                self.state.finish(self.state.begin(), True)
+                with patch.object(diag, 'fetch', side_effect=fetch):
+                    self.assertFalse(diag.harvest_cycle(self.cfg, self.secrets, cache, self.state))
+                self.assertIsNone(self.state.ticket())
+
+    def test_failure_recovers_and_stale_snapshot_expires(self):
+        with patch.object(diag, 'fetch', side_effect=OSError('do not log details')):
+            self.assertFalse(diag.harvest_cycle(self.cfg, self.secrets, self.cache, self.state))
+        with patch.object(diag, 'fetch', side_effect=self.fetch):
+            self.assertTrue(diag.harvest_cycle(self.cfg, self.secrets, self.cache, self.state))
+        self.assertIsNotNone(self.state.ticket())
+        with patch.object(diag.time, 'monotonic', return_value=diag.time.monotonic() + 1801):
+            self.assertIsNone(self.state.ticket())
+
+
 class Shape(unittest.TestCase):
     def test_non_json_withheld(self):
         status, body = diag.shape('jellyfin', '/x', 200, 'video/mp4', b'\x00\x01', diag.Secrets())
@@ -167,6 +228,39 @@ class Shape(unittest.TestCase):
 
 
 class Handler(unittest.TestCase):
+    def start_server(self, cfg, state=None):
+        cfg = dict(cfg, bind='127.0.0.1', port=0, allow_client='127.0.0.1')
+        server = diag.create_server(cfg, diag.Secrets(), state)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f'http://127.0.0.1:{server.server_port}'
+
+    def test_unready_inventory_never_fetches(self):
+        base = self.start_server({'apps': {'sonarr': {}}})
+        with patch.object(diag, 'fetch') as fetch:
+            with self.assertRaises(HTTPError) as cm:
+                urlopen(base + '/diag/sonarr/api/v3/health', timeout=5)
+            self.assertEqual(cm.exception.code, 503)
+            cm.exception.close()
+            fetch.assert_not_called()
+            with urlopen(base + '/diag/', timeout=5) as response:
+                self.assertFalse(json.load(response)['redaction_ready'])
+
+    def test_refresh_invalidates_inflight_response(self):
+        state = diag.HarvestState()
+        state.finish(state.begin(), True)
+        base = self.start_server({'apps': {'sonarr': {}}}, state)
+        def refresh_during_fetch(*args):
+            state.finish(state.begin(), True)
+            return 200, 'application/json', b'{"message":"withhold stale response"}'
+        with patch.object(diag, 'fetch', side_effect=refresh_during_fetch):
+            with self.assertRaises(HTTPError) as cm:
+                urlopen(base + '/diag/sonarr/api/v3/health', timeout=5)
+            self.assertEqual(cm.exception.code, 503)
+            self.assertNotIn(b'withhold stale response', cm.exception.read())
+            cm.exception.close()
+
     def test_methods_paths_and_redaction(self):
         class Upstream(BaseHTTPRequestHandler):
             def do_GET(self):
@@ -180,7 +274,9 @@ class Handler(unittest.TestCase):
         thread = threading.Thread(target=upstream.serve_forever, daemon=True)
         thread.start()
         cfg = {'bind': '127.0.0.1', 'port': 0, 'allow_client': '127.0.0.1', 'apps': {'sonarr': {'base': f'http://127.0.0.1:{upstream.server_port}', 'headers': {}}}}
-        server = diag.create_server(cfg, diag.Secrets())
+        state = diag.HarvestState()
+        state.finish(state.begin(), True)
+        server = diag.create_server(cfg, diag.Secrets(), state)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         base = f'http://127.0.0.1:{server.server_port}'
         try:
