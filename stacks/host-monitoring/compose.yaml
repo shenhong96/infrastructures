@@ -68,7 +68,7 @@ services:
     networks:
       - monitoring
 
-  # Per-guest CPU for Prometheus, from the host's cgroups (lxc-cpu/metrics.sh runs on each scrape).
+  # Per-guest CPU and memory for Prometheus, from the host's cgroups (lxc-cpu/metrics.sh runs on each scrape).
   # A guest can't report its own: lxcfs hands it the host's /proc/stat and loadavg.
   lxc-cpu:
     image: busybox:1.38.0@sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e
