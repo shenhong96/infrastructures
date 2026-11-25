@@ -4,6 +4,8 @@ Run from the repo root: python3 -m unittest discover tests"""
 import importlib.util
 import os
 import re
+import subprocess
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -90,6 +92,37 @@ class LxcCpu(unittest.TestCase):
         want = {f["VMID"]: name for p in (AGENT / "hosts").glob("*.yaml")
                 for name, f in [(p.stem, host_file(p))] if f["HOST_KIND"] == "lxc"}
         self.assertEqual(named, want)
+
+    def test_script_reads_a_guest_cgroup(self):
+        with tempfile.TemporaryDirectory() as root:
+            g = Path(root, "118")
+            g.mkdir()
+            files = {
+                "cpu.stat": "usage_usec 3000000\nuser_usec 2000000\nsystem_usec 1000000\n",
+                "cpu.pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=500000\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
+                "cpuset.cpus.effective": "0-5\n",
+                "cpu.max": "max 100000\n",
+                "memory.current": "3000\n",
+                "memory.max": "4000\n",
+                "memory.stat": "anon 1000\nfile 500\nshmem 200\nslab_unreclaimable 30\npgmajfault 7\n",
+                "memory.events": "low 0\nhigh 0\nmax 0\noom 2\noom_kill 1\n",
+                "memory.pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=3000000\nfull avg10=0 avg60=0 avg300=0 total=1\n",
+                "io.pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=4000000\nfull avg10=0 avg60=0 avg300=0 total=2\n",
+            }
+            for name, text in files.items():
+                (g / name).write_text(text)
+            out = subprocess.run(["sh", str(GRAFANA / "lxc-cpu/metrics.sh")], env={**os.environ, "CGROOT": root},
+                                 capture_output=True, text=True, check=True).stdout
+        got = dict(re.findall(r'^(\w+)\{host="vpn",vmid="118"\} (\S+)$', out, re.M))
+        self.assertEqual({k: float(v) for k, v in got.items()}, {
+            "lxc_cpu_usage_seconds_total": 3, "lxc_cpu_user_seconds_total": 2, "lxc_cpu_system_seconds_total": 1,
+            "lxc_pressure_cpu_waiting_seconds_total": 0.5, "lxc_pressure_cpu_stalled_seconds_total": 0,
+            "lxc_cpu_cores": 6, "lxc_memory_usage_bytes": 3000, "lxc_memory_limit_bytes": 4000,
+            "lxc_memory_unreclaimable_bytes": 1230, "lxc_memory_oom_kills_total": 1,
+            "lxc_memory_major_faults_total": 7,
+            "lxc_pressure_memory_waiting_seconds_total": 3, "lxc_pressure_memory_stalled_seconds_total": 0.000001,
+            "lxc_pressure_io_waiting_seconds_total": 4, "lxc_pressure_io_stalled_seconds_total": 0.000002,
+        })
 
     def test_prometheus_scrapes_it_and_loads_the_rules(self):
         prom = (GRAFANA / "prometheus.yml").read_text()
