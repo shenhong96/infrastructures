@@ -68,6 +68,8 @@ services:
   qbittorrent:
     image: ghcr.io/linuxserver/qbittorrent:libtorrentv1-release-5.1.4_v1.2.20-ls112
     container_name: qbittorrent
+    cpus: 2.0
+    mem_limit: 8g
     environment:
       - PUID=1000
       - PGID=1000
