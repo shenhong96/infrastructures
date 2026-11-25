@@ -8,8 +8,8 @@
 #   lxc_pressure_cpu_*_seconds_total                    time its tasks waited (some) or all stalled (full) on a CPU
 #   lxc_cpu_cores                                       the cores it may use
 #   lxc_memory_usage_bytes, lxc_memory_limit_bytes      memory charged to the guest (page cache included), its cap
-#   lxc_memory_anon_bytes                               the part the kernel can't drop: no swap on this host
-#   lxc_memory_oom_kills_total                          processes the kernel killed at the guest's cap
+#   lxc_memory_unreclaimable_bytes                      anon + shmem + unreclaimable slab: what the kernel can't drop while the host has no swap
+#   lxc_memory_oom_kills_total                          processes the kernel OOM-killed in the guest (at its cap, or in a host-wide OOM)
 #   lxc_memory_major_faults_total                       pages read back from disk: climbs fast when it thrashes
 #   lxc_pressure_memory_*_seconds_total, lxc_pressure_io_*  time its tasks waited (some) or all stalled (full) on memory, IO
 # host is the machine's inventory name (stacks/monitoring/hosts/): add a guest there and here.
@@ -49,7 +49,8 @@ BEGIN {
 		psi(v "/io.pressure", v, isome, ifull)
 		if (lines(v "/memory.current") > 0) mem[v] = out[1]
 		if (lines(v "/memory.max") > 0 && out[1] != "max") memmax[v] = out[1]
-		anon[v] = key(v "/memory.stat", "anon")
+		an = key(v "/memory.stat", "anon")
+		if (an != "") pinned[v] = an + key(v "/memory.stat", "shmem") + key(v "/memory.stat", "slab_unreclaimable")
 		majflt[v] = key(v "/memory.stat", "pgmajfault")
 		oomk[v] = key(v "/memory.events", "oom_kill")
 		cores[v] = ""
@@ -68,8 +69,8 @@ BEGIN {
 	emit("lxc_cpu_cores", "gauge", "Cores the guest may use.", cores, 1)
 	emit("lxc_memory_usage_bytes", "gauge", "Memory charged to the guest, page cache included.", mem, 1)
 	emit("lxc_memory_limit_bytes", "gauge", "The guest memory cap.", memmax, 1)
-	emit("lxc_memory_anon_bytes", "gauge", "Anonymous memory of the guest: with no swap, the kernel cannot reclaim it.", anon, 1)
-	emit("lxc_memory_oom_kills_total", "counter", "Processes the kernel OOM-killed at the guest memory cap.", oomk, 1)
+	emit("lxc_memory_unreclaimable_bytes", "gauge", "Anon, shmem and unreclaimable slab of the guest: what the kernel cannot drop while the host has no swap.", pinned, 1)
+	emit("lxc_memory_oom_kills_total", "counter", "Processes the kernel OOM-killed in the guest, at its cap or in a host-wide OOM.", oomk, 1)
 	emit("lxc_memory_major_faults_total", "counter", "Major page faults in the guest.", majflt, 1)
 	emit("lxc_pressure_memory_waiting_seconds_total", "counter", "Time some of the guest tasks waited for memory (PSI some).", msome, us)
 	emit("lxc_pressure_memory_stalled_seconds_total", "counter", "Time all of the guest tasks waited for memory (PSI full).", mfull, us)

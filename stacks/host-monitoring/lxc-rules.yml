@@ -17,8 +17,8 @@ groups:
     rules:
       # Share of the guest's cap held by memory the kernel can't drop, 0 to 1. Page cache is left
       # out: it fills any cap and is given back on demand.
-      - record: lxc:memory_anon_ratio
-        expr: lxc_memory_anon_bytes / on (host, vmid) lxc_memory_limit_bytes
+      - record: lxc:memory_unreclaimable_ratio
+        expr: lxc_memory_unreclaimable_bytes / on (host, vmid) lxc_memory_limit_bytes
       # Share of time some of its tasks waited for memory or IO, 0 to 1.
       - record: lxc:memory_pressure_ratio:rate5m
         expr: rate(lxc_pressure_memory_waiting_seconds_total[5m])
@@ -29,14 +29,14 @@ groups:
       - alert: LxcOomKill
         expr: increase(lxc_memory_oom_kills_total[10m]) > 0
         labels: {severity: warning}
-        annotations: {summary: "{{ $labels.host }}: the kernel killed a process at the guest's memory cap"}
+        annotations: {summary: "{{ $labels.host }}: the kernel OOM-killed a process in the guest"}
       - alert: LxcMemoryThrashing
         expr: lxc:memory_pressure_ratio:rate5m > 0.5
         for: 5m
         labels: {severity: critical}
         annotations: {summary: "{{ $labels.host }}: tasks wait on memory over half the time"}
       - alert: LxcMemoryNearCap
-        expr: lxc:memory_anon_ratio > 0.9
+        expr: lxc:memory_unreclaimable_ratio > 0.9
         for: 10m
         labels: {severity: warning}
         annotations: {summary: "{{ $labels.host }}: unreclaimable memory over 90% of the cap"}

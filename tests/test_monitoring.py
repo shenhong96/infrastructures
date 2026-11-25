@@ -102,12 +102,12 @@ class LxcCpu(unittest.TestCase):
                 "cpu.pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=500000\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
                 "cpuset.cpus.effective": "0-5\n",
                 "cpu.max": "max 100000\n",
-                "memory.current": "16738639872\n",
-                "memory.max": "16777216000\n",
-                "memory.stat": "anon 16358060032\nfile 210571264\npgmajfault 2401570343\n",
-                "memory.events": "low 0\nhigh 0\nmax 25600906\noom 5\noom_kill 4\n",
-                "memory.pressure": "some avg10=98.92 avg60=98.89 avg300=98.92 total=64337454216\nfull avg10=0 avg60=0 avg300=0 total=1\n",
-                "io.pressure": "some avg10=29.29 avg60=31.56 avg300=31.33 total=32648168519\nfull avg10=0 avg60=0 avg300=0 total=2\n",
+                "memory.current": "3000\n",
+                "memory.max": "4000\n",
+                "memory.stat": "anon 1000\nfile 500\nshmem 200\nslab_unreclaimable 30\npgmajfault 7\n",
+                "memory.events": "low 0\nhigh 0\nmax 0\noom 2\noom_kill 1\n",
+                "memory.pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=3000000\nfull avg10=0 avg60=0 avg300=0 total=1\n",
+                "io.pressure": "some avg10=0.00 avg60=0.00 avg300=0.00 total=4000000\nfull avg10=0 avg60=0 avg300=0 total=2\n",
             }
             for name, text in files.items():
                 (g / name).write_text(text)
@@ -117,11 +117,11 @@ class LxcCpu(unittest.TestCase):
         self.assertEqual({k: float(v) for k, v in got.items()}, {
             "lxc_cpu_usage_seconds_total": 3, "lxc_cpu_user_seconds_total": 2, "lxc_cpu_system_seconds_total": 1,
             "lxc_pressure_cpu_waiting_seconds_total": 0.5, "lxc_pressure_cpu_stalled_seconds_total": 0,
-            "lxc_cpu_cores": 6, "lxc_memory_usage_bytes": 16738639872, "lxc_memory_limit_bytes": 16777216000,
-            "lxc_memory_anon_bytes": 16358060032, "lxc_memory_oom_kills_total": 4,
-            "lxc_memory_major_faults_total": 2401570343,
-            "lxc_pressure_memory_waiting_seconds_total": 64337.454216, "lxc_pressure_memory_stalled_seconds_total": 0.000001,
-            "lxc_pressure_io_waiting_seconds_total": 32648.168519, "lxc_pressure_io_stalled_seconds_total": 0.000002,
+            "lxc_cpu_cores": 6, "lxc_memory_usage_bytes": 3000, "lxc_memory_limit_bytes": 4000,
+            "lxc_memory_unreclaimable_bytes": 1230, "lxc_memory_oom_kills_total": 1,
+            "lxc_memory_major_faults_total": 7,
+            "lxc_pressure_memory_waiting_seconds_total": 3, "lxc_pressure_memory_stalled_seconds_total": 0.000001,
+            "lxc_pressure_io_waiting_seconds_total": 4, "lxc_pressure_io_stalled_seconds_total": 0.000002,
         })
 
     def test_prometheus_scrapes_it_and_loads_the_rules(self):
