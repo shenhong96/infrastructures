@@ -31,7 +31,9 @@ APPS = {
     'qui': {'prefixes': ['/api/instances', '/api/health', '/api/version'], 'deny_contains': ['export', 'backup', 'api-keys', 'apikeys', 'auth', 'logs']},
     'sonarr': {'prefixes': ['/api/v3/'], 'deny': ['/api/v3/' + p for p in SERVARR_DENY]},
     'radarr': {'prefixes': ['/api/v3/'], 'deny': ['/api/v3/' + p for p in SERVARR_DENY]},
-    'prowlarr': {'prefixes': ['/api/v1/'], 'deny': ['/api/v1/' + p for p in SERVARR_DENY]},
+    # Prowlarr 2.7 NewznabController performs searches/downloads on these GETs.
+    # Withholding its XML/torrent response afterwards cannot undo the action.
+    'prowlarr': {'prefixes': ['/api/v1/'], 'deny': ['/api/v1/' + p for p in SERVARR_DENY], 'deny_regex': [r'^/api/v1/indexer/[^/]+/(newznab|download)(/|$)']},
     'jellyfin': {'prefixes': ['/system/info', '/sessions', '/scheduledtasks', '/library/virtualfolders', '/items', '/users/*/items', '/devices', '/plugins', '/packages', '/health'], 'deny': ['/environment'], 'deny_regex': [r'^/items/[^/]+/(download|file|images)(/|$)', r'^/users/[^/]+/items/[^/]+/(download|file|images)(/|$)', r'^/plugins/[^/]+/configuration(/|$)']},
 }
 PAGING = {'qbit': 'limit, offset, filter, category', 'qbit-ubits': 'limit, offset, filter, category', 'qui': 'limit, offset', 'sonarr': 'pageSize, page', 'radarr': 'pageSize, page', 'prowlarr': 'pageSize, page', 'jellyfin': 'Limit, StartIndex'}

@@ -41,6 +41,14 @@ class PathRules(unittest.TestCase):
         for app, path in [('sonarr', '/api/v3/release'), ('radarr', '/api/v3/release'), ('prowlarr', '/api/v1/search'), ('prowlarr', '/api/v1/indexer/test'), ('sonarr', '/api/v3/filesystem'), ('sonarr', '/api/v3/mediacover/1/poster.jpg'), ('sonarr', '/api/v3/system/backup'), ('sonarr', '/api/v3/log/file'), ('qbit', '/api/v2/torrents/export'), ('qbit', '/api/v2/app/shutdown'), ('qbit', '/api/v2/log/main'), ('qui', '/api/instances/1/torrents/x/export'), ('jellyfin', '/Items/1/Download'), ('jellyfin', '/Items/1/File')]:
             self.assertIsNotNone(diag.check_path(app, path), (app, path))
 
+    def test_prowlarr_newznab_and_download_routes_denied(self):
+        for path in ['/api/v1/indexer/1/newznab', '/API/V1/Indexer/2/Newznab/',
+                     '/api/v1/indexer/1/download', '/api/v1/indexer/-1/download/x']:
+            rule = diag.check_path('prowlarr', path)
+            self.assertIsNotNone(rule, path)
+            self.assertTrue(rule.startswith('deny:'), path)
+        self.assertIsNone(diag.check_path('prowlarr', '/api/v1/indexer/1'))
+
 
 class Redaction(unittest.TestCase):
     def setUp(self):
@@ -260,6 +268,21 @@ class Handler(unittest.TestCase):
             self.assertEqual(cm.exception.code, 503)
             self.assertNotIn(b'withhold stale response', cm.exception.read())
             cm.exception.close()
+
+    def test_prowlarr_search_and_download_never_reach_upstream(self):
+        state = diag.HarvestState()
+        state.finish(state.begin(), True)
+        base = self.start_server({'apps': {'prowlarr': {}}}, state)
+        with patch.object(diag, 'fetch') as fetch:
+            for path in ['/api/v1/indexer/1/newznab?t=search&q=test',
+                         '/API/V1/Indexer/1/Newznab/?t=tvsearch',
+                         '/api/v1/indexer/1/download?link=test&file=test']:
+                with self.assertRaises(HTTPError) as cm:
+                    urlopen(base + '/diag/prowlarr' + path, timeout=5)
+                self.assertEqual(cm.exception.code, 403)
+                self.assertTrue(json.load(cm.exception)['rule'].startswith('deny:'))
+                cm.exception.close()
+            fetch.assert_not_called()
 
     def test_methods_paths_and_redaction(self):
         class Upstream(BaseHTTPRequestHandler):

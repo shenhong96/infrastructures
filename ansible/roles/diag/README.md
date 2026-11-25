@@ -32,3 +32,13 @@ arbitrary free text is secret-free. Secrets introduced between harvests, secrets
 shorter than the configured minimum, secrets absent from all configured sources,
 and unrecognized encodings remain limitations of this design. Live canary tests
 and the pinned-version GET route audit remain mandatory.
+
+## Prowlarr tracker side effects
+
+Prowlarr 2.7.0.5723's `NewznabController` exposes GET
+`/api/v1/indexer/{id}/newznab` and `/api/v1/indexer/{id}/download`. Both are
+blocked before any upstream request, including mixed-case paths, trailing
+slashes and descendants. The former can search trackers and the latter can
+download reports or record redirects. The JSON-only response filter is not a
+side-effect boundary. This closes those routes; it is not a claim that every
+remaining GET in every upstream version has been audited.
