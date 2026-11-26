@@ -1,0 +1,4 @@
+# Opt-in. Inspect produces a complete editable skeleton; it never guesses policy.
+proxmox_host_lan_guard_mode: "off" # off | inspect | check | apply | enable
+proxmox_host_lan_guard_manifest: {} # entire reviewed JSON object produced by inspect
+proxmox_host_diag_security_activation_ack: false

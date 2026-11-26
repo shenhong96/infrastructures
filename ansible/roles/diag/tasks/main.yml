@@ -2,6 +2,13 @@
 # pct only. No unattended-upgrades: the CT has no internet egress once the firewall is in
 # (plan Task 6); updates run through that task's diag-update tag.
 
+- name: Secure transport cutover must be explicitly approved
+  ansible.builtin.assert:
+    that:
+      - diag_security_activation_ack | default(false) | bool
+      - diag_transport_pki_dir | default('') | length > 0
+    fail_msg: Use diag-security.yml activate after prepare; diag never falls back to plaintext LAN
+
 # Run from the repo root, ansible.cfg (and with it the SOPS vars plugin) isn't loaded and the
 # keys arrive as ciphertext; stop before touching the CT. The assertion text holds no values.
 - name: App keys are decrypted
@@ -66,6 +73,10 @@
     shell: /usr/sbin/nologin
     create_home: false
 
+- name: Authenticated network paths before the program or its credentials
+  ansible.builtin.include_role:
+    name: diag_transport
+
 - name: Config folder
   ansible.builtin.file:
     path: /etc/diag
@@ -81,6 +92,7 @@
     owner: root
     group: diag
     mode: "0440"
+    backup: true
   no_log: true
   diff: false
   notify: Restart diag

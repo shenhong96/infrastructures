@@ -4,10 +4,11 @@
 [Unit]
 Description=diag LXC wake proxy
 Requires=diag-wake.socket diag-ct.service
-After=diag-wake.socket diag-ct.service
+After=diag-wake.socket diag-ct.service diag-tls.service
+Requires=diag-tls.service
 
 [Service]
-ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=15min --connections-max=16 192.168.9.158:8796
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=15min --connections-max=16 127.0.0.1:28796
 DynamicUser=yes
 User=diag-wake-proxy
 NoNewPrivileges=yes
@@ -34,7 +35,7 @@ SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
 RestrictAddressFamilies=AF_UNIX AF_INET
 IPAddressDeny=any
-IPAddressAllow=192.168.9.158
+IPAddressAllow=127.0.0.1
 MemoryMax=64M
 TasksMax=32
 CPUQuota=50%

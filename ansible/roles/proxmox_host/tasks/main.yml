@@ -1,3 +1,8 @@
+- name: Host-wide changes require the secure transport maintenance approval
+  ansible.builtin.assert:
+    that: proxmox_host_diag_security_activation_ack | bool
+    fail_msg: Use the focused diag-security.yml playbook or explicitly approve a host-wide maintenance run
+
 - name: Host packages
   ansible.builtin.apt:
     name: "{{ host_packages }}"
@@ -8,6 +13,9 @@
 
 - name: Network
   ansible.builtin.import_tasks: network.yml
+
+- name: Optional guest anti-spoof enrollment
+  ansible.builtin.import_tasks: lan_guard.yml
 
 - name: Firewall
   ansible.builtin.import_tasks: firewall.yml

@@ -4,6 +4,8 @@
 # too (spec §6.3). No maximum awake time: a client that keeps a connection open keeps the CT up.
 [Unit]
 Description=diag LXC (CT 121) on demand
+Requires=diag-tls.service
+After=diag-tls.service
 StopWhenUnneeded=yes
 StartLimitIntervalSec=10min
 StartLimitBurst=5

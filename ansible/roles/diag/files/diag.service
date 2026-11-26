@@ -4,6 +4,8 @@
 Description=diag read-only app API
 After=network-online.target
 Wants=network-online.target
+Requires=diag-tls.service
+After=diag-tls.service
 
 [Service]
 User=diag

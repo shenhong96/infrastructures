@@ -1,0 +1,125 @@
+- name: Explicit laptop PKI is required before changing transport
+  ansible.builtin.assert:
+    that:
+      - diag_transport_pki_dir | length > 0
+      - diag_transport_pki_dir is match('^/')
+      - inventory_hostname in diag_transport_nodes
+    fail_msg: Use diag-security.yml with an absolute private PKI directory; see docs/diag-security.md
+
+- name: Validate certificates, identities, expiry and private-file permissions on the laptop
+  ansible.builtin.command:
+    argv: [python3, "{{ playbook_dir }}/../tools/diag-pki.py", check, "{{ diag_transport_pki_dir }}"]
+  delegate_to: localhost
+  become: false
+  check_mode: false
+  changed_when: false
+  no_log: true
+
+- name: Offline package bundle is required for the isolated diag container
+  ansible.builtin.assert:
+    that: diag_transport_deb_files | length > 0
+    fail_msg: Supply diag_transport_deb_files for Debian 13 amd64; never open diag internet egress
+  when: inventory_hostname == 'diag'
+
+- name: Offline tunnel packages on diag
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/var/cache/apt/archives/{{ item | basename }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ diag_transport_deb_files }}"
+  when: inventory_hostname == 'diag'
+
+- name: Install diag tunnel and supplied dependencies without any downloads
+  ansible.builtin.command:
+    argv: "{{ ['apt-get', '--no-download', '-y', 'install'] +
+      (diag_transport_deb_files | map('basename') | map('regex_replace', '^', '/var/cache/apt/archives/') | list) }}"
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+  register: diag_transport_offline_install
+  changed_when: "'0 upgraded, 0 newly installed' not in diag_transport_offline_install.stdout"
+  when: inventory_hostname == 'diag'
+
+- name: Tunnel package on machines with package-network access
+  ansible.builtin.apt:
+    name: stunnel4
+    state: present
+  when: inventory_hostname != 'diag'
+
+- name: Unprivileged tunnel identity
+  ansible.builtin.user:
+    name: diag-tls
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Private tunnel folders
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: diag-tls
+    mode: "0750"
+  loop: [/etc/diag-tls, /etc/diag-tls/peers]
+
+- name: This machine's certificate and key (never the CA private key)
+  ansible.builtin.copy:
+    src: "{{ diag_transport_pki_dir }}/{{ inventory_hostname }}/{{ item.src }}"
+    dest: "/etc/diag-tls/{{ item.dest }}"
+    owner: root
+    group: diag-tls
+    mode: "0440"
+  loop:
+    - {src: cert.pem, dest: identity.pem}
+    - {src: key.pem, dest: identity.key}
+  no_log: true
+  diff: false
+  register: diag_transport_identity
+
+- name: Only the expected peer certificates are trusted
+  ansible.builtin.copy:
+    src: "{{ diag_transport_pki_dir }}/peers/{{ item }}.pem"
+    dest: "/etc/diag-tls/peers/{{ item }}.pem"
+    owner: root
+    group: diag-tls
+    mode: "0440"
+  loop: "{{ diag_transport_nodes[inventory_hostname].peers }}"
+  register: diag_transport_peers
+
+- name: Tunnel configuration
+  ansible.builtin.template:
+    src: stunnel.conf.j2
+    dest: /etc/diag-tls/stunnel.conf
+    owner: root
+    group: diag-tls
+    mode: "0440"
+  register: diag_transport_config
+
+- name: Dedicated tunnel unit (does not change distro stunnel instances)
+  ansible.builtin.copy:
+    src: diag-tls.service
+    dest: /etc/systemd/system/diag-tls.service
+    owner: root
+    group: root
+    mode: "0644"
+  register: diag_transport_unit
+
+- name: Pinned tunnels enabled and running
+  ansible.builtin.systemd_service:
+    name: diag-tls.service
+    enabled: true
+    daemon_reload: "{{ diag_transport_unit.changed }}"
+    state: "{{ 'restarted' if (diag_transport_identity.changed or diag_transport_peers.changed or
+      diag_transport_config.changed or diag_transport_unit.changed) else 'started' }}"
+  when: not ansible_check_mode
+
+- name: Tunnel listeners are accepting locally
+  ansible.builtin.wait_for:
+    host: "{{ item.accept.split(':')[0] }}"
+    port: "{{ item.accept.split(':')[1] | int }}"
+    timeout: 10
+  loop: "{{ diag_transport_services[inventory_hostname] }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: not ansible_check_mode
