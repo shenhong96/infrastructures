@@ -1,0 +1,29 @@
+# On-demand start / idle stop for the diag LXC (CT 121). Spec 2026-11-25 §6.3.
+- name: Diag wake start script
+  ansible.builtin.copy:
+    src: diag-wake-start
+    dest: /usr/local/sbin/diag-wake-start
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Diag wake units
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - diag-wake.socket
+    - diag-wake.service
+  register: proxmox_host_diag_wake_units
+
+- name: Diag wake socket enabled and listening
+  ansible.builtin.systemd_service:
+    name: diag-wake.socket
+    enabled: true
+    state: "{{ 'restarted' if proxmox_host_diag_wake_units.changed else 'started' }}"
+    daemon_reload: "{{ proxmox_host_diag_wake_units.changed }}"
+  # ponytail: in --check the unit files are not really copied, so the service is unknown.
+  when: not (ansible_check_mode and proxmox_host_diag_wake_units.changed)

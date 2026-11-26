@@ -1,0 +1,13 @@
+# Started by diag-wake.socket. Starts CT 121, forwards to its :8796, and after 15 min with no
+# connections exits and shuts the CT down.
+[Unit]
+Description=diag LXC wake proxy
+Requires=diag-wake.socket
+After=diag-wake.socket
+
+[Service]
+ExecStartPre=/usr/local/sbin/diag-wake-start
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=15min 192.168.9.158:8796
+ExecStopPost=/usr/sbin/pct shutdown 121 --timeout 30
+TimeoutStartSec=45
+PrivateTmp=yes

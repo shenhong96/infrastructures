@@ -1,0 +1,10 @@
+#!/bin/bash
+# Start CT 121 if needed, then wait up to 30 s for diag to accept TCP on :8796.
+set -u
+pct status 121 | grep -qx 'status: running' || pct start 121 || exit 1
+for _ in $(seq 60); do
+  timeout 1 bash -c '</dev/tcp/192.168.9.158/8796' 2>/dev/null && exit 0
+  sleep 0.5
+done
+echo "diag did not answer on 192.168.9.158:8796 within 30 s" >&2
+exit 1

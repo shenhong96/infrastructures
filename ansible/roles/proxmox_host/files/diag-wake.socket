@@ -1,0 +1,14 @@
+# On-demand door to the diag LXC (CT 121). The readonly proxy (nginx, gid 101) connects here;
+# the first connection starts diag-wake.service, which starts the CT. Spec 2026-11-25 §6.3.
+# Kill switch: systemctl stop diag-wake.socket
+[Unit]
+Description=diag LXC wake socket
+
+[Socket]
+ListenStream=/run/diag-wake/diag.sock
+SocketMode=0660
+SocketGroup=101
+DirectoryMode=0750
+
+[Install]
+WantedBy=sockets.target

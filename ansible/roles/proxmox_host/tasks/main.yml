@@ -8,3 +8,6 @@
 
 - name: Network
   ansible.builtin.import_tasks: network.yml
+
+- name: Diag wake socket
+  ansible.builtin.import_tasks: diag_wake.yml
