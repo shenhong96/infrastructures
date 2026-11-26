@@ -6,6 +6,7 @@ from http.client import HTTPConnection
 from ipaddress import IPv4Address
 import io
 import json
+import math
 import logging
 import os
 from pathlib import Path
@@ -29,7 +30,7 @@ QBITS = ('qbit', 'qbit-ubits')
 NEEDS = {'qui': QBITS}
 FIELD_RE = re.compile(r'pass(word|key)?|secret|token|api_?key|rss_?key|auth|cookie|session|credential|private', re.I)
 SERVARR_DENY = ('release', 'search', 'indexer/test', 'filesystem', 'mediacover',
-                'system/backup', 'log', 'config/host', 'command', 'update', 'apikey')
+                'system/backup', 'log', 'config/host', 'command', 'update', 'apikey', 'manualimport')
 # qBittorrent 5.1.4 accepts GET on every action outside webapplication.h's
 # m_allowedMethod list. Of those, these return secrets, files or browse disk, or
 # act (search/downloadTorrent fetches a torrent). Audit 2026-11-26.
@@ -40,15 +41,16 @@ APPS = {
     'qbit': {'prefixes': ['/api/v2/'], 'deny': QBIT_DENY},
     'qbit-ubits': {'prefixes': ['/api/v2/'], 'deny': QBIT_DENY},
     # qui v1.36.1: health is /health outside /api. The diag key holds read-only
-    # permissions (README); 'download' keeps content-file reads (Torrents: read) out.
-    'qui': {'prefixes': ['/api/instances', '/api/version'], 'exact': ['/api/client-settings'], 'deny_contains': ['export', 'backup', 'api-keys', 'apikeys', 'auth', 'logs', 'download']},
+    # permissions (README); 'download' keeps content-file reads (Torrents: read) out;
+    # getDirectoryContent, free-space and mediainfo touch the disk at a given path.
+    'qui': {'prefixes': ['/api/instances', '/api/version'], 'exact': ['/api/client-settings'], 'deny_contains': ['export', 'backup', 'api-keys', 'apikeys', 'auth', 'logs', 'download', 'getdirectorycontent', 'free-space', 'mediainfo']},
     'sonarr': {'prefixes': ['/api/v3/'], 'deny': ['/api/v3/' + p for p in SERVARR_DENY]},
     'radarr': {'prefixes': ['/api/v3/'], 'deny': ['/api/v3/' + p for p in SERVARR_DENY]},
     # Prowlarr 2.7 NewznabController performs searches/downloads on these GETs.
     # Withholding its XML/torrent response afterwards cannot undo the action.
     'prowlarr': {'prefixes': ['/api/v1/'], 'deny': ['/api/v1/' + p for p in SERVARR_DENY], 'deny_regex': [r'^/api/v1/indexer/[^/]+/(newznab|download)(/|$)']},
-    # Jellyfin 12.4: RemoteImages and RemoteSearch/Subtitles query outside providers.
-    'jellyfin': {'prefixes': ['/system/info', '/sessions', '/scheduledtasks', '/library/virtualfolders', '/items', '/users/*/items', '/devices', '/plugins', '/packages', '/health'], 'deny': ['/environment'], 'deny_regex': [r'^/items/[^/]+/(download|file|images|remoteimages|remotesearch)(/|$)', r'^/users/[^/]+/items/[^/]+/(download|file|images)(/|$)', r'^/plugins/[^/]+/configuration(/|$)']},
+    # Jellyfin 12.4: RemoteImages, RemoteSearch/Subtitles and /Packages fetch from outside.
+    'jellyfin': {'prefixes': ['/system/info', '/sessions', '/scheduledtasks', '/library/virtualfolders', '/items', '/users/*/items', '/devices', '/plugins', '/health'], 'deny': ['/environment'], 'deny_regex': [r'^/items/[^/]+/(download|file|images|remoteimages|remotesearch)(/|$)', r'^/users/[^/]+/items/[^/]+/(download|file|images)(/|$)', r'^/plugins/[^/]+/configuration(/|$)']},
 }
 PAGING = {'qbit': 'limit, offset, filter, category', 'qbit-ubits': 'limit, offset, filter, category', 'qui': 'limit, offset', 'sonarr': 'pageSize, page', 'radarr': 'pageSize, page', 'prowlarr': 'pageSize, page', 'jellyfin': 'Limit, StartIndex'}
 PROVIDER_PATHS = {
@@ -151,15 +153,53 @@ def clean_url(s):
     return s
 
 
-def redact(obj, secrets):
-    counts = {'exact': 0, 'field': 0, 'url': 0}
+TOKEN_RE = re.compile(r'[A-Za-z0-9+=]{16,}')
+HASH_RE = re.compile(r'[A-Fa-f0-9]{40}|[A-Fa-f0-9]{64}')  # torrent info hashes
+JELLYFIN_ID_RE = re.compile(r'[A-Fa-f0-9]{32}')
+
+
+def looks_random(token, app=None):
+    """Shape check for secrets diag never learned (Servarr returns its own
+    credentials masked, so they cannot be harvested): 16+ chars of letters AND
+    digits with high per-character entropy. Torrent hashes, and Jellyfin's
+    32-hex IDs inside Jellyfin responses, are exempt.
+    ponytail: heuristic; a long random-looking release-name token is masked too.
+    """
+    if HASH_RE.fullmatch(token) or (app == 'jellyfin' and JELLYFIN_ID_RE.fullmatch(token)):
+        return False
+    if not (re.search(r'[0-9]', token) and re.search(r'[A-Za-z]', token)):
+        return False
+    counts = {c: token.count(c) for c in set(token)}
+    entropy = -sum(n / len(token) * math.log2(n / len(token)) for n in counts.values())
+    return entropy >= 3.3
+
+
+def redact(obj, secrets, app=None):
+    counts = {'exact': 0, 'field': 0, 'url': 0, 'entropy': 0}
+
+    def text(value):
+        # Layers 3, 1, then the entropy layer, for every string: values AND keys
+        # (qBittorrent sync/maindata uses tracker URLs as dictionary keys).
+        cleaned = clean_url(value)
+        counts['url'] += cleaned != value
+        cleaned, n = secrets.scrub(cleaned)
+        counts['exact'] += n
+        def mask(match):
+            if not looks_random(match.group(0), app):
+                return match.group(0)
+            counts['entropy'] += 1
+            return '[REDACTED:entropy]'
+        return TOKEN_RE.sub(mask, cleaned)
+
     def walk(value):
         if isinstance(value, dict):
             named = isinstance(value.get('name'), str) and FIELD_RE.search(value['name'])
             out = {}
             for key, item in value.items():
-                safe_key, n = secrets.scrub(key)
-                counts['exact'] += n
+                safe_key = text(key)
+                base, i = safe_key, 2
+                while safe_key in out:  # two keys can clean to the same text
+                    safe_key, i = f'{base} ({i})', i + 1
                 if FIELD_RE.search(key) or (key == 'value' and named):
                     out[safe_key] = '[REDACTED]'
                     counts['field'] += 1
@@ -169,11 +209,7 @@ def redact(obj, secrets):
         if isinstance(value, list):
             return [walk(item) for item in value]
         if isinstance(value, str):
-            cleaned = clean_url(value)
-            counts['url'] += cleaned != value
-            cleaned, n = secrets.scrub(cleaned)
-            counts['exact'] += n
-            return cleaned
+            return text(value)
         return value
     return walk(obj), counts
 
@@ -196,7 +232,8 @@ def harvest_provider_fields(items):
             if not isinstance(field, dict) or not isinstance(field.get('name'), str):
                 raise ValueError('invalid provider field')
             value, name = field.get('value'), field.get('name')
-            if isinstance(value, str) and value and (field.get('privacy') in ('apiKey', 'password', 'userName') or (isinstance(name, str) and FIELD_RE.search(name))):
+            # Servarr returns apiKey/password fields as asterisks: nothing to learn.
+            if isinstance(value, str) and value.strip('*') and (field.get('privacy') in ('apiKey', 'password', 'userName') or (isinstance(name, str) and FIELD_RE.search(name))):
                 found.append(value)
     return found
 
@@ -259,7 +296,7 @@ def shape(app, path, status, content_type, body, secrets, stats=None):
     except (ValueError, UnicodeDecodeError, RecursionError):
         return 415, {'error': 'invalid JSON response withheld'}
     try:
-        data, counts = redact(data, secrets)
+        data, counts = redact(data, secrets, app)
         if stats is not None:
             stats.update(counts)
         safe_path, _ = secrets.scrub(path)
@@ -517,9 +554,9 @@ class DiagHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(raw)
         stats = getattr(self, 'stats', {})
-        logging.info('app=%s status=%d bytes=%d exact=%d field=%d url=%d tripwire=%s',
+        logging.info('app=%s status=%d bytes=%d exact=%d field=%d url=%d entropy=%d tripwire=%s',
                      getattr(self, 'app', '-'), status, len(raw), stats.get('exact', 0),
-                     stats.get('field', 0), stats.get('url', 0), stats.get('tripwire', '-'))
+                     stats.get('field', 0), stats.get('url', 0), stats.get('entropy', 0), stats.get('tripwire', '-'))
 
     def do_GET(self):
         if self.client_address[0] != self.server.cfg['allow_client']:

@@ -42,7 +42,10 @@ class PathRules(unittest.TestCase):
         for app, path in [('sonarr', '/api/v3/release'), ('radarr', '/api/v3/release'), ('prowlarr', '/api/v1/search'), ('prowlarr', '/api/v1/indexer/test'), ('sonarr', '/api/v3/filesystem'), ('sonarr', '/api/v3/mediacover/1/poster.jpg'), ('sonarr', '/api/v3/system/backup'), ('sonarr', '/api/v3/log/file'), ('qbit', '/api/v2/torrents/export'), ('qbit', '/api/v2/app/shutdown'), ('qbit', '/api/v2/log/main'), ('qui', '/api/instances/1/torrents/x/export'), ('qui', '/api/instances/1/torrents/x/files/0/download'), ('jellyfin', '/Items/1/Download'), ('jellyfin', '/Items/1/File'),
                           ('qbit', '/api/v2/app/cookies'), ('qbit', '/api/v2/app/getDirectoryContent'), ('qbit', '/api/v2/search/downloadTorrent'),
                           ('qbit', '/api/v2/search/results'), ('qbit', '/api/v2/torrentcreator/torrentFile'), ('qbit-ubits', '/api/v2/torrents/SSLParameters'),
-                          ('jellyfin', '/Items/1/RemoteImages'), ('jellyfin', '/Items/1/RemoteSearch/Subtitles/eng')]:
+                          ('jellyfin', '/Items/1/RemoteImages'), ('jellyfin', '/Items/1/RemoteSearch/Subtitles/eng'),
+                          ('qui', '/api/instances/1/getDirectoryContent'), ('qui', '/api/instances/1/free-space'),
+                          ('qui', '/api/instances/1/mediainfo'), ('qui', '/api/instances/1/torrents/x/files/0/mediainfo'),
+                          ('sonarr', '/api/v3/manualimport'), ('radarr', '/api/v3/ManualImport'), ('jellyfin', '/Packages')]:
             self.assertIsNotNone(diag.check_path(app, path), (app, path))
 
     def test_prowlarr_newznab_and_download_routes_denied(self):
@@ -109,7 +112,57 @@ class Redaction(unittest.TestCase):
         self.assertIsNone(diag.tripwire('"hash": "' + 'a' * 40 + '"'))
 
 
+def random_token(seed, n=24):
+    # Built at runtime: a key-shaped literal trips gitleaks.
+    import random, string
+    return ''.join(random.Random(seed).choices(string.ascii_letters + string.digits, k=n))
+
+
+class EntropyLayer(unittest.TestCase):
+    def test_unknown_credential_in_free_text_is_masked(self):
+        # Servarr masks its own provider credentials, so diag never learns them.
+        token = random_token(1)
+        out, counts = diag.redact({'message': f'Indexer auth failed for key {token}'}, diag.Secrets(), 'sonarr')
+        self.assertNotIn(token, json.dumps(out))
+        self.assertEqual(counts['entropy'], 1)
+
+    def test_magnet_tracker_passkey_is_masked(self):
+        token = random_token(2, 32)
+        out, _ = diag.redact({'magnet_uri': 'magnet:?xt=urn:btih:' + 'a' * 40 + '&tr=https%3A%2F%2Ft.example%2Fannounce%2F' + token}, diag.Secrets(), 'qbit')
+        self.assertNotIn(token, json.dumps(out))
+        self.assertIn('a' * 40, json.dumps(out))
+
+    def test_ordinary_values_survive(self):
+        keep = {'name': 'Show.Name.S01E01.1080p.WEB-DL.DDP5.1.H.264-GROUP', 'save_path': '/mnt/data/torrents/tv/2024',
+                'hash': '0123456789abcdef' * 2 + '01234567', 'downloadId': ('0123456789ABCDEF' * 4),
+                'added': '2026-11-26T01:14:46Z', 'size': 123456789012345,
+                'message': 'Indexer UBits is unavailable due to failures for more than 6 hours',
+                'exception': 'NzbDrone.Core.Indexers.Exceptions.IndexerException'}
+        out, counts = diag.redact(keep, diag.Secrets(), 'sonarr')
+        self.assertEqual(out, keep)
+        self.assertEqual(counts['entropy'], 0)
+
+    def test_jellyfin_ids_kept_only_for_jellyfin(self):
+        import random
+        jid = '%032x' % random.Random(5).getrandbits(128)  # realistic Jellyfin ID / Servarr key shape
+        self.assertEqual(diag.redact({'Id': jid}, diag.Secrets(), 'jellyfin')[0], {'Id': jid})
+        self.assertNotIn(jid, json.dumps(diag.redact({'x': jid}, diag.Secrets(), 'sonarr')[0]))
+
+    def test_tracker_url_keys_are_cleaned(self):
+        token = random_token(3, 20)
+        maindata = {'trackers': {'https://t.example/announce/' + token: ['h1'],
+                                 'https://t.example/announce/' + random_token(4, 20): ['h2']}}
+        out, counts = diag.redact(maindata, diag.Secrets(), 'qbit')
+        self.assertNotIn(token, json.dumps(out))
+        self.assertEqual(len(out['trackers']), 2)  # colliding cleaned keys both kept
+        self.assertGreaterEqual(counts['url'], 2)
+
+
 class Harvest(unittest.TestCase):
+    def test_masked_placeholders_are_not_secrets(self):
+        items = [{'fields': [{'name': 'apiKey', 'value': '********', 'privacy': 'apiKey'}]}]
+        self.assertEqual(diag.harvest_provider_fields(items), [])
+
     def test_provider_fields(self):
         items = [{'fields': [{'name': 'apiKey', 'value': 'k' * 20, 'privacy': 'apiKey'}, {'name': 'cookie', 'value': 'c' * 20}, {'name': 'baseUrl', 'value': 'https://x.example'}, {'name': 'minimumSeeders', 'value': 1}]}]
         self.assertEqual(sorted(diag.harvest_provider_fields(items)), ['c' * 20, 'k' * 20])

@@ -12,7 +12,10 @@ tracker values are loaded at start but never make an app ready on their own;
 provider inventories are re-read after every restart.
 
 - **Per app.** Sonarr, Radarr and Prowlarr are ready when all of their provider
-  endpoints were read and parsed; each qBittorrent when every torrent not seen
+  endpoints were read and parsed (this collects only fields returned in clear,
+  such as Cardigann cookie/passkey fields: these apps return their own
+  `apiKey`/`password` fields as asterisks, so those credentials are never
+  learned; the entropy layer covers them); each qBittorrent when every torrent not seen
   before has had its trackers read; qui when both qBittorrents are ready (it
   shows their tracker URLs); Jellyfin needs no harvest. One broken app does not
   block reads of the others.
@@ -23,11 +26,37 @@ provider inventories are re-read after every restart.
   of failing at once (30 s + the 20 s upstream budget stays under nginx's 60 s).
   It returns 503 early if the first harvest cycle finished without that app.
   Cached torrents whose 30-minute freshness expired are refreshed after the app
-  is marked ready; their old values are already known.
+  is marked ready; their old values are already known. A passkey rotated while
+  the CT was stopped is unknown until that refresh, but tracker URLs (values and
+  `sync/maindata` keys alike) are cut to `scheme://host/` and a random-looking
+  token in free text is masked by the entropy layer. Waiting for a full refresh
+  instead would make most cold starts after 30 minutes idle return 503.
 - A torrent removed between the torrent list and its tracker read (404) is
   skipped.
 
 `/diag/` lists `apps` and the subset that is `ready`.
+
+## Redaction layers
+
+Applied to every JSON string, values and dictionary keys alike (qBittorrent's
+`sync/maindata` uses tracker URLs as keys; keys that clean to the same text get
+a ` (2)` suffix):
+
+1. URL cleanup: any http/https/udp URL with a path, query or userinfo becomes
+   `scheme://host[:port]/[path removed]`.
+2. Exact values: every harvested or configured secret, raw and in URL-encoded,
+   base64, hex and JSON-escaped forms.
+3. Field names: values under keys matching `FIELD_RE` (and Servarr
+   `{"name": ..., "value": ...}` pairs) become `[REDACTED]`.
+4. Entropy: a token of 16+ characters from `[A-Za-z0-9+=]` that has both
+   letters and digits and at least 3.3 bits of entropy per character becomes
+   `[REDACTED:entropy]`. Exempt: 40/64-hex torrent hashes everywhere, 32-hex
+   IDs in Jellyfin responses only. This catches credentials diag never learned
+   (masked Servarr fields, a passkey rotated since the last harvest, a token in
+   an error message). Cost: a long random-looking token in a release name or
+   message is masked too. The log line counts each layer.
+
+Then the tripwire scans the final text (Jellyfin skips `hex-key`, below).
 
 Readiness means the configured sources were collected, not that arbitrary free
 text is secret-free. Secrets introduced between harvests (including a passkey
@@ -50,8 +79,11 @@ Prowlarr 2.7.0.5723, qBittorrent 5.1.4, Jellyfin 12.4, qui v1.36.1.
   answers GET. Added to the deny list: `app/cookies`, `app/getDirectoryContent`,
   `search/*` (`downloadTorrent` fetches), `torrentcreator/*`,
   `torrents/SSLParameters`.
+- **Sonarr, Radarr (Codex review):** `manualimport?folder=` scans any folder
+  recursively; denied.
 - **Jellyfin:** added `Items/{id}/RemoteImages` and `Items/{id}/RemoteSearch`
-  (outside providers, OpenSubtitles limits). `/Devices` returns each device's
+  (outside providers, OpenSubtitles limits); `/Packages` removed from the
+  allowlist (fetches repository manifests from the internet on every call). `/Devices` returns each device's
   `AccessToken`; field-name masking removes it (tested).
 - **qui:** see the qui section.
 
@@ -87,9 +119,15 @@ Diag allows `/api/instances`, `/api/version` and the exact
 `settings.Read` (`internal/api/server.go:612`) and returns the stored key-value
 map, including `qui-incognito-mode` (`web/src/lib/client-settings.ts`). PUT is
 refused locally and by the key. Paths containing `export`, `backup`, `api-keys`,
-`apikeys`, `auth`, `logs` or `download` are refused before qui is contacted;
-`download` keeps torrent content files (allowed by `Torrents: read`) from being
-pulled through diag. qui's `/health` sits outside `/api` and is not exposed;
+`apikeys`, `auth`, `logs`, `download`, `getdirectorycontent`, `free-space` or
+`mediainfo` are refused before qui is contacted: `download` keeps torrent
+content files (allowed by `Torrents: read`) from being pulled through diag, and
+the other three touch the disk at a caller-chosen path with only
+`Instances: read`/`Torrents: read`.
+
+Not verified from source: that qui hides passkeys without `Torrents: write`
+comes from qui's permissions doc, not from reading the handlers. The canary test
+(plan Task 8) must confirm it; the URL and entropy layers apply regardless. qui's `/health` sits outside `/api` and is not exposed;
 use homelab-metrics for "is it up".
 
 ## Jellyfin and the hex-key tripwire
