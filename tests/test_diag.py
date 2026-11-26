@@ -212,29 +212,18 @@ class Shape(unittest.TestCase):
 
     def test_jellyfin_identifiers_do_not_trip_hex_detector(self):
         guid = 'a' * 32
-        item = {'Id': guid, 'ServerId': guid, 'Name': 'ordinary item',
-                'SeriesId': guid, 'ImageTags': {'Primary': guid},
-                'BackdropImageTags': [guid], 'Studios': [{'Id': guid, 'Name': 'Studio'}],
-                'DisplayPreferencesId': guid, 'ParentPrimaryImageTag': guid,
-                'People': [{'Id': guid, 'PrimaryImageTag': guid}], 'UserData': {'ItemId': guid},
-                'ImageBlurHashes': {'Primary': {guid: 'blurhash'}}, 'MediaSources': [{'Id': guid}]}
         for path, data in [
-            ('/Items', {'Items': [item], 'TotalRecordCount': 1}),
-            ('/Users/' + guid + '/Items/' + guid, item),
-            ('/System/Info', {'Id': guid, 'ServerName': 'Media'}),
-            ('/System/Info/Public', {'Id': guid}),
-            ('/Sessions', [{'Id': guid, 'UserId': guid, 'NowPlayingItem': item, 'NowPlayingQueue': [{'Id': guid}]}]),
-            ('/ScheduledTasks', [{'Id': guid, 'Name': 'Task', 'LastExecutionResult': {'Id': guid}}]),
-            ('/Library/VirtualFolders', [{'ItemId': guid, 'Name': 'Library'}]),
-            ('/Plugins', [{'Id': guid, 'Name': 'Plugin'}]),
+            ('/Items', {'Items': [{'Id': guid, 'Etag': guid, 'ImageTags': {'Primary': guid},
+                                   'MediaSources': [{'Id': guid, 'ETag': guid}], 'Trickplay': {guid: {}}}]}),
+            ('/Sessions', [{'Id': guid, 'PlayState': {'MediaSourceId': guid}}]),
+            ('/System/Info', {'Id': guid}),
         ]:
             with self.subTest(path=path):
                 status, body = diag.shape('jellyfin', path, 200, 'application/json', json.dumps(data).encode(), diag.Secrets())
                 self.assertEqual(status, 200, body)
                 self.assertEqual(body['untrusted_data'], data)
-                self.assertEqual(body['path'], path)
 
-    def test_jellyfin_hex_exceptions_never_override_known_secrets(self):
+    def test_known_secret_redacted_in_jellyfin_id_slot(self):
         canary = 'b' * 32
         secrets = diag.Secrets()
         secrets.add(canary, 'sonarr')
@@ -244,22 +233,9 @@ class Shape(unittest.TestCase):
         self.assertNotIn(canary, json.dumps(body))
         self.assertIn('[REDACTED:sonarr]', json.dumps(body))
 
-    def test_jellyfin_unexpected_hex_values_still_block(self):
-        unknown = 'c' * 32
-        for app, path, data, upstream_status in [
-            ('jellyfin', '/Items', {'Items': [{'Id': unknown, 'Overview': unknown}]}, 200),
-            ('jellyfin', '/Items', {'Items': [{'Metadata': {'Id': unknown}}]}, 200),
-            ('jellyfin', '/Items', {'Id': unknown}, 200),
-            ('jellyfin', '/Items', {'Items': [{'ImageTags': {'Custom': unknown}}]}, 200),
-            ('jellyfin', '/Items', {'Items': [{'Studios': [{'PrimaryImageTag': unknown}]}]}, 200),
-            ('jellyfin', '/Items/Filters', {'Id': unknown}, 200),
-            ('jellyfin', '/Devices', {'Items': [{'Id': unknown}]}, 200),
-            ('jellyfin', '/System/Info', {'Id': unknown}, 500),
-            ('sonarr', '/api/v3/series', [{'Id': unknown}], 200),
-        ]:
-            with self.subTest(app=app, path=path, data=data):
-                status, body = diag.shape(app, path, upstream_status, 'application/json', json.dumps(data).encode(), diag.Secrets())
-                self.assertEqual((status, body.get('rule')), (502, 'hex-key'))
+    def test_hex_key_still_blocks_other_apps(self):
+        status, body = diag.shape('sonarr', '/api/v3/series', 200, 'application/json', json.dumps([{'Id': 'c' * 32}]).encode(), diag.Secrets())
+        self.assertEqual((status, body.get('rule')), (502, 'hex-key'))
 
     def test_jellyfin_non_hex_tripwires_remain_active(self):
         data = {'Items': [{'Id': 'a' * 32, 'Name': 'ghp_' + 'z' * 36}]}

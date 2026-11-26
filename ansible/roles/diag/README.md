@@ -54,27 +54,14 @@ required. PUT is denied locally; this does not allow a settings subtree or
 any adjacent API-key/authentication routes. The response receives the same
 readiness gate, redaction, size limits and tripwire as other app responses.
 
-## Jellyfin identity versus hex-secret detection
+## Jellyfin and the hex-key tripwire
 
-The design's global 32-hex tripwire also matches Jellyfin's compact GUIDs and
-image cache tags. The rule is retained. For HTTP 200 Jellyfin responses only,
-the scanner uses a separate inspection copy with schema-defined identity fields
-replaced: item DTO identities/image tags, system-info ID, session/user/server
-IDs and now-playing items, plugin/task IDs and virtual-folder item IDs. Compact
-GUIDs in the corresponding item/user/task route positions are treated likewise.
-The returned JSON and identifiers are unchanged.
-
-Exact-value and sensitive-field redaction run **before** this inspection. A
-known secret is never exempt, even if it occurs in a legitimate identifier field
-or path. The inspection is route- and DTO-position-specific: arbitrary nested
-`Id` keys, overview text, unknown routes, error responses, device IDs and other
-apps receive no exception. All other tripwire rules remain in force.
-
-This explicitly corrects the plan's context-free hex rule. It trusts Jellyfin
-to populate its documented identity fields with identities, not uncollected
-credentials. It cannot distinguish an unknown secret deliberately substituted
-into a trusted identity slot. Unknown schemas and additional cache-key shapes
-stay fail-closed until audited; extend the fixtures when upgrading Jellyfin.
+Jellyfin item and server IDs, Etags, image tags, media source IDs and trickplay
+keys are all 32-hex strings, so the global `hex-key` tripwire would block most
+Jellyfin reads (including `/Sessions` during playback). That one rule is skipped
+for Jellyfin only. Diag's own Jellyfin API key is still removed by exact-value
+redaction, `AccessToken` fields are masked by name, and every other tripwire
+rule still applies. `hex-key` stays active for all other apps.
 
 ## Overall upstream deadline
 
