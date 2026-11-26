@@ -144,8 +144,19 @@ class ReadOnlyProxy(unittest.TestCase):
         paths = re.findall(r"^\s*location\s+(?:[=~]\s+)?(\S+)", conf, re.M)
         self.assertEqual(sorted(paths), sorted(["/", "/api/v1/query", "/api/v1/query_range", "/api/v1/series",
                                                 "/api/v1/labels", "/api/v1/metadata",
-                                                "^/api/v1/label/[^/]+/values$", "/homepage/", "/coverage/"]))
+                                                "^/api/v1/label/[^/]+/values$", "/homepage/", "/coverage/",
+                                                "/diag/"]))
 
+    def test_diag_logs_never_carry_the_path(self):
+        conf = (GRAFANA / "readonly-proxy/default.conf.template").read_text()
+        fmts = re.findall(r"log_format\s+(\w+)\s+.*?;\n", conf, re.S)
+        self.assertEqual(fmts, ["json"])
+        fmt = re.search(r"log_format json .*?;\n", conf, re.S).group(0)
+        self.assertIn('"uri":"$log_uri"', fmt)
+        self.assertNotRegex(fmt, r"\$(request_uri|uri|args|query_string|request)\b")
+        block = re.search(r"map \$uri \$log_uri \{(.*?)\}", conf, re.S).group(1)
+        self.assertIn('"~^/diag/" "/diag/$diag_app/[path withheld]";', block)
+        self.assertNotRegex(conf, r"access_log\s+\S+\s+(?!json;)\w+;")
 
 if __name__ == "__main__":
     unittest.main()

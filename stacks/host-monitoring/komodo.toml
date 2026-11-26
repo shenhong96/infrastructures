@@ -25,6 +25,7 @@ config_files = [
   { path = "grafana-dashboards-provider/homelab.yaml", services = ["grafana"], requires = "Restart" },
   { path = "grafana-dashboards/homelab-hosts.json", services = ["grafana"], requires = "Restart" },
   { path = "readonly-proxy/default.conf.template", services = ["prom-readonly-proxy"], requires = "Restart" },
+  { path = "readonly-proxy/05-diag-wake-group.sh", services = ["prom-readonly-proxy"], requires = "Restart" },
   { path = "proxy-alloy.alloy", services = ["proxy-alloy"], requires = "Restart" },
   { path = "loki-rules/homelab-proxy.yaml", services = ["loki"], requires = "Restart" },
 ]
