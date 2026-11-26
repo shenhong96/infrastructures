@@ -136,7 +136,8 @@ Jellyfin item and server IDs, Etags, image tags, media source IDs and trickplay
 keys are all 32-hex strings, so the global `hex-key` tripwire would block most
 Jellyfin reads (including `/Sessions` during playback). That one rule is skipped
 for Jellyfin only. Diag's own Jellyfin API key is still removed by exact-value
-redaction, `AccessToken` fields are masked by name, and every other tripwire
+redaction (`header_secrets()` unwraps it from the `MediaBrowser Token="…"`
+header), `AccessToken` fields are masked by name, and every other tripwire
 rule still applies. `hex-key` stays active for all other apps.
 
 ## Overall upstream deadline

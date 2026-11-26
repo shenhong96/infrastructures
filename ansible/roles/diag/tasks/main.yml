@@ -1,0 +1,80 @@
+# CT 121 (spec 6.2): the diag service and nothing else. No sshd, so Ansible reaches it over
+# pct only. No unattended-upgrades: the CT has no internet egress once the firewall is in
+# (plan Task 6); updates run through that task's diag-update tag.
+
+# Stopped most of the time (the host's diag-wake socket starts it on demand).
+- name: CT 121 running
+  ansible.builtin.shell: |
+    [ "$(pct status {{ vmid }})" = "status: running" ] && exit 0
+    pct start {{ vmid }}
+    pct exec {{ vmid }} -- systemctl is-system-running --wait >/dev/null || true
+    echo started
+  delegate_to: proxmox
+  register: diag_ct
+  changed_when: "'started' in diag_ct.stdout"
+
+# The template's mail server, sshd and cron: the service needs none of them.
+- name: Unused daemons removed
+  ansible.builtin.apt:
+    name: [postfix, openssh-server, cron]
+    state: absent
+    purge: true
+
+- name: Service user
+  ansible.builtin.user:
+    name: diag
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+
+- name: Config folder
+  ansible.builtin.file:
+    path: /etc/diag
+    state: directory
+    owner: root
+    group: diag
+    mode: "0750"
+
+- name: Config with the app keys
+  ansible.builtin.template:
+    src: config.json.j2
+    dest: /etc/diag/config.json
+    owner: root
+    group: diag
+    mode: "0440"
+  no_log: true
+  diff: false
+  notify: Restart diag
+
+- name: Program folder
+  ansible.builtin.file:
+    path: /usr/local/lib/diag
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Program
+  ansible.builtin.copy:
+    src: diag.py
+    dest: /usr/local/lib/diag/diag.py
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart diag
+
+- name: Unit
+  ansible.builtin.copy:
+    src: diag.service
+    dest: /etc/systemd/system/diag.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart diag
+
+- name: Service enabled and running
+  ansible.builtin.systemd_service:
+    name: diag.service
+    enabled: true
+    state: started
+    daemon_reload: true

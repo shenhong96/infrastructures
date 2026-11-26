@@ -1,0 +1,17 @@
+{#- App bases are fixed here: Hermes can never name host, port or scheme. Keys come from
+    host_vars/diag/secrets.sops.yml. Both qBittorrents need no login (spec 11). allow_client
+    is the Proxmox host, where the :9091 read-only proxy runs. -#}
+{{ {
+  'bind': '0.0.0.0',
+  'port': 8796,
+  'allow_client': '192.168.9.152',
+  'apps': {
+    'qbit': {'base': 'http://192.168.9.156:8080', 'headers': {}},
+    'qbit-ubits': {'base': 'http://192.168.9.156:8090', 'headers': {}},
+    'qui': {'base': 'http://192.168.9.156:8081', 'headers': {'X-API-Key': diag_keys.qui}},
+    'sonarr': {'base': 'http://192.168.9.156:8989', 'headers': {'X-Api-Key': diag_keys.sonarr}},
+    'radarr': {'base': 'http://192.168.9.156:7878', 'headers': {'X-Api-Key': diag_keys.radarr}},
+    'prowlarr': {'base': 'http://192.168.9.156:9696', 'headers': {'X-Api-Key': diag_keys.prowlarr}},
+    'jellyfin': {'base': 'http://192.168.9.154:8096', 'headers': {'Authorization': 'MediaBrowser Token="' ~ diag_keys.jellyfin ~ '"'}},
+  },
+} | to_nice_json }}
