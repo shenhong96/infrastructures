@@ -1,0 +1,13 @@
+#!/bin/bash
+# Start CT 121 if needed, then wait until diag accepts TCP on :8796 (30 s deadline after start).
+set -u
+running() { /usr/sbin/pct status 121 | grep -qx 'status: running'; }
+# A failed start is fine if someone else started it meanwhile.
+running || /usr/sbin/pct start 121 || running || exit 1
+deadline=$((SECONDS + 30))
+while (( SECONDS < deadline )); do
+  timeout 1 bash -c '</dev/tcp/192.168.9.158/8796' 2>/dev/null && exit 0
+  sleep 0.5
+done
+echo "diag did not answer on 192.168.9.158:8796 within 30 s" >&2
+exit 1

@@ -1,0 +1,4 @@
+#!/bin/bash
+# Shut CT 121 down; force it if a clean shutdown does not finish in 30 s.
+set -u
+/usr/sbin/pct shutdown 121 --timeout 30 || /usr/sbin/pct stop 121

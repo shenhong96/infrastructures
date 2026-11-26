@@ -1,0 +1,18 @@
+# Lifecycle of CT 121 for the wake socket, as root. Pulled in by diag-wake.service and stopped
+# when that exits (StopWhenUnneeded). ExecStop runs only after a successful start, so a failed
+# wake never shuts down a CT it did not start. A CT started by hand is shut down at idle stop
+# too (spec §6.3). No maximum awake time: a client that keeps a connection open keeps the CT up.
+[Unit]
+Description=diag LXC (CT 121) on demand
+StopWhenUnneeded=yes
+StartLimitIntervalSec=10min
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/local/sbin/diag-wake-start
+ExecStop=/usr/local/sbin/diag-wake-stop
+TimeoutStartSec=60
+TimeoutStopSec=75

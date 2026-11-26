@@ -1,0 +1,40 @@
+# Started by diag-wake.socket. Forwards to diag on CT 121 :8796 and exits after 15 min with no
+# open connections. Runs unprivileged; starting and stopping the CT is diag-ct.service's job
+# (pulled in here, stopped when no longer needed).
+[Unit]
+Description=diag LXC wake proxy
+Requires=diag-wake.socket diag-ct.service
+After=diag-wake.socket diag-ct.service
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=15min --connections-max=16 192.168.9.158:8796
+DynamicUser=yes
+User=diag-wake-proxy
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=192.168.9.158
+MemoryMax=64M
+TasksMax=32
+CPUQuota=50%
