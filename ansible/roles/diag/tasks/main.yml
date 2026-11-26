@@ -2,16 +2,43 @@
 # pct only. No unattended-upgrades: the CT has no internet egress once the firewall is in
 # (plan Task 6); updates run through that task's diag-update tag.
 
+# Run from the repo root, ansible.cfg (and with it the SOPS vars plugin) isn't loaded and the
+# keys arrive as ciphertext; stop before touching the CT. The assertion text holds no values.
+- name: App keys are decrypted
+  ansible.builtin.assert:
+    that:
+      - diag_keys[item] is string
+      - diag_keys[item] | length >= 16
+      - diag_keys[item] | length <= 128
+      - "'ENC[' not in diag_keys[item]"
+    fail_msg: diag_keys.{{ item }} is missing or still encrypted; run from ansible/ so the SOPS vars plugin loads
+    quiet: true
+  loop: [qui, jellyfin, sonarr, radarr, prowlarr]
+
 # Stopped most of the time (the host's diag-wake socket starts it on demand).
-- name: CT 121 running
-  ansible.builtin.shell: |
-    [ "$(pct status {{ vmid }})" = "status: running" ] && exit 0
-    pct start {{ vmid }}
-    pct exec {{ vmid }} -- systemctl is-system-running --wait >/dev/null || true
-    echo started
+- name: CT 121 status
+  ansible.builtin.command: pct status {{ vmid }}
   delegate_to: proxmox
-  register: diag_ct
-  changed_when: "'started' in diag_ct.stdout"
+  register: diag_status
+  check_mode: false # read-only
+  changed_when: false
+
+# A degraded boot is fine (the template has units that fail in an unprivileged CT); a failed
+# start, a failed pct exec or a boot still not finished after 60 s are not.
+- name: CT 121 started
+  ansible.builtin.shell: |
+    pct start {{ vmid }} || exit 1
+    # exits 1 when degraded, so judge the printed state, not the exit code
+    state=$(timeout 60 pct exec {{ vmid }} -- systemctl is-system-running --wait) || true
+    [ "$state" = running ] || [ "$state" = degraded ] || { echo "boot state: ${state:-none}" >&2; exit 1; }
+  delegate_to: proxmox
+  when: "diag_status.stdout != 'status: running'"
+  changed_when: true
+
+# --check can't look inside a stopped CT, and starting it is a change.
+- name: Check mode stops here while CT 121 is stopped
+  ansible.builtin.meta: end_host
+  when: "ansible_check_mode and diag_status.stdout != 'status: running'"
 
 # debian-13-standard_13.6-1 ships a 56 MB /var/lib/dpkg/available. apt never reads it, but
 # dpkg --set-selections (every apt install/remove) loads it whole: ~190 MB RSS, and the 256 MB
