@@ -1,0 +1,45 @@
+# Datacenter firewall with open defaults; only CT 121 (diag) is default-drop. Spec 2026-11-25 §6.4, §13.3.
+#
+# Order matters. Enabling pve-firewall sets net.bridge.bridge-nf-call-iptables=1, so bridged
+# vmbr0 traffic starts crossing iptables FORWARD. Docker sets FORWARD policy DROP and pve-firewall
+# appends its hook after Docker's, and returns everything it does not terminate, so without the
+# first two tasks every new bridged connection of every guest would be dropped.
+#
+# Rollback (pve-firewall stop alone is NOT enough, it leaves bridge-nf at 1):
+#   set enable: 0 in /etc/pve/firewall/cluster.fw, wait 10 s, then
+#   sysctl -w net.bridge.bridge-nf-call-iptables=0 net.bridge.bridge-nf-call-ip6tables=0
+
+- name: Docker leaves the FORWARD policy alone (applies at the next dockerd start)
+  ansible.builtin.copy:
+    src: docker-daemon.json
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: FORWARD policy ACCEPT now (bridged traffic stays as open as it is today)
+  ansible.builtin.iptables:
+    chain: FORWARD
+    policy: ACCEPT
+
+- name: Read host.fw
+  ansible.builtin.slurp:
+    src: /etc/pve/nodes/proxmox/host.fw
+  register: proxmox_host_hostfw
+
+- name: Host firewall stays off (no lock-out risk on 8006 or SSH)
+  ansible.builtin.assert:
+    that:
+      - (proxmox_host_hostfw.content | b64decode) is search('(?m)^enable:\s*0\s*$')
+      - (proxmox_host_hostfw.content | b64decode) is not search('(?m)^nftables:')
+    fail_msg: host.fw must keep enable 0 and no nftables option
+
+- name: CT 121 rules (inert until the cluster firewall is on) # noqa: risky-file-permissions
+  ansible.builtin.copy:
+    src: 121.fw
+    dest: /etc/pve/firewall/121.fw
+
+- name: Datacenter firewall on # noqa: risky-file-permissions
+  ansible.builtin.copy:
+    src: cluster.fw
+    dest: /etc/pve/firewall/cluster.fw

@@ -1,0 +1,6 @@
+[OPTIONS]
+
+enable: 1
+ebtables: 0
+policy_in: ACCEPT
+policy_out: ACCEPT
