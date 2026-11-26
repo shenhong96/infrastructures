@@ -66,6 +66,15 @@
   roles:
     - vpn
 
+# The read-only app API for Hermes (CT 121): laptop only (policy/gate.py's LAPTOP_TAGS). It
+# starts the stopped container first, and its keys are encrypted to the admin key alone.
+- name: Diag API
+  hosts: diag
+  tags: diag
+  gather_facts: false # nothing uses facts
+  roles:
+    - diag
+
 # Komodo Core and its database, then the agents; enrollment (agents connect) is a separate
 # deliberate run: -e komodo_enrolled=true. Core goes first so a restored or rebuilt Core
 # has its servers and their keys in place before an agent ever connects.

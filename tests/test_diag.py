@@ -20,6 +20,21 @@ diag = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(diag)
 
 
+class HeaderSecrets(unittest.TestCase):
+    def test_jellyfin_key_unwrapped(self):
+        key = 'k' * 16 + '1' * 16
+        values = diag.header_secrets({'Authorization': f'MediaBrowser Token="{key}"'})
+        self.assertIn(key, values)
+        secrets = diag.Secrets()
+        for value in values:
+            secrets.add(value, 'jellyfin')
+        self.assertNotIn(key, secrets.scrub(f'{{"Key": "{key}"}}')[0])
+
+    def test_plain_header_kept(self):
+        key = 'x' * 16
+        self.assertEqual(diag.header_secrets({'X-Api-Key': key}), [key])
+
+
 class PathRules(unittest.TestCase):
     def test_allowed(self):
         for app, path in [('sonarr', '/api/v3/health'), ('qbit', '/api/v2/torrents/info'), ('qui', '/api/instances'), ('jellyfin', '/System/Info')]:

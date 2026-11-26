@@ -1,0 +1,45 @@
+# diag: read-only, redacting gateway to the home-lab app APIs (spec 6.2). Hardening below is
+# spec 6.2 verbatim, then extras for `systemd-analyze security` <= 2.0.
+[Unit]
+Description=diag read-only app API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=diag
+Group=diag
+ExecStart=/usr/bin/python3 /usr/local/lib/diag/diag.py serve
+Restart=on-failure
+StateDirectory=diag
+StateDirectoryMode=0700
+MemoryMax=192M
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+CapabilityBoundingSet=
+# Extras beyond spec 6.2
+AmbientCapabilities=
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+SystemCallArchitectures=native
+SystemCallFilter=~@privileged @resources
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

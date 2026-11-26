@@ -590,6 +590,16 @@ class DiagHandler(BaseHTTPRequestHandler):
     do_HEAD = do_OPTIONS = do_POST
 
 
+def header_secrets(headers):
+    """Each configured header value, plus the bare key Jellyfin's header wraps
+    (MediaBrowser Token="<key>"), so exact-value redaction knows the key itself."""
+    out = []
+    for value in headers.values():
+        out.append(value)
+        out += re.findall(r'Token="([^"]+)"', value)
+    return out
+
+
 def create_server(cfg, secrets, ready=None):
     server = ThreadingHTTPServer((cfg.get('bind', '0.0.0.0'), cfg.get('port', 8796)), DiagHandler)
     server.cfg, server.secrets = cfg, secrets
@@ -620,7 +630,7 @@ def main():
         cfg = json.load(f)
     secrets = Secrets()
     for app, config in cfg['apps'].items():
-        for value in config.get('headers', {}).values():
+        for value in header_secrets(config.get('headers', {})):
             secrets.add(value, app)
     cache = HarvestCache(STATE)
     for value in cache.values():
