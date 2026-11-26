@@ -1,0 +1,634 @@
+#!/usr/bin/env python3
+"""Read-only, redacting gateway for selected home-lab application APIs."""
+import argparse
+import base64
+from http.client import HTTPConnection
+from ipaddress import IPv4Address
+import io
+import json
+import math
+import logging
+import os
+from pathlib import Path
+import re
+import socket
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, quote, unquote, urlsplit
+
+CONFIG = Path('/etc/diag/config.json')
+STATE = Path('/var/lib/diag/trackers.jsonl')
+MAX_RESPONSE = 262144
+MAX_UPSTREAM = 16 * 1024 * 1024
+TIMEOUT = 20
+HARVEST_INTERVAL = 1800
+HARVEST_RETRY = 60
+READY_WAIT = 30  # first read after a cold start waits for the harvest; + TIMEOUT stays under nginx's 60 s
+QBITS = ('qbit', 'qbit-ubits')
+# qui lists both qBittorrents' torrents with their tracker URLs.
+NEEDS = {'qui': QBITS}
+FIELD_RE = re.compile(r'pass(word|key)?|secret|token|api_?key|rss_?key|auth|cookie|session|credential|private', re.I)
+SERVARR_DENY = ('release', 'search', 'indexer/test', 'filesystem', 'mediacover',
+                'system/backup', 'log', 'config/host', 'command', 'update', 'apikey', 'manualimport')
+# qBittorrent 5.1.4 accepts GET on every action outside webapplication.h's
+# m_allowedMethod list. Of those, these return secrets, files or browse disk, or
+# act (search/downloadTorrent fetches a torrent). Audit 2026-11-26.
+QBIT_DENY = ['/api/v2/torrents/export', '/api/v2/torrents/sslparameters', '/api/v2/log', '/api/v2/app/shutdown',
+             '/api/v2/app/cookies', '/api/v2/app/getdirectorycontent', '/api/v2/auth', '/api/v2/search',
+             '/api/v2/torrentcreator']
+APPS = {
+    'qbit': {'prefixes': ['/api/v2/'], 'deny': QBIT_DENY},
+    'qbit-ubits': {'prefixes': ['/api/v2/'], 'deny': QBIT_DENY},
+    # qui v1.36.1: health is /health outside /api. The diag key holds read-only
+    # permissions (README); 'download' keeps content-file reads (Torrents: read) out;
+    # getDirectoryContent, free-space and mediainfo touch the disk at a given path.
+    'qui': {'prefixes': ['/api/instances', '/api/version'], 'exact': ['/api/client-settings'], 'deny_contains': ['export', 'backup', 'api-keys', 'apikeys', 'auth', 'logs', 'download', 'getdirectorycontent', 'free-space', 'mediainfo']},
+    'sonarr': {'prefixes': ['/api/v3/'], 'deny': ['/api/v3/' + p for p in SERVARR_DENY]},
+    'radarr': {'prefixes': ['/api/v3/'], 'deny': ['/api/v3/' + p for p in SERVARR_DENY]},
+    # Prowlarr 2.7 NewznabController performs searches/downloads on these GETs.
+    # Withholding its XML/torrent response afterwards cannot undo the action.
+    'prowlarr': {'prefixes': ['/api/v1/'], 'deny': ['/api/v1/' + p for p in SERVARR_DENY], 'deny_regex': [r'^/api/v1/indexer/[^/]+/(newznab|download)(/|$)']},
+    # Jellyfin 12.4: RemoteImages, RemoteSearch/Subtitles and /Packages fetch from outside.
+    'jellyfin': {'prefixes': ['/system/info', '/sessions', '/scheduledtasks', '/library/virtualfolders', '/items', '/users/*/items', '/devices', '/plugins', '/health'], 'deny': ['/environment'], 'deny_regex': [r'^/items/[^/]+/(download|file|images|remoteimages|remotesearch)(/|$)', r'^/users/[^/]+/items/[^/]+/(download|file|images)(/|$)', r'^/plugins/[^/]+/configuration(/|$)']},
+}
+PAGING = {'qbit': 'limit, offset, filter, category', 'qbit-ubits': 'limit, offset, filter, category', 'qui': 'limit, offset', 'sonarr': 'pageSize, page', 'radarr': 'pageSize, page', 'prowlarr': 'pageSize, page', 'jellyfin': 'Limit, StartIndex'}
+PROVIDER_PATHS = {
+    app: [f'/api/{version}/{name}' for name in names]
+    for app, version, names in (
+        ('sonarr', 'v3', ('indexer', 'downloadclient', 'notification', 'importlist')),
+        ('radarr', 'v3', ('indexer', 'downloadclient', 'notification', 'importlist')),
+        ('prowlarr', 'v1', ('indexer', 'downloadclient', 'notification', 'applications', 'indexerproxy')),
+    )
+}
+TRIPWIRES = [(name, re.compile(pattern)) for name, pattern in (
+    ('github', r'gh[pousr]_[A-Za-z0-9]{36}|github_pat_\w{22,}'),
+    ('telegram', r'\b\d{8,10}:[A-Za-z0-9_-]{35}\b'),
+    ('jwt', r'eyJ[\w-]{10,}\.eyJ[\w-]{10,}\.[\w-]{10,}'),
+    ('private-key', r'-----BEGIN [A-Z ]*PRIVATE KEY-----'),
+    ('aws', r'AKIA[0-9A-Z]{16}'),
+    ('slack', r'xox[baprs]-[A-Za-z0-9-]{10,}'),
+    ('hex-key', r'\b[a-f0-9]{32}\b'),
+)]
+# Jellyfin item/server IDs, Etags, image tags and media source IDs are all
+# 32-hex, so hex-key would block most Jellyfin reads. Its own API key is still
+# exact-redacted (layer 1) and AccessToken fields are masked by name (layer 2).
+TRIPWIRE_SKIP = {'jellyfin': ('hex-key',)}
+
+
+def _matches(path, prefix):
+    return path == prefix.rstrip('/') or path.startswith(prefix.rstrip('/') + '/')
+
+
+def check_path(app, path):
+    if app not in APPS:
+        return 'unknown-app'
+    if not isinstance(path, str) or not path.startswith('/'):
+        return 'bad-chars'
+    if '%' in path or '\\' in path or not re.fullmatch(r'[A-Za-z0-9/_.,:=-]*', path):
+        return 'bad-chars'
+    if '..' in path or '//' in path:
+        return 'traversal'
+    path = path.lower()
+    rules = APPS[app]
+    for denied in rules.get('deny', []):
+        if _matches(path, denied):
+            return 'deny:' + denied
+    for denied in rules.get('deny_contains', []):
+        if denied in path:
+            return 'deny:' + denied
+    for pattern in rules.get('deny_regex', []):
+        if re.match(pattern, path):
+            return 'deny:' + pattern
+    if path in rules.get('exact', []):
+        return None
+    prefixes = rules['prefixes']
+    if not any((re.match(r'^/users/[^/]+/items(?:/|$)', path) if p == '/users/*/items' else _matches(path, p)) for p in prefixes):
+        return 'prefix'
+    return None
+
+
+class Secrets:
+    def __init__(self):
+        self._forms = {}
+        self._lock = threading.Lock()
+        self._regex = None
+        self._snapshot = {}
+
+    def add(self, value, source):
+        if not isinstance(value, str) or len(value) < 8:
+            return
+        raw = value.encode('utf-8')
+        forms = {value, quote(value, safe=''), quote(value, safe='/'), base64.b64encode(raw).decode(), raw.hex(), json.dumps(value, ensure_ascii=True)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1]}
+        with self._lock:
+            for form in forms:
+                self._forms[form] = source
+            self._regex = None
+
+    def scrub(self, text):
+        with self._lock:
+            if not self._forms:
+                return text, 0
+            if self._regex is None:
+                forms = sorted(self._forms, key=len, reverse=True)
+                self._regex = re.compile('|'.join(re.escape(form) for form in forms))
+                self._snapshot = self._forms.copy()
+            regex, sources = self._regex, self._snapshot
+        return regex.subn(lambda match: '[REDACTED:' + sources[match.group()] + ']', text)
+
+
+def clean_url(s):
+    try:
+        url = urlsplit(s)
+        if url.scheme.lower() not in ('http', 'https', 'udp') or not url.hostname:
+            return s
+        port = url.port
+        if url.path not in ('', '/') or url.query or url.fragment or url.username is not None or url.password is not None:
+            host = url.hostname
+            if ':' in host:
+                host = '[' + host + ']'
+            return url.scheme + '://' + host + (':' + str(port) if port is not None else '') + '/[path removed]'
+    except ValueError:
+        pass
+    return s
+
+
+TOKEN_RE = re.compile(r'[A-Za-z0-9+=]{16,}')
+HASH_RE = re.compile(r'[A-Fa-f0-9]{40}|[A-Fa-f0-9]{64}')  # torrent info hashes
+JELLYFIN_ID_RE = re.compile(r'[A-Fa-f0-9]{32}')
+
+
+def looks_random(token, app=None):
+    """Shape check for secrets diag never learned (Servarr returns its own
+    credentials masked, so they cannot be harvested): 16+ chars of letters AND
+    digits with high per-character entropy. Torrent hashes, and Jellyfin's
+    32-hex IDs inside Jellyfin responses, are exempt.
+    ponytail: heuristic; a long random-looking release-name token is masked too.
+    """
+    if HASH_RE.fullmatch(token) or (app == 'jellyfin' and JELLYFIN_ID_RE.fullmatch(token)):
+        return False
+    if not (re.search(r'[0-9]', token) and re.search(r'[A-Za-z]', token)):
+        return False
+    counts = {c: token.count(c) for c in set(token)}
+    entropy = -sum(n / len(token) * math.log2(n / len(token)) for n in counts.values())
+    return entropy >= 3.3
+
+
+def redact(obj, secrets, app=None):
+    counts = {'exact': 0, 'field': 0, 'url': 0, 'entropy': 0}
+
+    def text(value):
+        # Layers 3, 1, then the entropy layer, for every string: values AND keys
+        # (qBittorrent sync/maindata uses tracker URLs as dictionary keys).
+        cleaned = clean_url(value)
+        counts['url'] += cleaned != value
+        cleaned, n = secrets.scrub(cleaned)
+        counts['exact'] += n
+        def mask(match):
+            if not looks_random(match.group(0), app):
+                return match.group(0)
+            counts['entropy'] += 1
+            return '[REDACTED:entropy]'
+        return TOKEN_RE.sub(mask, cleaned)
+
+    def walk(value):
+        if isinstance(value, dict):
+            named = isinstance(value.get('name'), str) and FIELD_RE.search(value['name'])
+            out = {}
+            for key, item in value.items():
+                safe_key = text(key)
+                base, i = safe_key, 2
+                while safe_key in out:  # two keys can clean to the same text
+                    safe_key, i = f'{base} ({i})', i + 1
+                if FIELD_RE.search(key) or (key == 'value' and named):
+                    out[safe_key] = '[REDACTED]'
+                    counts['field'] += 1
+                else:
+                    out[safe_key] = walk(item)
+            return out
+        if isinstance(value, list):
+            return [walk(item) for item in value]
+        if isinstance(value, str):
+            return text(value)
+        return value
+    return walk(obj), counts
+
+
+def tripwire(text, skip=()):
+    for name, regex in TRIPWIRES:
+        if name not in skip and regex.search(text):
+            return name
+    return None
+
+
+def harvest_provider_fields(items):
+    if not isinstance(items, list):
+        raise ValueError('invalid provider inventory')
+    found = []
+    for item in items:
+        if not isinstance(item, dict) or not isinstance(item.get('fields'), list):
+            raise ValueError('invalid provider fields')
+        for field in item['fields']:
+            if not isinstance(field, dict) or not isinstance(field.get('name'), str):
+                raise ValueError('invalid provider field')
+            value, name = field.get('value'), field.get('name')
+            # Servarr returns apiKey/password fields as asterisks: nothing to learn.
+            if isinstance(value, str) and value.strip('*') and (field.get('privacy') in ('apiKey', 'password', 'userName') or (isinstance(name, str) and FIELD_RE.search(name))):
+                found.append(value)
+    return found
+
+
+def harvest_tracker_urls(urls):
+    found = []
+    for url in urls:
+        try:
+            parsed = urlsplit(url)
+            found.extend(unquote(part) for part in parsed.path.split('/') if len(unquote(part)) > 12)
+            found.extend(value for values in parse_qs(parsed.query).values() for value in values if len(value) > 12)
+        except (TypeError, ValueError):
+            continue
+    return found
+
+
+class HarvestCache:
+    def __init__(self, path):
+        self.path = Path(path)
+        self._entries = {}
+        if self.path.exists():
+            with self.path.open(encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                        self._entries[entry['hash']] = (entry['values'], entry.get('saved_at', 0))
+                    except (ValueError, KeyError, TypeError):
+                        continue
+
+    def known_hashes(self):
+        return set(self._entries)
+
+    def done_hashes(self):
+        cutoff = time.time() - 1800
+        return {key for key, (_, saved_at) in self._entries.items() if saved_at > cutoff}
+
+    def values(self):
+        return [value for values, _ in self._entries.values() for value in values]
+
+    def add(self, hash, values):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        os.fchmod(fd, 0o600)
+        saved_at = time.time()
+        with os.fdopen(fd, 'a', encoding='utf-8') as f:
+            f.write(json.dumps({'hash': hash, 'values': values, 'saved_at': saved_at}) + '\n')
+            f.flush()
+            os.fsync(f.fileno())
+        self._entries[hash] = (values, saved_at)
+
+
+def shape(app, path, status, content_type, body, secrets, stats=None):
+    mime = content_type.split(';', 1)[0].strip().lower()
+    if mime != 'application/json' and not mime.endswith('+json'):
+        return 415, {'error': 'non-JSON response withheld', 'content_type': 'non-JSON'}
+    try:
+        def reject_constant(value):
+            raise ValueError('invalid JSON constant')
+        data = json.loads(body, parse_constant=reject_constant)
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return 415, {'error': 'invalid JSON response withheld'}
+    try:
+        data, counts = redact(data, secrets, app)
+        if stats is not None:
+            stats.update(counts)
+        safe_path, _ = secrets.scrub(path)
+        result = {'app': app, 'path': safe_path, 'untrusted_data': data}
+        def encoded():
+            return json.dumps(result, ensure_ascii=True, allow_nan=False).encode('utf-8')
+        if len(encoded()) > MAX_RESPONSE:
+            if not isinstance(data, list):
+                return 413, {'error': 'response too large'}
+            result.update(truncated=True, total_items=len(data), narrow_with=PAGING.get(app, 'filter'))
+            low, high = 0, len(data)
+            while low < high:
+                mid = (low + high + 1) // 2
+                result['untrusted_data'] = data[:mid]
+                if len(encoded()) <= MAX_RESPONSE:
+                    low = mid
+                else:
+                    high = mid - 1
+            result['untrusted_data'] = data[:low]
+            if len(encoded()) > MAX_RESPONSE:
+                return 413, {'error': 'response too large'}
+        rule = tripwire(encoded().decode('utf-8'), TRIPWIRE_SKIP.get(app, ()))
+        if rule:
+            if stats is not None:
+                stats['tripwire'] = rule
+            return 502, {'error': 'tripwire', 'rule': rule}
+        return status, result
+    except (RecursionError, TypeError, ValueError):
+        return 502, {'error': 'response withheld'}
+
+
+def time_left(deadline):
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError('upstream deadline exceeded')
+    return remaining
+
+
+class DeadlineReader(io.RawIOBase):
+    def __init__(self, sock, deadline):
+        self.sock, self.deadline = sock, deadline
+
+    def readable(self):
+        return True
+
+    def readinto(self, buffer):
+        # BufferedReader uses this for headers, chunk framing AND response bodies.
+        # Recompute the budget for every recv, not merely every response.read().
+        self.sock.settimeout(time_left(self.deadline))
+        size = self.sock.recv_into(buffer)
+        time_left(self.deadline)
+        return size
+
+    def close(self):
+        try:
+            self.sock.close()
+        finally:
+            super().close()
+
+
+class DeadlineSocket(socket.socket):
+    def __init__(self, deadline):
+        super().__init__(socket.AF_INET, socket.SOCK_STREAM)
+        self.deadline = deadline
+
+    def sendall(self, data, flags=0):
+        self.settimeout(time_left(self.deadline))
+        super().sendall(data, flags)
+        time_left(self.deadline)
+
+    def makefile(self, mode='r', buffering=None, **kwargs):
+        if mode != 'rb':
+            raise ValueError('only binary response reads are supported')
+        # HTTPConnection may close its socket after parsing Connection: close.
+        # The response owns a duplicate until its buffered reader is closed.
+        reader_sock = socket.socket(fileno=os.dup(self.fileno()))
+        return io.BufferedReader(DeadlineReader(reader_sock, self.deadline))
+
+
+class DeadlineConnection(HTTPConnection):
+    def __init__(self, host, port, deadline):
+        super().__init__(host, port, timeout=time_left(deadline))
+        self.deadline = deadline
+
+    def connect(self):
+        self.sock = DeadlineSocket(self.deadline)
+        self.sock.settimeout(time_left(self.deadline))
+        self.sock.connect((self.host, self.port))
+        time_left(self.deadline)
+
+
+def fetch(app, path_qs, cfg):
+    deadline = time.monotonic() + TIMEOUT
+    connection = None
+    try:
+        config = cfg['apps'][app]
+        base = urlsplit(config['base'])
+        # All configured apps use fixed LAN IPv4 HTTP bases. Reject hostnames
+        # rather than hiding an unbounded resolver operation outside the budget.
+        if base.scheme != 'http' or base.username is not None or base.password is not None or base.path not in ('', '/') or base.query or base.fragment:
+            raise ValueError('invalid app base')
+        host = str(IPv4Address(base.hostname))
+        connection = DeadlineConnection(host, base.port or 80, deadline)
+        # http.client neither follows redirects nor consults proxy environment.
+        connection.request('GET', path_qs, headers=config.get('headers', {}))
+        with connection.getresponse() as response:
+            body = response.read(MAX_UPSTREAM + 1)
+            time_left(deadline)
+            if len(body) > MAX_UPSTREAM:
+                return 413, 'application/json', b'{"error":"upstream response too large"}'
+            return response.status, response.headers.get('Content-Type', ''), body
+    except Exception:
+        logging.warning('upstream request failed app=%s', app)
+        return 502, 'application/json', b'{"error":"upstream unreachable"}'
+    finally:
+        if connection is not None:
+            connection.close()
+
+
+class Readiness:
+    """Apps whose secret sources have been harvested at least once since start.
+
+    Never withdrawn: Secrets only grow, so a running or failed refresh cannot
+    weaken redaction of what was already learned. Per app, so one broken app
+    does not block reads of the others.
+    """
+    def __init__(self):
+        self._apps = set()
+        self._cycles = 0
+        self._cond = threading.Condition()
+
+    def _ready(self, app):
+        return all(a in self._apps for a in (app,) + NEEDS.get(app, ()))
+
+    def mark(self, app):
+        with self._cond:
+            self._apps.add(app)
+            self._cond.notify_all()
+
+    def cycle_done(self):
+        with self._cond:
+            self._cycles += 1
+            self._cond.notify_all()
+
+    def ready(self, app):
+        with self._cond:
+            return self._ready(app)
+
+    def wait(self, app, timeout):
+        """Block until app is ready or the first harvest cycle has finished."""
+        with self._cond:
+            self._cond.wait_for(lambda: self._ready(app) or self._cycles, timeout)
+            return self._ready(app)
+
+
+def harvest_once(cfg, secrets, cache, ready):
+    """Harvest every source; mark each app ready when its own sources succeed."""
+    complete = True
+    for value in cache.values():
+        secrets.add(value, 'tracker')
+    for app in APPS:
+        if app not in cfg['apps'] or (app not in PROVIDER_PATHS and app not in QBITS):
+            ready.mark(app)  # nothing to harvest
+    for app, paths in PROVIDER_PATHS.items():
+        if app not in cfg['apps']:
+            continue
+        ok = True
+        for path in paths:
+            status, _, body = fetch(app, path, cfg)
+            try:
+                if status != 200:
+                    raise ValueError('provider inventory unavailable')
+                for value in harvest_provider_fields(json.loads(body)):
+                    secrets.add(value, app)
+            except (ValueError, TypeError):
+                ok = False
+                logging.warning('harvest failed app=%s', app)
+        if ok:
+            ready.mark(app)
+        complete = complete and ok
+    for app in QBITS:
+        if app not in cfg['apps']:
+            continue
+        ok = True
+        try:
+            status, _, body = fetch(app, '/api/v2/torrents/info', cfg)
+            if status != 200:
+                raise ValueError('torrent inventory unavailable')
+            torrents = json.loads(body)
+            if not isinstance(torrents, list):
+                raise ValueError('invalid torrent inventory')
+            hashes = []
+            for torrent in torrents:
+                torrent_hash = torrent.get('hash', '')
+                if not re.fullmatch(r'(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})', torrent_hash):
+                    raise ValueError('invalid torrent hash')
+                hashes.append(torrent_hash)
+            done, known = cache.done_hashes(), cache.known_hashes()
+            todo = [h for h in hashes if app + ':' + h not in done]
+            # Never-seen torrents gate readiness. Stale entries are refreshed
+            # after marking ready: their old values are already in Secrets, so a
+            # cold start does not wait for re-reading every torrent.
+            # ponytail: a passkey rotated while stopped is unknown until its refresh.
+            unseen = [h for h in todo if app + ':' + h not in known]
+            stale = [h for h in todo if app + ':' + h in known]
+            for batch in (unseen, stale):
+                for torrent_hash in batch:
+                    status, _, body = fetch(app, '/api/v2/torrents/trackers?hash=' + torrent_hash, cfg)
+                    if status == 404:
+                        continue  # removed since torrents/info
+                    if status != 200:
+                        ok = False
+                        continue
+                    trackers = json.loads(body)
+                    if not isinstance(trackers, list) or any(not isinstance(t, dict) or not isinstance(t.get('url'), str) for t in trackers):
+                        raise ValueError('invalid tracker inventory')
+                    values = harvest_tracker_urls([t['url'] for t in trackers])
+                    for value in values:
+                        secrets.add(value, app)
+                    cache.add(app + ':' + torrent_hash, values)
+                if ok and batch is unseen:
+                    ready.mark(app)
+        except (ValueError, TypeError, AttributeError):
+            ok = False
+            logging.warning('tracker harvest failed app=%s', app)
+        complete = complete and ok
+    return complete
+
+
+def harvest_loop(cfg, secrets, cache, ready):
+    while True:
+        try:
+            complete = harvest_once(cfg, secrets, cache, ready)
+        except Exception:
+            complete = False
+            logging.error('harvest failed')
+        ready.cycle_done()
+        time.sleep(HARVEST_INTERVAL if complete else HARVEST_RETRY)
+
+
+class DiagHandler(BaseHTTPRequestHandler):
+    def __getattr__(self, name):
+        if name.startswith('do_'):
+            return self.do_POST
+        raise AttributeError(name)
+
+    def log_message(self, format, *args):
+        pass
+
+    def respond(self, status, obj):
+        raw = json.dumps(obj, ensure_ascii=True).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+        stats = getattr(self, 'stats', {})
+        logging.info('app=%s status=%d bytes=%d exact=%d field=%d url=%d entropy=%d tripwire=%s',
+                     getattr(self, 'app', '-'), status, len(raw), stats.get('exact', 0),
+                     stats.get('field', 0), stats.get('url', 0), stats.get('entropy', 0), stats.get('tripwire', '-'))
+
+    def do_GET(self):
+        if self.client_address[0] != self.server.cfg['allow_client']:
+            return self.respond(403, {'error': 'client forbidden'})
+        parts = urlsplit(self.path)
+        if parts.path == '/diag/':
+            apps = sorted(self.server.cfg['apps'])
+            return self.respond(200, {'apps': apps, 'ready': [a for a in apps if self.server.ready.ready(a)]})
+        match = re.fullmatch(r'/diag/([^/]+)(/.*)', parts.path)
+        if not match:
+            return self.respond(404, {'error': 'not found'})
+        app, path = match.groups()
+        self.app = app if app in APPS else '-'
+        rule = check_path(app, path)
+        if rule:
+            return self.respond(403, {'error': 'blocked', 'rule': rule})
+        if app not in self.server.cfg['apps']:
+            return self.respond(403, {'error': 'blocked', 'rule': 'unknown-app'})
+        if not self.server.ready.wait(app, READY_WAIT):
+            return self.respond(503, {'error': 'secret inventory unavailable', 'app': app, 'retry_after': HARVEST_RETRY})
+        status, content_type, body = fetch(app, path + ('?' + parts.query if parts.query else ''), self.server.cfg)
+        if status == 502 and body == b'{"error":"upstream unreachable"}':
+            return self.respond(502, {'error': 'upstream unreachable', 'app': app})
+        self.stats = {}
+        status, result = shape(app, path, status, content_type, body, self.server.secrets, self.stats)
+        return self.respond(status, result)
+
+    def do_POST(self):
+        self.respond(405, {'error': 'method not allowed'})
+    do_PUT = do_PATCH = do_DELETE = do_POST
+    do_HEAD = do_OPTIONS = do_POST
+
+
+def create_server(cfg, secrets, ready=None):
+    server = ThreadingHTTPServer((cfg.get('bind', '0.0.0.0'), cfg.get('port', 8796)), DiagHandler)
+    server.cfg, server.secrets = cfg, secrets
+    server.ready = ready if ready is not None else Readiness()
+    return server
+
+
+def selftest():
+    secrets = Secrets()
+    secrets.add('fake-canary-123456', 'test')
+    result, _ = redact({'message': 'fake-canary-123456', 'apiKey': 'x'}, secrets)
+    assert 'fake-canary-123456' not in json.dumps(result)
+    assert check_path('sonarr', '/api/v3/config/host') is not None
+    assert check_path('sonarr', '/api/v3/health') is None
+    assert tripwire('ghp_' + 'a' * 36) == 'github'
+    print('diag selftest: PASS')
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('command', choices=['serve', 'selftest'])
+    args = parser.parse_args()
+    if args.command == 'selftest':
+        selftest()
+        return
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+    with CONFIG.open(encoding='utf-8') as f:
+        cfg = json.load(f)
+    secrets = Secrets()
+    for app, config in cfg['apps'].items():
+        for value in config.get('headers', {}).values():
+            secrets.add(value, app)
+    cache = HarvestCache(STATE)
+    for value in cache.values():
+        secrets.add(value, 'tracker')
+    ready = Readiness()
+    threading.Thread(target=harvest_loop, args=(cfg, secrets, cache, ready), daemon=True).start()
+    create_server(cfg, secrets, ready).serve_forever()
+
+
+if __name__ == '__main__':
+    main()
