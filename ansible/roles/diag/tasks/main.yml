@@ -13,6 +13,18 @@
   register: diag_ct
   changed_when: "'started' in diag_ct.stdout"
 
+# debian-13-standard_13.6-1 ships a 56 MB /var/lib/dpkg/available. apt never reads it, but
+# dpkg --set-selections (every apt install/remove) loads it whole: ~190 MB RSS, and the 256 MB
+# CT thrashed at its memory limit for 10+ minutes (2026-11-26). Empty is what dpkg --clear-avail
+# leaves.
+- name: Stale dpkg available list emptied
+  ansible.builtin.copy:
+    content: ""
+    dest: /var/lib/dpkg/available
+    owner: root
+    group: root
+    mode: "0644"
+
 # The template's mail server, sshd and cron: the service needs none of them.
 - name: Unused daemons removed
   ansible.builtin.apt:
