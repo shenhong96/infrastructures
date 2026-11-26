@@ -6,32 +6,35 @@ exposing it.
 
 ## Secret-inventory readiness
 
-The app list at `/diag/` is available during startup and includes
-`redaction_ready`. All app reads return 503 without contacting an upstream until
-one harvest has completed successfully for every configured provider endpoint
-and every torrent not covered by a fresh tracker-cache entry. Cache entries
-preserve tracker progress, but never authorize startup by themselves: provider
-inventories must be read again after every process restart.
+App reads are refused (503, without contacting the upstream) until that app's
+own secret sources have been harvested once since the process started. Cached
+tracker values are loaded at start but never make an app ready on their own;
+provider inventories are re-read after every restart.
 
-Readiness is withdrawn while refreshing, after any failed/malformed inventory,
-or when the last successful snapshot expires (30 minutes). Failures retry after
-60 seconds. Requests crossing a refresh generation are withheld even if the
-refresh finishes before the upstream request does. Secrets already learned are
-retained, including on partial failures and credential rotations.
+- **Per app.** Sonarr, Radarr and Prowlarr are ready when all of their provider
+  endpoints were read and parsed; each qBittorrent when every torrent not seen
+  before has had its trackers read; qui when both qBittorrents are ready (it
+  shows their tracker URLs); Jellyfin needs no harvest. One broken app does not
+  block reads of the others.
+- **Never withdrawn.** Learned secrets are never removed, so a running or failed
+  refresh cannot weaken redaction. Refreshes run every 30 minutes, or every
+  60 seconds after a failure.
+- **Cold start.** The first read waits up to 30 seconds for the harvest instead
+  of failing at once (30 s + the 20 s upstream budget stays under nginx's 60 s).
+  It returns 503 early if the first harvest cycle finished without that app.
+  Cached torrents whose 30-minute freshness expired are refreshed after the app
+  is marked ready; their old values are already known.
+- A torrent removed between the torrent list and its tracker read (404) is
+  skipped.
 
-This intentionally trades cold-start availability for fail-closed redaction.
-The roughly 3-second CT boot measurement does **not** establish app-read readiness:
-a first full tracker harvest may take much longer. Clients must handle 503 and
-retry; a successful app-list response is not a successful app-read acceptance
-check. A supported upstream version must expose every configured harvest path;
-an unsupported path is a blocking configuration/audit problem, not permission to
-skip that source.
+`/diag/` lists `apps` and the subset that is `ready`.
 
-Readiness establishes that the configured sources were collected, not that
-arbitrary free text is secret-free. Secrets introduced between harvests, secrets
-shorter than the configured minimum, secrets absent from all configured sources,
-and unrecognized encodings remain limitations of this design. Live canary tests
-and the pinned-version GET route audit remain mandatory.
+Readiness means the configured sources were collected, not that arbitrary free
+text is secret-free. Secrets introduced between harvests (including a passkey
+rotated while the CT was stopped, until its refresh), secrets shorter than the
+configured minimum, secrets absent from all configured sources, and unrecognized
+encodings remain limitations of this design. Live canary tests and the
+pinned-version GET route audit remain mandatory.
 
 ## Prowlarr tracker side effects
 
@@ -52,7 +55,7 @@ changing it. `web/src/lib/client-settings.ts` includes `qui-incognito-mode`
 among the synced settings. The existing server-side API-key credential remains
 required. PUT is denied locally; this does not allow a settings subtree or
 any adjacent API-key/authentication routes. The response receives the same
-readiness gate, redaction, size limits and tripwire as other app responses.
+per-app readiness gate, redaction, size limits and tripwire as other app responses.
 
 ## Jellyfin and the hex-key tripwire
 

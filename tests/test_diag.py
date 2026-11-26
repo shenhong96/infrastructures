@@ -126,16 +126,23 @@ class Harvest(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
 
+def all_ready():
+    ready = diag.Readiness()
+    for app in diag.APPS:
+        ready.mark(app)
+    return ready
+
+
 class HarvestReadiness(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.cache = diag.HarvestCache(Path(self.tmp.name) / 'cache.jsonl')
         self.secrets = diag.Secrets()
-        self.state = diag.HarvestState()
+        self.ready = diag.Readiness()
         self.canary = 'provider-canary-' + 'Z' * 16
         self.hash = 'a' * 40
-        self.cfg = {'apps': {'sonarr': {}, 'qbit': {}}}
+        self.cfg = {'apps': {'sonarr': {}, 'qbit': {}, 'qui': {}, 'jellyfin': {}}}
 
     def fetch(self, app, path, cfg):
         if path.endswith('/torrents/info'):
@@ -146,44 +153,71 @@ class HarvestReadiness(unittest.TestCase):
             data = [{'fields': [{'name': 'apiKey', 'value': self.canary}]}]
         return 200, 'application/json', json.dumps(data).encode()
 
-    def test_complete_snapshot_redacts_free_text(self):
-        self.assertIsNone(self.state.ticket())
-        with patch.object(diag, 'fetch', side_effect=self.fetch):
-            self.assertTrue(diag.harvest_cycle(self.cfg, self.secrets, self.cache, self.state))
-        self.assertIsNotNone(self.state.ticket())
+    def harvest(self, fetch, cache=None):
+        with patch.object(diag, 'fetch', side_effect=fetch):
+            return diag.harvest_once(self.cfg, self.secrets, cache or self.cache, self.ready)
+
+    def test_complete_harvest_marks_apps_and_redacts(self):
+        self.assertFalse(self.ready.ready('sonarr'))
+        self.assertTrue(self.harvest(self.fetch))
+        for app in ('sonarr', 'qbit', 'qui', 'jellyfin', 'qbit-ubits'):
+            self.assertTrue(self.ready.ready(app), app)
         status, body = diag.shape('sonarr', '/api/v3/health', 200, 'application/json',
                                   json.dumps({'message': self.canary}).encode(), self.secrets)
         self.assertEqual(status, 200)
         self.assertNotIn(self.canary, json.dumps(body))
         # Persisted tracker progress is not proof of provider readiness after a restart.
-        self.assertIsNone(diag.HarvestState().ticket())
+        self.assertFalse(diag.Readiness().ready('sonarr'))
 
-    def test_partial_failure_and_malformed_sources_fail_closed(self):
-        for index, (bad_path, reply) in enumerate([
-            ('/api/v3/notification', (502, 'application/json', b'{}')),
-            ('/api/v3/indexer', (200, 'application/json', b'{}')),
-            ('/api/v3/indexer', (200, 'application/json', b'[{"fields":null}]')),
-            ('/api/v2/torrents/info', (200, 'application/json', b'[{"hash":"bad"}]')),
-            ('/api/v2/torrents/trackers?hash=' + 'a' * 40, (502, 'application/json', b'{}')),
-            ('/api/v2/torrents/trackers?hash=' + 'a' * 40, (200, 'application/json', b'[{}]')),
+    def test_failure_blocks_only_the_failing_app(self):
+        provider = {'sonarr'}
+        tracker = {'qbit', 'qui'}
+        for index, (bad_path, reply, blocked) in enumerate([
+            ('/api/v3/notification', (502, 'application/json', b'{}'), provider),
+            ('/api/v3/indexer', (200, 'application/json', b'{}'), provider),
+            ('/api/v3/indexer', (200, 'application/json', b'[{"fields":null}]'), provider),
+            ('/api/v2/torrents/info', (200, 'application/json', b'[{"hash":"bad"}]'), tracker),
+            ('/api/v2/torrents/trackers?hash=' + 'a' * 40, (502, 'application/json', b'{}'), tracker),
+            ('/api/v2/torrents/trackers?hash=' + 'a' * 40, (200, 'application/json', b'[{}]'), tracker),
         ]):
             with self.subTest(path=bad_path, reply=reply):
+                self.ready = diag.Readiness()
                 cache = diag.HarvestCache(Path(self.tmp.name) / f'case-{index}.jsonl')
                 def fetch(app, path, cfg):
                     return reply if path == bad_path else self.fetch(app, path, cfg)
-                self.state.finish(self.state.begin(), True)
-                with patch.object(diag, 'fetch', side_effect=fetch):
-                    self.assertFalse(diag.harvest_cycle(self.cfg, self.secrets, cache, self.state))
-                self.assertIsNone(self.state.ticket())
+                self.assertFalse(self.harvest(fetch, cache))
+                for app in ('sonarr', 'qbit', 'qui', 'jellyfin'):
+                    self.assertEqual(self.ready.ready(app), app not in blocked, app)
 
-    def test_failure_recovers_and_stale_snapshot_expires(self):
-        with patch.object(diag, 'fetch', side_effect=OSError('do not log details')):
-            self.assertFalse(diag.harvest_cycle(self.cfg, self.secrets, self.cache, self.state))
-        with patch.object(diag, 'fetch', side_effect=self.fetch):
-            self.assertTrue(diag.harvest_cycle(self.cfg, self.secrets, self.cache, self.state))
-        self.assertIsNotNone(self.state.ticket())
-        with patch.object(diag.time, 'monotonic', return_value=diag.time.monotonic() + 1801):
-            self.assertIsNone(self.state.ticket())
+    def test_removed_torrent_is_skipped(self):
+        def fetch(app, path, cfg):
+            if '/torrents/trackers?' in path:
+                return 404, 'text/plain', b'Torrent hash was not found'
+            return self.fetch(app, path, cfg)
+        self.assertTrue(self.harvest(fetch))
+        self.assertTrue(self.ready.ready('qbit'))
+
+    def test_readiness_survives_failed_refresh(self):
+        self.assertTrue(self.harvest(self.fetch))
+        self.assertFalse(self.harvest(lambda *args: (502, 'application/json', b'{}')))
+        self.assertTrue(self.ready.ready('sonarr'))
+        self.assertTrue(self.ready.ready('qbit'))
+
+    def test_stale_cache_refresh_does_not_gate_readiness(self):
+        path = Path(self.tmp.name) / 'stale.jsonl'
+        path.write_text(json.dumps({'hash': 'qbit:' + self.hash, 'values': ['v' * 16], 'saved_at': 0}) + '\n')
+        def fetch(app, p, cfg):
+            if '/torrents/trackers?' in p:
+                return 502, 'application/json', b'{}'
+            return self.fetch(app, p, cfg)
+        self.assertFalse(self.harvest(fetch, diag.HarvestCache(path)))
+        self.assertTrue(self.ready.ready('qbit'))
+
+    def test_wait_returns_after_first_cycle(self):
+        threading.Timer(0.1, self.ready.cycle_done).start()
+        start = time.monotonic()
+        self.assertFalse(self.ready.wait('sonarr', 5))
+        self.assertLess(time.monotonic() - start, 2)
 
 
 class Shape(unittest.TestCase):
@@ -283,7 +317,9 @@ class Handler(unittest.TestCase):
         return f'http://127.0.0.1:{server.server_port}'
 
     def test_unready_inventory_never_fetches(self):
-        base = self.start_server({'apps': {'sonarr': {}}})
+        ready = diag.Readiness()
+        ready.cycle_done()  # first harvest finished without sonarr
+        base = self.start_server({'apps': {'sonarr': {}}}, ready)
         with patch.object(diag, 'fetch') as fetch:
             with self.assertRaises(HTTPError) as cm:
                 urlopen(base + '/diag/sonarr/api/v3/health', timeout=5)
@@ -291,25 +327,18 @@ class Handler(unittest.TestCase):
             cm.exception.close()
             fetch.assert_not_called()
             with urlopen(base + '/diag/', timeout=5) as response:
-                self.assertFalse(json.load(response)['redaction_ready'])
+                self.assertEqual(json.load(response)['ready'], [])
 
-    def test_refresh_invalidates_inflight_response(self):
-        state = diag.HarvestState()
-        state.finish(state.begin(), True)
-        base = self.start_server({'apps': {'sonarr': {}}}, state)
-        def refresh_during_fetch(*args):
-            state.finish(state.begin(), True)
-            return 200, 'application/json', b'{"message":"withhold stale response"}'
-        with patch.object(diag, 'fetch', side_effect=refresh_during_fetch):
-            with self.assertRaises(HTTPError) as cm:
-                urlopen(base + '/diag/sonarr/api/v3/health', timeout=5)
-            self.assertEqual(cm.exception.code, 503)
-            self.assertNotIn(b'withhold stale response', cm.exception.read())
-            cm.exception.close()
+    def test_first_read_waits_for_harvest(self):
+        ready = diag.Readiness()
+        base = self.start_server({'apps': {'sonarr': {}}}, ready)
+        threading.Timer(0.2, ready.mark, args=('sonarr',)).start()
+        with patch.object(diag, 'fetch', return_value=(200, 'application/json', b'{"ok":true}')):
+            with urlopen(base + '/diag/sonarr/api/v3/health', timeout=5) as response:
+                self.assertEqual(response.status, 200)
 
     def test_prowlarr_search_and_download_never_reach_upstream(self):
-        state = diag.HarvestState()
-        state.finish(state.begin(), True)
+        state = all_ready()
         base = self.start_server({'apps': {'prowlarr': {}}}, state)
         with patch.object(diag, 'fetch') as fetch:
             for path in ['/api/v1/indexer/1/newznab?t=search&q=test',
@@ -323,8 +352,7 @@ class Handler(unittest.TestCase):
             fetch.assert_not_called()
 
     def test_qui_incognito_setting_is_readable_but_not_writable(self):
-        state = diag.HarvestState()
-        state.finish(state.begin(), True)
+        state = all_ready()
         base = self.start_server({'apps': {'qui': {}}}, state)
         payload = json.dumps({'qui-incognito-mode': 'true', 'apiKey': 'withhold-me'}).encode()
         with patch.object(diag, 'fetch', return_value=(200, 'application/json', payload)) as fetch:
@@ -352,8 +380,7 @@ class Handler(unittest.TestCase):
         thread = threading.Thread(target=upstream.serve_forever, daemon=True)
         thread.start()
         cfg = {'bind': '127.0.0.1', 'port': 0, 'allow_client': '127.0.0.1', 'apps': {'sonarr': {'base': f'http://127.0.0.1:{upstream.server_port}', 'headers': {}}}}
-        state = diag.HarvestState()
-        state.finish(state.begin(), True)
+        state = all_ready()
         server = diag.create_server(cfg, diag.Secrets(), state)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         base = f'http://127.0.0.1:{server.server_port}'
