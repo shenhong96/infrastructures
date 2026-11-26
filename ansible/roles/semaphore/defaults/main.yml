@@ -48,7 +48,10 @@ semaphore_runner_env:
 # What a merge applies: every tag in site.yml but the laptop-only ones (policy/gate.py's
 # LAPTOP_TAGS). tests/test_apply_scope.py keeps the three in step.
 semaphore_apply_tags: [base, samba, gitlab, jellyfin, nextcloud, proxy]
-semaphore_apply_limit: all:!proxmox:!control
+# Excluded: every host whose host_vars secrets the runner's ops key can't decrypt; the SOPS vars
+# plugin loads them for every host in the limit and aborts the run (diag, 2026-11-26).
+# tests/test_apply_scope.py checks this.
+semaphore_apply_limit: all:!proxmox:!control:!diag
 # The schedule that applies each new commit on main; false deletes it. Switching it off in the
 # UI doesn't stop a schedule tied to the repository (2.19.12): the emergency stop is the runner.
 semaphore_apply_on_merge: true

@@ -113,7 +113,7 @@
     - tailscale
 
 # Semaphore, its runner and the ops keys on control: laptop only. A merge's Ansible runs there
-# but with --limit all:!proxmox:!control, so it never reaches this play's host.
+# but with --limit all:!proxmox:!control:!diag, so it never reaches this play's host.
 - name: Semaphore
   hosts: control
   tags: control
