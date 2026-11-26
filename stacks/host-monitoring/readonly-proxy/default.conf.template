@@ -1,7 +1,23 @@
 # Door for Hermes (Oracle VM): GET on six Prometheus query paths, an off-by-default route to
-# the homepage, and the episode-coverage API (GET, plus POST on exactly four paths; its
-# limits live in the API itself). Everything else is 403. Written as JSON for Alloy.
-log_format json escape=json '{"time":"$time_iso8601","remote":"$remote_addr","method":"$request_method","uri":"$request_uri","status":$status,"request_time":$request_time,"upstream_status":"$upstream_status"}';
+# the homepage, the episode-coverage API (GET, plus POST on exactly four paths; its
+# limits live in the API itself) and the diag app API (GET only). Everything else is 403.
+# Written as JSON for Alloy.
+log_format json escape=json '{"time":"$time_iso8601","remote":"$remote_addr","method":"$request_method","uri":"$log_uri","status":$status,"request_time":$request_time,"upstream_status":"$upstream_status"}';
+
+# What the access log records as "uri". Allowlist: Prometheus, homepage and coverage requests log
+# as before; /diag/ logs only one of the seven app names; anything else (refused paths, odd case,
+# /diag?..., unknown apps) logs a constant. Raw paths and query strings can carry secrets.
+map $uri $diag_app {
+    default "-";
+    "~^/diag/(?<a>qbit|qbit-ubits|qui|sonarr|radarr|prowlarr|jellyfin)(/|$)" $a;
+}
+map $uri $log_uri {
+    default                    "[withheld]";
+    "~^/api/v1/"               $request_uri;
+    "~^/homepage/"             $request_uri;
+    "~^/coverage/"             $request_uri;
+    "~^/diag/"                 "/diag/$diag_app/[path withheld]";
+}
 
 # HOMEPAGE_ROUTE comes from compose: "on" opens /homepage/*, anything else keeps it shut.
 map "${HOMEPAGE_ROUTE}" $homepage_open {
@@ -21,6 +37,10 @@ map "$request_method:$uri" $method_ok {
 
 server {
     listen 9091;
+    # nginx's own error log repeats the raw request line, Host and Referer (e.g. on a failed
+    # wake), which the access-log allowlist cannot redact. Failures still show in the access
+    # log's status and upstream_status.
+    error_log /dev/null;
     access_log /var/log/proxy/access.json json;
     access_log /dev/stdout json;
 
@@ -51,5 +71,12 @@ server {
     location /coverage/ {
         proxy_read_timeout 120s;
         proxy_pass http://192.168.9.156:8795;
+    }
+
+    # diag app API (CT 121, on demand). The host's wake socket starts the CT; the first request
+    # can wait out a cold start. GET only ($method_ok). Spec 2026-11-25 §6.3.
+    location /diag/ {
+        proxy_read_timeout 60s;
+        proxy_pass http://unix:/run/diag-wake/diag.sock:;
     }
 }

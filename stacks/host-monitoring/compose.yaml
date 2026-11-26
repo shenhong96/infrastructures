@@ -96,7 +96,10 @@ services:
       HOMEPAGE_ROUTE: "off" # "on" opens /homepage/* (troubleshooting only), then back to "off"
     volumes:
       - ./readonly-proxy/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./readonly-proxy/05-diag-wake-group.sh:/docker-entrypoint.d/05-diag-wake-group.sh:ro
       - proxylog:/var/log/proxy
+      # Host wake socket for /diag/ (root:diag-wake 0660). Read-only: connecting works, replacing it does not.
+      - /run/diag-wake:/run/diag-wake:ro
     networks:
       - monitoring
 
