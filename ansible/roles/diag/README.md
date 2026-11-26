@@ -46,16 +46,30 @@ download reports or record redirects. The JSON-only response filter is not a
 side-effect boundary. This closes those routes; it is not a claim that every
 remaining GET in every upstream version has been audited.
 
-## Qui client settings
+## Qui (v1.36.1) and its API key
 
-Only the exact `/api/client-settings` path is additionally allowed for qui.
-In pinned qui v1.33.1, `internal/api/server.go` registers its GET under the
-authenticated group; `GetClientSettings` reads the stored key-value map without
-changing it. `web/src/lib/client-settings.ts` includes `qui-incognito-mode`
-among the synced settings. The existing server-side API-key credential remains
-required. PUT is denied locally; this does not allow a settings subtree or
-any adjacent API-key/authentication routes. The response receives the same
-per-app readiness gate, redaction, size limits and tripwire as other app responses.
+CT 118 runs qui v1.36.1. Since that version every API route needs a per-key
+permission (`documentation/docs/api/permissions.md`, ADR 0040). **Create a new
+key for diag** with exactly these permissions and no instance limit:
+
+- `Instances: read`
+- `Torrents: read` (without `Torrents: write`, qui itself hides the passkey in
+  tracker URLs)
+- `Settings: read` (needed for `GET /api/client-settings`)
+- `System: read`
+
+Do not reuse a key created before the upgrade: migration 111 gave every older
+key every permission, including all `write` levels.
+
+Diag allows `/api/instances`, `/api/version` and the exact
+`/api/client-settings` path. `client-settings` is registered with
+`settings.Read` (`internal/api/server.go:612`) and returns the stored key-value
+map, including `qui-incognito-mode` (`web/src/lib/client-settings.ts`). PUT is
+refused locally and by the key. Paths containing `export`, `backup`, `api-keys`,
+`apikeys`, `auth`, `logs` or `download` are refused before qui is contacted;
+`download` keeps torrent content files (allowed by `Torrents: read`) from being
+pulled through diag. qui's `/health` sits outside `/api` and is not exposed;
+use homelab-metrics for "is it up".
 
 ## Jellyfin and the hex-key tripwire
 

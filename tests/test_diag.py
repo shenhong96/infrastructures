@@ -39,7 +39,7 @@ class PathRules(unittest.TestCase):
             self.assertIsNotNone(diag.check_path('sonarr', path), path)
 
     def test_searches_and_files_denied(self):
-        for app, path in [('sonarr', '/api/v3/release'), ('radarr', '/api/v3/release'), ('prowlarr', '/api/v1/search'), ('prowlarr', '/api/v1/indexer/test'), ('sonarr', '/api/v3/filesystem'), ('sonarr', '/api/v3/mediacover/1/poster.jpg'), ('sonarr', '/api/v3/system/backup'), ('sonarr', '/api/v3/log/file'), ('qbit', '/api/v2/torrents/export'), ('qbit', '/api/v2/app/shutdown'), ('qbit', '/api/v2/log/main'), ('qui', '/api/instances/1/torrents/x/export'), ('jellyfin', '/Items/1/Download'), ('jellyfin', '/Items/1/File')]:
+        for app, path in [('sonarr', '/api/v3/release'), ('radarr', '/api/v3/release'), ('prowlarr', '/api/v1/search'), ('prowlarr', '/api/v1/indexer/test'), ('sonarr', '/api/v3/filesystem'), ('sonarr', '/api/v3/mediacover/1/poster.jpg'), ('sonarr', '/api/v3/system/backup'), ('sonarr', '/api/v3/log/file'), ('qbit', '/api/v2/torrents/export'), ('qbit', '/api/v2/app/shutdown'), ('qbit', '/api/v2/log/main'), ('qui', '/api/instances/1/torrents/x/export'), ('qui', '/api/instances/1/torrents/x/files/0/download'), ('jellyfin', '/Items/1/Download'), ('jellyfin', '/Items/1/File')]:
             self.assertIsNotNone(diag.check_path(app, path), (app, path))
 
     def test_prowlarr_newznab_and_download_routes_denied(self):

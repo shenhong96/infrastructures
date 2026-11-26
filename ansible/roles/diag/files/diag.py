@@ -33,7 +33,9 @@ SERVARR_DENY = ('release', 'search', 'indexer/test', 'filesystem', 'mediacover',
 APPS = {
     'qbit': {'prefixes': ['/api/v2/'], 'deny': ['/api/v2/torrents/export', '/api/v2/torrents/downloadfile', '/api/v2/log', '/api/v2/app/shutdown', '/api/v2/auth']},
     'qbit-ubits': {'prefixes': ['/api/v2/'], 'deny': ['/api/v2/torrents/export', '/api/v2/torrents/downloadfile', '/api/v2/log', '/api/v2/app/shutdown', '/api/v2/auth']},
-    'qui': {'prefixes': ['/api/instances', '/api/health', '/api/version'], 'exact': ['/api/client-settings'], 'deny_contains': ['export', 'backup', 'api-keys', 'apikeys', 'auth', 'logs']},
+    # qui v1.36.1: health is /health outside /api. The diag key holds read-only
+    # permissions (README); 'download' keeps content-file reads (Torrents: read) out.
+    'qui': {'prefixes': ['/api/instances', '/api/version'], 'exact': ['/api/client-settings'], 'deny_contains': ['export', 'backup', 'api-keys', 'apikeys', 'auth', 'logs', 'download']},
     'sonarr': {'prefixes': ['/api/v3/'], 'deny': ['/api/v3/' + p for p in SERVARR_DENY]},
     'radarr': {'prefixes': ['/api/v3/'], 'deny': ['/api/v3/' + p for p in SERVARR_DENY]},
     # Prowlarr 2.7 NewznabController performs searches/downloads on these GETs.
