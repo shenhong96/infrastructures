@@ -14,10 +14,10 @@ all:
       ansible_host: 192.168.9.152
   children:
     # Roles that run inside a container skip these (e.g. an OS whose Python is too old
-    # for Ansible, 3.9+); their Proxmox config is still managed from the host. Empty since
-    # CT 101 was rebuilt on Ubuntu 24.04 (2026-09-30).
+    # for Ansible, 3.9+); their Proxmox config is still managed from the host.
     skip_inside:
-      hosts: {}
+      hosts:
+        diag: # no sshd, so no base role; only its own laptop-tagged play, over pct
     # The machine that runs Komodo Core and its database (the komodo role).
     komodo:
       hosts:
@@ -207,6 +207,25 @@ all:
             tty: '2'
             unprivileged: '1'
             lxc.apparmor.profile: unconfined
+        # Read-only, redacting gateway to the media apps' APIs for Hermes (spec
+        # 2026-11-25-hermes-homelab-diag-api-design). Laptop only, like control. Stopped
+        # most of the time: the host's diag-wake socket starts it and stops it when idle.
+        diag:
+          vmid: 121
+          dataset: ZFS-DATA/proxmox-dataset/images/diag
+          container_connection: pct # no sshd inside
+          pct:
+            arch: amd64
+            cores: '1'
+            features: nesting=1 # Debian 13's systemd needs it (speed gate 2026-11-25)
+            hostname: diag
+            memory: '256'
+            net0: name=eth0,bridge=vmbr0,firewall=1,gw=192.168.9.2,hwaddr=BC:24:11:C0:4E:21,ip=192.168.9.158/24,type=veth
+            onboot: '0'
+            ostype: debian
+            rootfs: ZFS-DATA:121/vm-121-disk-0.raw,size=4G
+            swap: '128'
+            unprivileged: '1'
         # Semaphore and its runner (deploy-from-anywhere plan 2). Laptop only: a merge's
         # Ansible runs with --limit all:!proxmox:!control, and nothing deploys stacks here.
         control:
