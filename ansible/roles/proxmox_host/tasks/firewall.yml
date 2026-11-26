@@ -1,0 +1,55 @@
+# Datacenter firewall with open defaults; only CT 121 (diag) is default-drop. Spec 2026-11-25 §6.4, §13.3.
+#
+# Order matters. Enabling pve-firewall sets net.bridge.bridge-nf-call-iptables=1, so bridged
+# vmbr0 traffic starts crossing iptables FORWARD. Docker sets FORWARD policy DROP and pve-firewall
+# appends its hook after Docker's, and returns everything it does not terminate, so without the
+# first two tasks every new bridged connection of every guest would be dropped.
+#
+# Rollback (pve-firewall stop alone is NOT enough, it leaves bridge-nf at 1):
+#   set enable: 0 in /etc/pve/firewall/cluster.fw, wait 10 s, then
+#   sysctl -w net.bridge.bridge-nf-call-iptables=0 net.bridge.bridge-nf-call-ip6tables=0
+
+- name: Docker leaves the FORWARD policy alone (applies at the next dockerd start)
+  ansible.builtin.copy:
+    src: docker-daemon.json
+    dest: /etc/docker/daemon.json
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: FORWARD policy ACCEPT now (bridged traffic stays as open as it is today)
+  ansible.builtin.iptables:
+    chain: FORWARD
+    policy: ACCEPT
+
+- name: Read host.fw
+  ansible.builtin.slurp:
+    src: /etc/pve/nodes/proxmox/host.fw
+  register: proxmox_host_hostfw
+
+- name: Host firewall stays off (no lock-out risk on 8006 or SSH)
+  ansible.builtin.assert:
+    that:
+      - (proxmox_host_hostfw.content | b64decode) is search('(?m)^enable:\s*0\s*$')
+      - (proxmox_host_hostfw.content | b64decode) is not search('(?m)^nftables:')
+    fail_msg: host.fw must keep enable 0 and no nftables option
+
+# pmxcfs (/etc/pve) refuses the copy module's temp file and chmod, so write with tee when the
+# content differs. 121.fw first: it is inert until cluster.fw turns the firewall on.
+- name: Read current firewall files
+  ansible.builtin.slurp:
+    src: "/etc/pve/firewall/{{ item }}"
+  loop: [121.fw, cluster.fw]
+  register: proxmox_host_fw_current
+  failed_when: false
+
+- name: Firewall files (121.fw, then cluster.fw enable 1)
+  ansible.builtin.command:
+    cmd: "tee /etc/pve/firewall/{{ item.item }}"
+    stdin: "{{ lookup('ansible.builtin.file', item.item) }}"
+    stdin_add_newline: true
+  loop: "{{ proxmox_host_fw_current.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: (item.content | default('') | b64decode) != lookup('ansible.builtin.file', item.item) + "\n"
+  changed_when: true
