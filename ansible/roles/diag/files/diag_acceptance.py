@@ -119,7 +119,7 @@ def check():
     _, hist = wrap(*get('/diag/prowlarr/api/v1/history?pageSize=1'))
     before = (hist or {}).get('untrusted_data', {}).get('totalRecords')
 
-    _, info = wrap(*get('/diag/qbit/api/v2/torrents/info?limit=500'))
+    _, info = wrap(*get('/diag/qbit/api/v2/torrents/info?sort=added_on&reverse=true&limit=20'))
     torrents = (info or {}).get('untrusted_data') or []
     test = [t.get('hash') for t in torrents if isinstance(t, dict) and 'diag-canary' in str(t.get('name', ''))]
     record('test torrent diag-canary found in home qBittorrent', len(test) == 1)
