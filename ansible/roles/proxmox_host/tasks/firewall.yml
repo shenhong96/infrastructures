@@ -34,12 +34,22 @@
       - (proxmox_host_hostfw.content | b64decode) is not search('(?m)^nftables:')
     fail_msg: host.fw must keep enable 0 and no nftables option
 
-- name: CT 121 rules (inert until the cluster firewall is on) # noqa: risky-file-permissions
-  ansible.builtin.copy:
-    src: 121.fw
-    dest: /etc/pve/firewall/121.fw
+# pmxcfs (/etc/pve) refuses the copy module's temp file and chmod, so write with tee when the
+# content differs. 121.fw first: it is inert until cluster.fw turns the firewall on.
+- name: Read current firewall files
+  ansible.builtin.slurp:
+    src: "/etc/pve/firewall/{{ item }}"
+  loop: [121.fw, cluster.fw]
+  register: proxmox_host_fw_current
+  failed_when: false
 
-- name: Datacenter firewall on # noqa: risky-file-permissions
-  ansible.builtin.copy:
-    src: cluster.fw
-    dest: /etc/pve/firewall/cluster.fw
+- name: Firewall files (121.fw, then cluster.fw enable 1)
+  ansible.builtin.command:
+    cmd: "tee /etc/pve/firewall/{{ item.item }}"
+    stdin: "{{ lookup('ansible.builtin.file', item.item) }}"
+    stdin_add_newline: true
+  loop: "{{ proxmox_host_fw_current.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when: (item.content | default('') | b64decode) != lookup('ansible.builtin.file', item.item) + "\n"
+  changed_when: true
