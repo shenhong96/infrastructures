@@ -1,11 +1,33 @@
 # On-demand start / idle stop for the diag LXC (CT 121). Spec 2026-11-25 §6.3.
-- name: Diag wake start script
+- name: Diag wake group (nginx in prom-readonly-proxy gets it via group_add)
+  ansible.builtin.group:
+    name: diag-wake
+    gid: 3121
+    system: true
+
+- name: Diag wake scripts
   ansible.builtin.copy:
-    src: diag-wake-start
-    dest: /usr/local/sbin/diag-wake-start
+    src: "{{ item }}"
+    dest: "/usr/local/sbin/{{ item }}"
     owner: root
     group: root
     mode: "0755"
+  loop:
+    - diag-wake-start
+    - diag-wake-stop
+
+- name: Diag wake socket directory (root:diag-wake 0750, recreated at boot)
+  ansible.builtin.copy:
+    src: diag-wake.tmpfiles
+    dest: /etc/tmpfiles.d/diag-wake.conf
+    owner: root
+    group: root
+    mode: "0644"
+
+# ponytail: idempotent; also repairs owner/mode if the directory already exists.
+- name: Diag wake socket directory now
+  ansible.builtin.command: systemd-tmpfiles --create /etc/tmpfiles.d/diag-wake.conf
+  changed_when: false
 
 - name: Diag wake units
   ansible.builtin.copy:
@@ -17,6 +39,7 @@
   loop:
     - diag-wake.socket
     - diag-wake.service
+    - diag-ct.service
   register: proxmox_host_diag_wake_units
 
 - name: Diag wake socket enabled and listening
