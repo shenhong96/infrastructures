@@ -23,6 +23,7 @@ import socket
 import string
 import subprocess
 import sys
+import time
 from urllib.parse import quote
 
 SOCK = '/run/diag-wake/diag.sock'
@@ -99,6 +100,7 @@ DENIED = [('sonarr', '/api/v3/config/host'), ('sonarr', '/api/v3/release'), ('ra
 def check():
     with open(CANARY_FILE) as f:
         canaries = json.load(f)
+    get('/diag/')  # wakes CT 121 (idle-stopped) so pct exec can read its config
     keys = real_keys()
     secret_list = [('canary ' + k, v) for k, v in canaries.items()] + [('app key %d' % i, v) for i, v in enumerate(keys)]
     results = []
@@ -107,7 +109,11 @@ def check():
         results.append((name, ok or warn))
         print(('PASS ' if ok else ('WARN ' if warn else 'FAIL ')) + name)
 
-    status, idx = wrap(*get('/diag/'))
+    for _ in range(24):  # cold start: each app is ready after its first harvest (up to ~2 min)
+        status, idx = wrap(*get('/diag/'))
+        if status == 200 and idx and set(idx['ready']) == set(idx['apps']):
+            break
+        time.sleep(5)
     record('door answers /diag/ (all apps ready)', status == 200 and idx and set(idx['ready']) == set(idx['apps']))
 
     _, hist = wrap(*get('/diag/prowlarr/api/v1/history?pageSize=1'))
