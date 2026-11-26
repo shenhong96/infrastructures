@@ -30,9 +30,15 @@ NEEDS = {'qui': QBITS}
 FIELD_RE = re.compile(r'pass(word|key)?|secret|token|api_?key|rss_?key|auth|cookie|session|credential|private', re.I)
 SERVARR_DENY = ('release', 'search', 'indexer/test', 'filesystem', 'mediacover',
                 'system/backup', 'log', 'config/host', 'command', 'update', 'apikey')
+# qBittorrent 5.1.4 accepts GET on every action outside webapplication.h's
+# m_allowedMethod list. Of those, these return secrets, files or browse disk, or
+# act (search/downloadTorrent fetches a torrent). Audit 2026-11-26.
+QBIT_DENY = ['/api/v2/torrents/export', '/api/v2/torrents/sslparameters', '/api/v2/log', '/api/v2/app/shutdown',
+             '/api/v2/app/cookies', '/api/v2/app/getdirectorycontent', '/api/v2/auth', '/api/v2/search',
+             '/api/v2/torrentcreator']
 APPS = {
-    'qbit': {'prefixes': ['/api/v2/'], 'deny': ['/api/v2/torrents/export', '/api/v2/torrents/downloadfile', '/api/v2/log', '/api/v2/app/shutdown', '/api/v2/auth']},
-    'qbit-ubits': {'prefixes': ['/api/v2/'], 'deny': ['/api/v2/torrents/export', '/api/v2/torrents/downloadfile', '/api/v2/log', '/api/v2/app/shutdown', '/api/v2/auth']},
+    'qbit': {'prefixes': ['/api/v2/'], 'deny': QBIT_DENY},
+    'qbit-ubits': {'prefixes': ['/api/v2/'], 'deny': QBIT_DENY},
     # qui v1.36.1: health is /health outside /api. The diag key holds read-only
     # permissions (README); 'download' keeps content-file reads (Torrents: read) out.
     'qui': {'prefixes': ['/api/instances', '/api/version'], 'exact': ['/api/client-settings'], 'deny_contains': ['export', 'backup', 'api-keys', 'apikeys', 'auth', 'logs', 'download']},
@@ -41,7 +47,8 @@ APPS = {
     # Prowlarr 2.7 NewznabController performs searches/downloads on these GETs.
     # Withholding its XML/torrent response afterwards cannot undo the action.
     'prowlarr': {'prefixes': ['/api/v1/'], 'deny': ['/api/v1/' + p for p in SERVARR_DENY], 'deny_regex': [r'^/api/v1/indexer/[^/]+/(newznab|download)(/|$)']},
-    'jellyfin': {'prefixes': ['/system/info', '/sessions', '/scheduledtasks', '/library/virtualfolders', '/items', '/users/*/items', '/devices', '/plugins', '/packages', '/health'], 'deny': ['/environment'], 'deny_regex': [r'^/items/[^/]+/(download|file|images)(/|$)', r'^/users/[^/]+/items/[^/]+/(download|file|images)(/|$)', r'^/plugins/[^/]+/configuration(/|$)']},
+    # Jellyfin 12.4: RemoteImages and RemoteSearch/Subtitles query outside providers.
+    'jellyfin': {'prefixes': ['/system/info', '/sessions', '/scheduledtasks', '/library/virtualfolders', '/items', '/users/*/items', '/devices', '/plugins', '/packages', '/health'], 'deny': ['/environment'], 'deny_regex': [r'^/items/[^/]+/(download|file|images|remoteimages|remotesearch)(/|$)', r'^/users/[^/]+/items/[^/]+/(download|file|images)(/|$)', r'^/plugins/[^/]+/configuration(/|$)']},
 }
 PAGING = {'qbit': 'limit, offset, filter, category', 'qbit-ubits': 'limit, offset, filter, category', 'qui': 'limit, offset', 'sonarr': 'pageSize, page', 'radarr': 'pageSize, page', 'prowlarr': 'pageSize, page', 'jellyfin': 'Limit, StartIndex'}
 PROVIDER_PATHS = {

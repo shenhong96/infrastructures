@@ -39,7 +39,10 @@ class PathRules(unittest.TestCase):
             self.assertIsNotNone(diag.check_path('sonarr', path), path)
 
     def test_searches_and_files_denied(self):
-        for app, path in [('sonarr', '/api/v3/release'), ('radarr', '/api/v3/release'), ('prowlarr', '/api/v1/search'), ('prowlarr', '/api/v1/indexer/test'), ('sonarr', '/api/v3/filesystem'), ('sonarr', '/api/v3/mediacover/1/poster.jpg'), ('sonarr', '/api/v3/system/backup'), ('sonarr', '/api/v3/log/file'), ('qbit', '/api/v2/torrents/export'), ('qbit', '/api/v2/app/shutdown'), ('qbit', '/api/v2/log/main'), ('qui', '/api/instances/1/torrents/x/export'), ('qui', '/api/instances/1/torrents/x/files/0/download'), ('jellyfin', '/Items/1/Download'), ('jellyfin', '/Items/1/File')]:
+        for app, path in [('sonarr', '/api/v3/release'), ('radarr', '/api/v3/release'), ('prowlarr', '/api/v1/search'), ('prowlarr', '/api/v1/indexer/test'), ('sonarr', '/api/v3/filesystem'), ('sonarr', '/api/v3/mediacover/1/poster.jpg'), ('sonarr', '/api/v3/system/backup'), ('sonarr', '/api/v3/log/file'), ('qbit', '/api/v2/torrents/export'), ('qbit', '/api/v2/app/shutdown'), ('qbit', '/api/v2/log/main'), ('qui', '/api/instances/1/torrents/x/export'), ('qui', '/api/instances/1/torrents/x/files/0/download'), ('jellyfin', '/Items/1/Download'), ('jellyfin', '/Items/1/File'),
+                          ('qbit', '/api/v2/app/cookies'), ('qbit', '/api/v2/app/getDirectoryContent'), ('qbit', '/api/v2/search/downloadTorrent'),
+                          ('qbit', '/api/v2/search/results'), ('qbit', '/api/v2/torrentcreator/torrentFile'), ('qbit-ubits', '/api/v2/torrents/SSLParameters'),
+                          ('jellyfin', '/Items/1/RemoteImages'), ('jellyfin', '/Items/1/RemoteSearch/Subtitles/eng')]:
             self.assertIsNotNone(diag.check_path(app, path), (app, path))
 
     def test_prowlarr_newznab_and_download_routes_denied(self):
@@ -86,7 +89,8 @@ class Redaction(unittest.TestCase):
         self.assertEqual(s.scrub('abc abc')[0], 'abc abc')
 
     def test_field_names(self):
-        out, _ = diag.redact({'apiKey': 'zzz', 'Password': 'zzz', 'rss_key': 'zzz', 'nested': [{'Cookie': 'zzz'}]}, diag.Secrets())
+        out, _ = diag.redact({'apiKey': 'zzz', 'Password': 'zzz', 'rss_key': 'zzz', 'nested': [{'Cookie': 'zzz'}],
+                              'Items': [{'AccessToken': 'zzz'}]}, diag.Secrets())  # Jellyfin /Devices
         self.assertNotIn('zzz', json.dumps(out))
 
     def test_name_value_pair_masked(self):

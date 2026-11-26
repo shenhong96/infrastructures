@@ -36,6 +36,27 @@ configured minimum, secrets absent from all configured sources, and unrecognized
 encodings remain limitations of this design. Live canary tests and the
 pinned-version GET route audit remain mandatory.
 
+## GET route audit (2026-11-26, pinned versions)
+
+Every GET under an allowed prefix was listed from source and checked for side
+effects, secrets and file bodies: Sonarr 4.0.20.3014, Radarr 6.4.4.10685,
+Prowlarr 2.7.0.5723, qBittorrent 5.1.4, Jellyfin 12.4, qui v1.36.1.
+
+- **Sonarr, Radarr:** no state-changing GET outside the existing deny list.
+  `series/lookup`, `movie/lookup` and Radarr `importlist/movie` call metadata
+  services (Skyhook, TMDB) only; allowed.
+- **Prowlarr:** only the `newznab`/`download` routes below.
+- **qBittorrent:** every action outside `webapplication.h`'s POST-only list also
+  answers GET. Added to the deny list: `app/cookies`, `app/getDirectoryContent`,
+  `search/*` (`downloadTorrent` fetches), `torrentcreator/*`,
+  `torrents/SSLParameters`.
+- **Jellyfin:** added `Items/{id}/RemoteImages` and `Items/{id}/RemoteSearch`
+  (outside providers, OpenSubtitles limits). `/Devices` returns each device's
+  `AccessToken`; field-name masking removes it (tested).
+- **qui:** see the qui section.
+
+Re-run when any pinned version changes.
+
 ## Prowlarr tracker side effects
 
 Prowlarr 2.7.0.5723's `NewznabController` exposes GET
