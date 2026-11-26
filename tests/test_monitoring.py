@@ -155,8 +155,15 @@ class ReadOnlyProxy(unittest.TestCase):
         self.assertIn('"uri":"$log_uri"', fmt)
         self.assertNotRegex(fmt, r"\$(request_uri|uri|args|query_string|request)\b")
         block = re.search(r"map \$uri \$log_uri \{(.*?)\}", conf, re.S).group(1)
-        self.assertIn('"~^/diag/" "/diag/$diag_app/[path withheld]";', block)
+        self.assertRegex(block, r'default\s+"\[withheld\]";')
+        self.assertRegex(block, r'"~\^/diag/"\s+"/diag/\$diag_app/\[path withheld\]";')
+        self.assertRegex(conf, r"(?m)^\s*error_log /dev/null;")
         self.assertNotRegex(conf, r"access_log\s+\S+\s+(?!json;)\w+;")
+
+    def test_diag_socket_mounted_read_only(self):
+        compose = (GRAFANA / "compose.yaml").read_text()
+        mounts = re.findall(r"^\s*-\s*(/run/diag-wake\S*)", compose, re.M)
+        self.assertEqual(mounts, ["/run/diag-wake:/run/diag-wake:ro"])
 
 if __name__ == "__main__":
     unittest.main()
