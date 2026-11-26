@@ -227,7 +227,7 @@ all:
             swap: '128'
             unprivileged: '1'
         # Semaphore and its runner (deploy-from-anywhere plan 2). Laptop only: a merge's
-        # Ansible runs with --limit all:!proxmox:!control, and nothing deploys stacks here.
+        # Ansible runs with --limit all:!proxmox:!control:!diag, and nothing deploys stacks here.
         control:
           vmid: 120
           dataset: ZFS-DATA/proxmox-dataset/images/control

@@ -28,5 +28,19 @@ class ApplyScope(unittest.TestCase):
         self.assertEqual(applied & gate.LAPTOP_TAGS, set())
 
 
+    def test_merge_limit_skips_hosts_whose_secrets_ops_cannot_read(self):
+        """The SOPS vars plugin decrypts host_vars for every host in the limit, so an admin-only
+        secrets file on an included host aborts the whole merge run before any play."""
+        rules = yaml.safe_load((ROOT / ".sops.yaml").read_text())["creation_rules"]
+        ops = next(r for r in rules if "group_vars/all" in r.get("path_regex", ""))["age"].split(",")[1].strip()
+        limit = yaml.safe_load((ROOT / "ansible/roles/semaphore/defaults/main.yml").read_text())["semaphore_apply_limit"]
+        excluded = {part[1:] for part in limit.split(":") if part.startswith("!")}
+        files = sorted((ROOT / "ansible/host_vars").glob("*/secrets.sops.yml"))
+        self.assertTrue(files)
+        for f in files:
+            recipients = {r["recipient"] for r in yaml.safe_load(f.read_text())["sops"]["age"]}
+            if ops not in recipients:
+                self.assertIn(f.parent.name, excluded, f"{f.relative_to(ROOT)} is admin-only")
+
 if __name__ == "__main__":
     unittest.main()
