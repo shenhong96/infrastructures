@@ -5,6 +5,10 @@ policy_in: DROP
 policy_out: DROP
 macfilter: 1
 ipfilter: 1
+# Static IPv4 only: no implicit DHCP, IPv6 neighbour discovery or router advertisements.
+dhcp: 0
+ndp: 0
+radv: 0
 
 [IPSET ipfilter-net0]
 

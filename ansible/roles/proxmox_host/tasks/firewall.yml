@@ -34,8 +34,9 @@
       - (proxmox_host_hostfw.content | b64decode) is not search('(?m)^nftables:')
     fail_msg: host.fw must keep enable 0 and no nftables option
 
-# pmxcfs (/etc/pve) refuses the copy module's temp file and chmod, so write with tee when the
-# content differs. 121.fw first: it is inert until cluster.fw turns the firewall on.
+# pmxcfs (/etc/pve) refuses the copy module's temp file and chmod. Write <name>.new, then rename
+# it over the live file (atomic on pmxcfs; tee straight onto the live file would truncate it
+# first). 121.fw first: it is inert until cluster.fw turns the firewall on.
 - name: Read current firewall files
   ansible.builtin.slurp:
     src: "/etc/pve/firewall/{{ item }}"
@@ -44,8 +45,8 @@
   failed_when: false
 
 - name: Firewall files (121.fw, then cluster.fw enable 1)
-  ansible.builtin.command:
-    cmd: "tee /etc/pve/firewall/{{ item.item }}"
+  ansible.builtin.shell:
+    cmd: "set -e; cat > /etc/pve/firewall/{{ item.item }}.new; mv /etc/pve/firewall/{{ item.item }}.new /etc/pve/firewall/{{ item.item }}"
     stdin: "{{ lookup('ansible.builtin.file', item.item) }}"
     stdin_add_newline: true
   loop: "{{ proxmox_host_fw_current.results }}"
