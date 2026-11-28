@@ -34,6 +34,8 @@ AmbientCapabilities=
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
+# stunnel sets its non-realtime scheduler at startup; RestrictRealtime stays enforced.
+SystemCallFilter=sched_setscheduler
 # The host's client socket lives here: diag-tls group may connect, nobody else (0770 socket in a
 # 0750 dir). No other files are created, so 0007 widens nothing else.
 RuntimeDirectory=diag-tls
