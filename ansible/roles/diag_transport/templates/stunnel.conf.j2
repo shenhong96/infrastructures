@@ -1,0 +1,27 @@
+; Managed by Ansible. No protocol negotiation, redirects, DNS or plaintext LAN fallback.
+foreground = yes
+pid =
+syslog = no
+debug = warning
+
+{% for service in diag_transport_services[inventory_hostname] %}
+[{{ service.name }}]
+client = {{ 'yes' if service.client else 'no' }}
+accept = {{ service.accept }}
+connect = {{ service.connect }}
+cert = /etc/diag-tls/identity.pem
+key = /etc/diag-tls/identity.key
+CAfile = /etc/diag-tls/peers/{{ service.peer }}.pem
+verifyChain = yes
+verifyPeer = yes
+requireCert = yes
+checkIP = {{ diag_transport_nodes[service.peer].ip }}
+sslVersionMin = TLSv1.2
+sessionResume = no
+TIMEOUTconnect = 5
+TIMEOUTbusy = 10
+; diag's own absolute 20s budget still includes tunnel establishment and every read.
+TIMEOUTidle = 60
+TIMEOUTclose = 0
+
+{% endfor %}

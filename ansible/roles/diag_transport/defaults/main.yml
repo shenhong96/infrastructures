@@ -1,0 +1,38 @@
+# Deliberately no private material or enable-on-merge switch. Use diag-security.yml on a laptop.
+diag_transport_pki_dir: ""
+# CT 121 has no package-network egress. Supply the stunnel4 .deb and any
+# missing dependencies for its exact Debian release/amd64, downloaded offline.
+diag_transport_deb_files: []
+# basename -> SHA256 from Debian's signed Packages index. Local-file apt installs skip apt's
+# signature checks, so this is the only integrity check for the offline bundle.
+diag_transport_deb_sha256: {}
+diag_transport_nodes:
+  proxmox: {ip: 192.168.9.152, peers: [diag]}
+  diag: {ip: 192.168.9.158, peers: [proxmox, vpn, media]}
+  vpn: {ip: 192.168.9.156, peers: [diag]}
+  media: {ip: 192.168.9.154, peers: [diag]}
+# All plaintext endpoints are in the same machine/network namespace as their tunnel.
+# Published Docker ports resolve via CT 118 loopback, never via its physical LAN IP.
+diag_transport_services:
+  proxmox:
+    # Unix socket, not loopback TCP: only root and the diag-tls group (the wake proxy) may use
+    # the host's mTLS identity. Any host process could reach a 127.0.0.1 port.
+    - {name: diag-client, client: true, accept: /run/diag-tls/diag.sock, connect: '192.168.9.158:18796', peer: diag}
+  diag:
+    - {name: diag-server, client: false, accept: '192.168.9.158:18796', connect: '127.0.0.1:8796', peer: proxmox}
+    - {name: qbit, client: true, accept: '127.0.0.1:8080', connect: '192.168.9.156:18080', peer: vpn}
+    - {name: qbit-ubits, client: true, accept: '127.0.0.1:8090', connect: '192.168.9.156:18090', peer: vpn}
+    - {name: qui, client: true, accept: '127.0.0.1:8081', connect: '192.168.9.156:18081', peer: vpn}
+    - {name: sonarr, client: true, accept: '127.0.0.1:8989', connect: '192.168.9.156:18989', peer: vpn}
+    - {name: radarr, client: true, accept: '127.0.0.1:7878', connect: '192.168.9.156:17878', peer: vpn}
+    - {name: prowlarr, client: true, accept: '127.0.0.1:9696', connect: '192.168.9.156:19696', peer: vpn}
+    - {name: jellyfin, client: true, accept: '127.0.0.1:8096', connect: '192.168.9.154:18096', peer: media}
+  vpn:
+    - {name: qbit-server, client: false, accept: '192.168.9.156:18080', connect: '127.0.0.1:8080', peer: diag}
+    - {name: qbit-ubits-server, client: false, accept: '192.168.9.156:18090', connect: '127.0.0.1:8090', peer: diag}
+    - {name: qui-server, client: false, accept: '192.168.9.156:18081', connect: '127.0.0.1:8081', peer: diag}
+    - {name: sonarr-server, client: false, accept: '192.168.9.156:18989', connect: '127.0.0.1:8989', peer: diag}
+    - {name: radarr-server, client: false, accept: '192.168.9.156:17878', connect: '127.0.0.1:7878', peer: diag}
+    - {name: prowlarr-server, client: false, accept: '192.168.9.156:19696', connect: '127.0.0.1:9696', peer: diag}
+  media:
+    - {name: jellyfin-server, client: false, accept: '192.168.9.154:18096', connect: '127.0.0.1:8096', peer: diag}

@@ -1,0 +1,47 @@
+[Unit]
+Description=Pinned mutual TLS for diag (no plaintext LAN fallback)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=diag-tls
+Group=diag-tls
+ExecStart=/usr/bin/stunnel4 /etc/diag-tls/stunnel.conf
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_INET AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+# The host's client socket lives here: diag-tls group may connect, nobody else (0770 socket in a
+# 0750 dir). No other files are created, so 0007 widens nothing else.
+RuntimeDirectory=diag-tls
+RuntimeDirectoryMode=0750
+UMask=0007
+MemoryMax=64M
+TasksMax=64
+LimitNOFILE=256
+
+[Install]
+WantedBy=multi-user.target

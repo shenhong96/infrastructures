@@ -9,8 +9,13 @@
 - name: Network
   ansible.builtin.import_tasks: network.yml
 
+- name: Optional guest anti-spoof enrollment
+  ansible.builtin.import_tasks: lan_guard.yml
+
 - name: Firewall
   ansible.builtin.import_tasks: firewall.yml
 
+# The wake units need the host diag-tls client; diag-security.yml activate installs them.
 - name: Diag wake socket
   ansible.builtin.import_tasks: diag_wake.yml
+  when: proxmox_host_diag_security_activation_ack | bool

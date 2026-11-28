@@ -1,0 +1,15 @@
+# Daily expiry check for the pinned diag-tls certificates (identity and peers).
+# A failure shows in `systemctl --failed`; CT 121 only checks while it is awake.
+[Unit]
+Description=diag-tls certificate expiry check (30 days)
+
+[Service]
+Type=oneshot
+User=diag-tls
+Group=diag-tls
+ExecStart=/usr/local/sbin/diag-tls-expiry
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes

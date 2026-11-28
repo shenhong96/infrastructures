@@ -394,11 +394,13 @@ def fetch(app, path_qs, cfg):
     try:
         config = cfg['apps'][app]
         base = urlsplit(config['base'])
-        # All configured apps use fixed LAN IPv4 HTTP bases. Reject hostnames
-        # rather than hiding an unbounded resolver operation outside the budget.
+        # Only same-namespace loopback stunnel listeners are permitted. A stale
+        # LAN base must fail closed rather than leak keys on the shared bridge.
         if base.scheme != 'http' or base.username is not None or base.password is not None or base.path not in ('', '/') or base.query or base.fragment:
             raise ValueError('invalid app base')
         host = str(IPv4Address(base.hostname))
+        if host != '127.0.0.1':
+            raise ValueError('upstream must use the local authenticated tunnel')
         connection = DeadlineConnection(host, base.port or 80, deadline)
         # http.client neither follows redirects nor consults proxy environment.
         connection.request('GET', path_qs, headers=config.get('headers', {}))
@@ -601,7 +603,9 @@ def header_secrets(headers):
 
 
 def create_server(cfg, secrets, ready=None):
-    server = ThreadingHTTPServer((cfg.get('bind', '0.0.0.0'), cfg.get('port', 8796)), DiagHandler)
+    if cfg.get('bind') != '127.0.0.1' or cfg.get('allow_client') != '127.0.0.1':
+        raise ValueError('diag must only accept the local mutual-TLS terminator')
+    server = ThreadingHTTPServer(('127.0.0.1', cfg.get('port', 8796)), DiagHandler)
     server.cfg, server.secrets = cfg, secrets
     server.ready = ready if ready is not None else Readiness()
     return server

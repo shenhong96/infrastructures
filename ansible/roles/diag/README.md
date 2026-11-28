@@ -149,9 +149,11 @@ bytes. Budget exhaustion returns the fixed upstream-unreachable error, and both
 connection and response descriptors are closed. No global signal or background
 fetch worker is left running after a timeout.
 
-The transport supports the design's fixed numeric IPv4 HTTP app bases only.
-Hostnames, userinfo and base URL paths/queries/fragments are rejected rather
-than introducing DNS or unaudited endpoint rewriting. Redirects are returned
-without following them, and environment proxies are never used. Supporting
-HTTPS or hostname-based apps requires an explicit transport extension and
-deadline tests; none of the configured app bases needs either today.
+The transport now accepts **127.0.0.1 HTTP bases only**. Dedicated stunnel clients
+and colocated server terminators carry all network hops using pinned mutual TLS;
+HTTP never leaves the endpoint's local network namespace. See the
+[maintenance runbook](../../../../docs/diag-security.md).
+Hostnames, non-loopback IPv4, userinfo and base paths/queries/fragments fail
+closed. Redirects are not followed and environment proxies are ignored. The
+existing monotonic budget includes tunnel connection/handshake waits because
+every request send/read still crosses its deadline-bounded loopback socket.

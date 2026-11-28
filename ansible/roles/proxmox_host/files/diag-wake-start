@@ -1,13 +1,15 @@
 #!/bin/bash
-# Start CT 121 if needed, then wait until diag accepts TCP on :8796 (30 s deadline after start).
+# Start CT 121, then require an HTTP response THROUGH the pinned mTLS tunnel.
+# A TCP port check would mistake a hostile endpoint or a failed TLS handshake for readiness.
 set -u
 running() { /usr/sbin/pct status 121 | grep -qx 'status: running'; }
 # A failed start is fine if someone else started it meanwhile.
 running || /usr/sbin/pct start 121 || running || exit 1
 deadline=$((SECONDS + 30))
 while (( SECONDS < deadline )); do
-  timeout 1 bash -c '</dev/tcp/192.168.9.158/8796' 2>/dev/null && exit 0
+  curl --unix-socket /run/diag-tls/diag.sock --connect-timeout 1 --max-time 2 --fail --silent \
+    --output /dev/null http://diag/diag/ && exit 0
   sleep 0.5
 done
-echo "diag did not answer on 192.168.9.158:8796 within 30 s" >&2
+echo "diag did not answer through pinned mTLS within the startup budget" >&2
 exit 1

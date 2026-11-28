@@ -541,7 +541,7 @@ class FetchDeadline(unittest.TestCase):
     def test_invalid_bases_never_open_a_connection(self):
         with patch.object(diag, 'DeadlineConnection') as connection:
             for base in ['http://example.com', 'https://127.0.0.1', 'http://127.0.0.1/api',
-                         'http://u:p@127.0.0.1', 'http://127.0.0.1?x=y']:
+                         'http://u:***@127.0.0.1', 'http://127.0.0.1?x=y', 'http://192.168.9.156:8989']:
                 cfg = {'apps': {'sonarr': {'base': base}}}
                 self.assertEqual(diag.fetch('sonarr', '/api/v3/health', cfg)[0], 502)
             connection.assert_not_called()
