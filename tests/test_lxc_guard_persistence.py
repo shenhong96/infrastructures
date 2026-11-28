@@ -1,4 +1,4 @@
-"""An ordinary lxc adoption must not undo the separate source-enforcement stage."""
+"""The inventory, not a firewall-file marker, owns an enrolled CT's NIC firewall flag."""
 import contextlib
 import io
 import json
@@ -7,13 +7,16 @@ import runpy
 import unittest
 from unittest.mock import patch
 
-SCRIPT = Path(__file__).parents[1] / 'ansible/roles/lxc/files/pct_diff.py'
+ROOT = Path(__file__).parents[1]
+SCRIPT = ROOT / 'ansible/roles/lxc/files/pct_diff.py'
+GUARD_TASKS = ROOT / 'ansible/roles/proxmox_host/tasks/lan_guard.yml'
 
 
 class EnrollmentPersistence(unittest.TestCase):
-    def compare(self, wanted, live, marker):
+    def compare(self, wanted, live):
         files = {'/etc/pve/lxc/110.conf': live,
-                 '/etc/pve/firewall/110.fw': '# managed by proxmox lan_guard\n' if marker else '[OPTIONS]\nenable: 0\n'}
+                 # A GUI edit may drop any marker; it must not change adoption results.
+                 '/etc/pve/firewall/110.fw': '# managed by proxmox lan_guard\n'}
         def fake_open(path, *args, **kwargs):
             return io.StringIO(files[str(path)])
         out = io.StringIO()
@@ -23,21 +26,27 @@ class EnrollmentPersistence(unittest.TestCase):
             runpy.run_path(str(SCRIPT), run_name='__main__')
         return json.loads(out.getvalue())
 
-    def test_omitted_and_zero_flags_cannot_undo_enrollment(self):
-        base = 'name=eth0,bridge=vmbr0,hwaddr=C2:C9:24:A1:03:2B,ip=192.168.9.154/24,type=veth'
-        for wanted in [base, base + ',firewall=0']:
-            result = self.compare({'net0': wanted}, 'net0: ' + base + ',firewall=1\n', True)
-            self.assertEqual(result['differs'], {})
-            self.assertEqual(result['args'], [])
-
-    def test_other_requested_nic_changes_still_keep_the_security_flag(self):
-        base = 'name=eth0,bridge=vmbr0,tag=30'
-        result = self.compare({'net0': base}, 'net0: name=eth0,bridge=vmbr0,firewall=1\n', True)
-        self.assertEqual(result['args'], ['--net0', base + ',firewall=1'])
-
-    def test_unenrolled_guest_retains_existing_inventory_behavior(self):
-        result = self.compare({'net0': 'name=eth0,bridge=vmbr0'}, 'net0: name=eth0,bridge=vmbr0,firewall=1\n', False)
+    def test_adoption_follows_inventory_regardless_of_firewall_file(self):
+        result = self.compare({'net0': 'name=eth0,bridge=vmbr0'}, 'net0: name=eth0,bridge=vmbr0,firewall=1\n')
         self.assertEqual(result['args'], ['--net0', 'name=eth0,bridge=vmbr0'])
+
+    def test_inventory_flag_keeps_enrollment(self):
+        base = 'name=eth0,bridge=vmbr0,firewall=1'
+        result = self.compare({'net0': base}, 'net0: ' + base + '\n')
+        self.assertEqual(result['args'], [])
+
+    def test_enrollment_requires_inventory_flag(self):
+        text = GUARD_TASKS.read_text()
+        guard = text.index('Every enrolled inventory-managed CT NIC already carries firewall=1')
+        # The inventory check runs before the enrollment command, for every writing stage.
+        self.assertLess(guard, text.index('Inspect, validate, enroll'))
+        self.assertIn("when: proxmox_host_lan_guard_mode in ['check', 'apply', 'enable']", text[guard:])
+
+    def test_already_enrolled_diag_and_media_apps_carry_the_flag(self):
+        inventory = (ROOT / 'ansible/inventory.yml').read_text()
+        for ip in ('192.168.9.156', '192.168.9.158'):
+            line = next(l for l in inventory.splitlines() if 'ip=' + ip + '/' in l)
+            self.assertRegex(line, r'(^|,)firewall=1(,|$)')
 
 
 if __name__ == '__main__':

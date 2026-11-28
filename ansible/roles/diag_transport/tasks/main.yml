@@ -21,6 +21,33 @@
     fail_msg: Supply diag_transport_deb_files for Debian 13 amd64; never open diag internet egress
   when: inventory_hostname == 'diag'
 
+- name: Every offline package has a signed-index SHA256
+  ansible.builtin.assert:
+    that: diag_transport_deb_files | map('basename') | difference(diag_transport_deb_sha256 | list) | length == 0
+    fail_msg: Add each .deb basename to diag_transport_deb_sha256 (docs/diag-security.md)
+  when: inventory_hostname == 'diag'
+
+- name: Hash offline packages on the laptop
+  ansible.builtin.stat:
+    path: "{{ item }}"
+    checksum_algorithm: sha256
+  loop: "{{ diag_transport_deb_files }}"
+  register: diag_transport_deb_stat
+  delegate_to: localhost
+  become: false
+  when: inventory_hostname == 'diag'
+
+- name: Offline packages match Debian's signed index
+  ansible.builtin.assert:
+    that: item.stat.checksum | default('') == diag_transport_deb_sha256[item.item | basename] | lower
+    fail_msg: "{{ item.item | basename }} does not match its reviewed SHA256; never install it"
+  loop: "{{ diag_transport_deb_stat.results }}"
+  loop_control:
+    label: "{{ item.item | basename }}"
+  when: inventory_hostname == 'diag'
+
+# ponytail: copy's own checksum option is SHA1-only; it already verifies the transfer, and the
+# SHA256 above pins the content against the signed index.
 - name: Offline tunnel packages on diag
   ansible.builtin.copy:
     src: "{{ item }}"
@@ -116,10 +143,37 @@
 
 - name: Tunnel listeners are accepting locally
   ansible.builtin.wait_for:
-    host: "{{ item.accept.split(':')[0] }}"
-    port: "{{ item.accept.split(':')[1] | int }}"
+    path: "{{ item.accept if item.accept.startswith('/') else omit }}"
+    host: "{{ omit if item.accept.startswith('/') else item.accept.split(':')[0] }}"
+    port: "{{ omit if item.accept.startswith('/') else item.accept.split(':')[1] | int }}"
     timeout: 10
   loop: "{{ diag_transport_services[inventory_hostname] }}"
   loop_control:
     label: "{{ item.name }}"
+  when: not ansible_check_mode
+
+- name: Certificate expiry check script
+  ansible.builtin.copy:
+    src: diag-tls-expiry
+    dest: /usr/local/sbin/diag-tls-expiry
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Certificate expiry check units
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: [diag-tls-expiry.service, diag-tls-expiry.timer]
+  register: diag_transport_expiry_units
+
+- name: Daily certificate expiry check enabled
+  ansible.builtin.systemd_service:
+    name: diag-tls-expiry.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ diag_transport_expiry_units.changed }}"
   when: not ansible_check_mode

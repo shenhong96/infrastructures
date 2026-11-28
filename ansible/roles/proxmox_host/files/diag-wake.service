@@ -1,4 +1,4 @@
-# Started by diag-wake.socket. Forwards to diag on CT 121 :8796 and exits after 15 min with no
+# Started by diag-wake.socket. Forwards through the host mTLS client socket to diag on CT 121 and exits after 15 min with no
 # open connections. Runs unprivileged; starting and stopping the CT is diag-ct.service's job
 # (pulled in here, stopped when no longer needed).
 [Unit]
@@ -8,9 +8,11 @@ After=diag-wake.socket diag-ct.service diag-tls.service
 Requires=diag-tls.service
 
 [Service]
-ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=15min --connections-max=16 127.0.0.1:28796
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --exit-idle-time=15min --connections-max=16 /run/diag-tls/diag.sock
 DynamicUser=yes
 User=diag-wake-proxy
+# Group access to the host mTLS client socket (root:diag-tls dir, see diag-tls.service).
+SupplementaryGroups=diag-tls
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 ProtectSystem=strict
@@ -33,9 +35,8 @@ MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
-RestrictAddressFamilies=AF_UNIX AF_INET
+RestrictAddressFamilies=AF_UNIX
 IPAddressDeny=any
-IPAddressAllow=127.0.0.1
 MemoryMax=64M
 TasksMax=32
 CPUQuota=50%

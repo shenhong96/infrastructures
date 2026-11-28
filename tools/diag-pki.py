@@ -64,6 +64,7 @@ def check(directory):
     directory = Path(directory).resolve()
     if not directory.is_dir() or stat.S_IMODE(directory.stat().st_mode) & 0o077:
         raise ValueError('PKI directory must be owner-only')
+    private(directory / 'ca.key')
     for name, ip in NODES.items():
         IPv4Address(ip)
         cert, key = directory / name / 'cert.pem', directory / name / 'key.pem'

@@ -1,0 +1,16 @@
+#!/bin/sh
+# Fail visibly (systemctl --failed, journal) when any deployed diag-tls certificate expires
+# within 30 days. Peer bundles are CA + pinned leaf, so every certificate in each file counts.
+set -u
+tmp=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmp"' EXIT
+rc=0
+for f in /etc/diag-tls/identity.pem /etc/diag-tls/peers/*.pem; do
+  rm -f "$tmp"/*.pem
+  awk -v d="$tmp" '/BEGIN CERTIFICATE/{n++} n{print > (d "/" n ".pem")}' "$f"
+  for c in "$tmp"/*.pem; do
+    openssl x509 -noout -checkend 2592000 -in "$c" >/dev/null 2>&1 ||
+      { echo "diag-tls: a certificate in $f expires within 30 days; renew (docs/diag-security.md)" >&2; rc=1; }
+  done
+done
+exit "$rc"

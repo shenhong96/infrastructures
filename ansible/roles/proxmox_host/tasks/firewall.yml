@@ -9,18 +9,6 @@
 #   set enable: 0 in /etc/pve/firewall/cluster.fw, wait 10 s, then
 #   sysctl -w net.bridge.bridge-nf-call-iptables=0 net.bridge.bridge-nf-call-ip6tables=0
 
-- name: Transport must be prepared before narrowing the diag firewall
-  ansible.builtin.assert:
-    that: proxmox_host_diag_security_activation_ack | default(false) | bool
-    fail_msg: Use diag-security.yml activate after prepare (docs/diag-security.md)
-
-- name: Read host tunnel state
-  ansible.builtin.service_facts:
-
-- name: Host tunnel must already be running
-  ansible.builtin.assert:
-    that: (ansible_facts.services['diag-tls.service'] | default({})).get('state') == 'running'
-
 - name: Docker leaves the FORWARD policy alone (applies at the next dockerd start)
   ansible.builtin.copy:
     src: docker-daemon.json
@@ -48,6 +36,8 @@
 
 # pmxcfs (/etc/pve) refuses the copy module's temp file and chmod, so write with tee when the
 # content differs. 121.fw first: it is inert until cluster.fw turns the firewall on.
+# Generic host runs (site.yml --tags proxmox) only create missing files. Narrowing an existing
+# 121.fw to the TLS ports cuts legacy diag, so that needs diag-security.yml activate's ack.
 - name: Read current firewall files
   ansible.builtin.slurp:
     src: "/etc/pve/firewall/{{ item }}"
@@ -55,6 +45,18 @@
   register: proxmox_host_fw_current
   failed_when: false
 
+- name: Read host tunnel state (diag activation only)
+  ansible.builtin.service_facts:
+  when: proxmox_host_diag_security_activation_ack | bool
+
+- name: Host tunnel must already be running before narrowing the diag firewall
+  ansible.builtin.assert:
+    that: (ansible_facts.services['diag-tls.service'] | default({})).get('state') == 'running'
+    fail_msg: Run diag-security.yml prepare first (docs/diag-security.md)
+  when: proxmox_host_diag_security_activation_ack | bool
+
+# Preserve the whole existing cluster file (including staged lan_guard ebtables).
+# It is already enabled; transport cutover only narrows CT 121's rules.
 - name: Existing cluster configuration is simple enough to preserve safely
   ansible.builtin.assert:
     that:
@@ -63,24 +65,43 @@
       - cluster_text | regex_findall('(?m)^enable:\\s*1\\s*$') | length == 1
     fail_msg: Review cluster.fw manually; never overwrite emergency disable or unknown configuration
   vars:
-    cluster_text: "{{ proxmox_host_fw_current.results[1].content | default('') | b64decode }}"
+    cluster_text: "{{ proxmox_host_fw_current.results[1].content | b64decode }}"
+  when:
+    - proxmox_host_diag_security_activation_ack | bool
+    - "'content' in proxmox_host_fw_current.results[1]"
 
-# Preserve the whole existing cluster file (including staged lan_guard ebtables).
-# It is already enabled; transport cutover only narrows CT 121's rules.
+# The origin/main (plaintext-port) 121.fw is known-reviewed; anything else needs the owner's hash.
 - name: Never overwrite an unreviewed diag firewall
   ansible.builtin.assert:
     that:
       - >-
-        (proxmox_host_fw_current.results[0].content | default('') | b64decode | trim)
-        == (lookup('ansible.builtin.file', '121.fw') | trim)
-        or (proxmox_host_fw_current.results[0].content | default('') | b64decode | hash('sha256'))
-        == (proxmox_host_diag_firewall_sha256 | default(''))
+        diag_fw_text | trim in [lookup('ansible.builtin.file', '121.fw') | trim,
+        lookup('ansible.builtin.file', '121.fw.previous') | trim]
+        or (diag_fw_text | hash('sha256')) == (proxmox_host_diag_firewall_sha256 | default(''))
     fail_msg: Supply the SHA256 of the reviewed existing 121.fw; unknown rules are never replaced
+  vars:
+    diag_fw_text: "{{ proxmox_host_fw_current.results[0].content | b64decode }}"
+  when:
+    - proxmox_host_diag_security_activation_ack | bool
+    - "'content' in proxmox_host_fw_current.results[0]"
 
+# A missing 121.fw (fresh host) gets the secure file on any run: it only fails closed.
 - name: Secure diag firewall (cluster settings preserved)
   ansible.builtin.command:
     cmd: tee /etc/pve/firewall/121.fw
     stdin: "{{ lookup('ansible.builtin.file', '121.fw') }}"
     stdin_add_newline: true
-  when: (proxmox_host_fw_current.results[0].content | default('') | b64decode | trim) != lookup('ansible.builtin.file', '121.fw') | trim
+  when: >-
+    'content' not in proxmox_host_fw_current.results[0]
+    or (proxmox_host_diag_security_activation_ack | bool
+        and (proxmox_host_fw_current.results[0].content | b64decode | trim) != lookup('ansible.builtin.file', '121.fw') | trim)
+  changed_when: true
+
+# First install only. An existing cluster.fw (staged ebtables, emergency enable: 0) is never touched.
+- name: Cluster firewall on (first install)
+  ansible.builtin.command:
+    cmd: tee /etc/pve/firewall/cluster.fw
+    stdin: "{{ lookup('ansible.builtin.file', 'cluster.fw') }}"
+    stdin_add_newline: true
+  when: "'content' not in proxmox_host_fw_current.results[1]"
   changed_when: true

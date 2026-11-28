@@ -1,8 +1,3 @@
-- name: Host-wide changes require the secure transport maintenance approval
-  ansible.builtin.assert:
-    that: proxmox_host_diag_security_activation_ack | bool
-    fail_msg: Use the focused diag-security.yml playbook or explicitly approve a host-wide maintenance run
-
 - name: Host packages
   ansible.builtin.apt:
     name: "{{ host_packages }}"
@@ -20,5 +15,7 @@
 - name: Firewall
   ansible.builtin.import_tasks: firewall.yml
 
+# The wake units need the host diag-tls client; diag-security.yml activate installs them.
 - name: Diag wake socket
   ansible.builtin.import_tasks: diag_wake.yml
+  when: proxmox_host_diag_security_activation_ack | bool

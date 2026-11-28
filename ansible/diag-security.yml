@@ -24,10 +24,14 @@
       check_mode: false
       no_log: true
       when: diag_security_action in ['prepare', 'activate']
-    - name: Offline bundle must be supplied before taking diag offline
+    - name: Offline bundle and its signed-index hashes must be supplied before taking diag offline
       ansible.builtin.assert:
-        that: diag_transport_deb_files | default([]) | length > 0
-        fail_msg: Supply the Debian 13 amd64 offline package bundle first
+        that:
+          - diag_transport_deb_files | default([]) | length > 0
+          - >-
+            diag_transport_deb_files | map('basename')
+            | difference(diag_transport_deb_sha256 | default({}) | list) | length == 0
+        fail_msg: Supply the Debian 13 amd64 offline bundle and diag_transport_deb_sha256 (docs/diag-security.md)
       when: diag_security_action in ['prepare', 'activate']
     - name: Quiesce the entry point and on-demand CT lifecycle
       ansible.builtin.systemd_service:
@@ -62,6 +66,29 @@
       ansible.builtin.include_role:
         name: diag_transport
       when: diag_security_action in ['prepare', 'activate']
+    # qbit sits behind gluetun, so through stunnel it sees the Docker gateway, not .158. A
+    # subnet-whitelist login bypass would then 403 every diag read. Fail before any cutover.
+    - name: Both qBittorrents answer without login on the exact loopback path stunnel uses
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ item }}/api/v2/app/version"
+        status_code: 200
+        timeout: 5
+      loop: [8080, 8090]
+      check_mode: false
+      when:
+        - diag_security_action == 'activate'
+        - inventory_hostname == 'vpn'
+      register: diag_security_qbit_preflight
+      failed_when: false
+    - name: Fail closed unless both qBittorrent backends returned 200
+      ansible.builtin.assert:
+        that: diag_security_qbit_preflight.results | map(attribute='status') | unique == [200]
+        fail_msg: >-
+          A qBittorrent backend needs login from the Docker gateway source. See
+          docs/diag-security.md "qBittorrent login bypass"; never whitelist the whole Docker subnet.
+      when:
+        - diag_security_action == 'activate'
+        - inventory_hostname == 'vpn'
 
 - name: Prepare host client tunnel without exposing the Unix socket
   hosts: proxmox
@@ -132,3 +159,17 @@
       vars:
         proxmox_host_lan_guard_mode: "{{ diag_security_action | regex_replace('^guard-', '') }}"
       when: diag_security_action in ['guard-inspect', 'guard-check', 'guard-apply', 'guard-enable']
+
+# The playbook's own `pct start` is outside diag-ct.service, so the idle stop would never apply.
+# Hand CT 121 back to the socket-activated lifecycle (same shutdown as diag-wake-stop).
+- name: Return CT 121 to the on-demand lifecycle
+  hosts: proxmox
+  gather_facts: false
+  tasks:
+    - name: Stop CT 121 if this run started it
+      ansible.builtin.shell: pct shutdown 121 --timeout 30 || pct stop 121
+      changed_when: true
+      when:
+        - diag_security_action in ['prepare', 'activate']
+        - "diag_security_status.stdout | default('status: running') != 'status: running'"
+        - not ansible_check_mode

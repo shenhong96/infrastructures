@@ -113,11 +113,13 @@ writing any NIC/firewall, then saves an exact mode-0600 operation backup under
 `/var/lib/proxmox-lan-guard/backups/`. It preserves full NIC definitions, changing
 only `firewall=1` via `pct set`/`qm set`. Any guest whose flag must change (110,
 116, 107 in the supplied snapshot) must already be stopped; the script refuses
-to interrupt a running guest. The ordinary `lxc` comparison now recognizes the
-managed firewall marker and preserves `firewall=1` even when the older inventory
-omits it, including CT110/116 and explicit rebuilds. Other requested NIC changes
-still apply with the security bit retained. Rollback restores/removes the marker
-before normal inventory behavior resumes. The guard also detects subsequent
+to interrupt a running guest. **Required step:** `ansible/inventory.yml` is the
+source of truth for NIC flags, so first add `firewall=1` to every `pct` `net*`
+line of each enrolled inventory-managed CT (CT110/116 still lack it; 118 and 121
+already have it). `guard-check/apply/enable` refuse until it is there, because the
+ordinary `lxc` adoption would otherwise revert the flag. No firewall-file marker
+is trusted for this: a GUI edit can drop it. Remove `firewall=1` from inventory
+only after rolling back that guest's enrollment. The guard also detects subsequent
 drift; it is not an admission controller for unrelated PVE operators or new guest
 starts.
 
@@ -141,7 +143,8 @@ installed Perl compiler with an **in-memory** `ebtables=1` override and checks
 expected per-interface ARP allows/drop, MAC and source-filter output before
 writing that one option in cluster.fw. No iptables/nftables backend switch or host
 firewall change occurs. Existing cluster content is preserved. The normal host
-firewall task also preserves cluster.fw rather than resetting ebtables to zero.
+firewall task only writes cluster.fw when it is absent (first install) and never
+resets an existing file's ebtables or emergency `enable: 0`.
 
 A successful compilation is not proof of packet traversal: after PVE reconciles,
 inspect `ebtables-save`, `iptables-save`, `ip6tables-save`, `ipset list`,

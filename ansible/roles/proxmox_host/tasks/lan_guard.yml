@@ -5,6 +5,23 @@
       - not (proxmox_host_lan_guard_mode in ['apply', 'enable'] and ansible_check_mode)
     fail_msg: Source enforcement requires an explicit stage; --check never applies changes
 
+# The inventory is the source of truth for NIC flags: the lxc role's normal adoption would
+# otherwise revert an enrolled CT's firewall=1. Enrollment therefore requires it there first.
+- name: Every enrolled inventory-managed CT NIC already carries firewall=1
+  ansible.builtin.assert:
+    that: proxmox_host_lan_guard_unflagged | trim | length == 0
+    fail_msg: "Add firewall=1 to these ansible/inventory.yml pct net lines first: {{ proxmox_host_lan_guard_unflagged }}"
+  vars:
+    enrolled: >-
+      {{ proxmox_host_lan_guard_manifest.guests | default([]) | selectattr('kind', 'equalto', 'ct')
+         | map(attribute='vmid') | map('string') | list }}
+    proxmox_host_lan_guard_unflagged: >-
+      {% for host in groups['all'] if hostvars[host].vmid is defined and hostvars[host].vmid | string in enrolled %}
+      {% for nic, value in (hostvars[host].pct | default({})).items()
+         if nic is match('net[0-9]+$') and value is not search('(^|,)firewall=1(,|$)') %}{{ host }}:{{ nic }} {% endfor %}
+      {% endfor %}
+  when: proxmox_host_lan_guard_mode in ['check', 'apply', 'enable']
+
 # Inspect/check run the controller's checked-in code without writing any target file.
 # No credentials are in this manifest: only public NIC bindings and review decisions.
 - name: Inspect, validate, enroll, or separately enable anti-spoof rules

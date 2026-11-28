@@ -28,6 +28,16 @@ PKI_PATH = ROOT / 'tools/diag-pki.py'
 STUNNEL = shutil.which('stunnel4') or shutil.which('stunnel')
 
 
+def validity(days):
+    # OpenSSL 4 rejects `x509 -req -days 0`; 3.4+ has explicit dates. Older ones keep -days 0.
+    if days > 0:
+        return ['-days', str(days)]
+    probe = subprocess.run(['openssl', 'x509', '-help'], capture_output=True, text=True)
+    if '-not_after' in probe.stdout + probe.stderr:
+        return ['-not_before', '20200101000000Z', '-not_after', '20200102000000Z']
+    return ['-days', '0']
+
+
 def load_module(name, path):
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
@@ -96,7 +106,7 @@ class StunnelTransport(unittest.TestCase):
         ext.write_text('basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\n'
                        'extendedKeyUsage=serverAuth,clientAuth\nsubjectAltName=IP:' + ip + '\n')
         run('openssl', 'x509', '-req', '-in', csr, '-CA', ca or self.ca, '-CAkey', ca_key or self.ca_key,
-            '-CAcreateserial', '-days', str(days), '-extfile', ext, '-out', cert)
+            '-CAcreateserial', *validity(days), '-extfile', ext, '-out', cert)
         return cert, key
 
     def render(self, client, accept, connect, peer_ip='127.0.0.1', identity=None, peer_cert=None,
@@ -181,7 +191,8 @@ class StunnelTransport(unittest.TestCase):
         for host, services in self.defaults['diag_transport_services'].items():
             for service in services:
                 if service['client']:
-                    self.assertEqual(service['accept'].split(':')[0], '127.0.0.1', service['name'])
+                    # Loopback TCP inside CT121; the host client is a group-restricted Unix socket.
+                    self.assertTrue(service['accept'].startswith(('127.0.0.1:', '/run/diag-tls/')), service['name'])
                 else:
                     self.assertEqual(service['connect'].split(':')[0], '127.0.0.1', service['name'])
         cfg = {'bind': '0.0.0.0', 'allow_client': '127.0.0.1', 'apps': {}}
@@ -369,7 +380,14 @@ class PKIGenerator(unittest.TestCase):
                            'extendedKeyUsage=serverAuth,clientAuth\nsubjectAltName=IP:192.168.9.158\n')
             run('openssl', 'req', '-new', '-key', key, '-subj', '/CN=diag-expired', '-out', csr)
             run('openssl', 'x509', '-req', '-in', csr, '-CA', ca, '-CAkey', ca_key, '-CAcreateserial',
-                '-days', '0', '-extfile', ext, '-out', cert)
+                *validity(0), '-extfile', ext, '-out', cert)
+            self.assertNotEqual(run(sys.executable, PKI_PATH, 'check', directory, check=False).returncode, 0)
+
+    def test_checker_rejects_group_readable_ca_key(self):
+        with tempfile.TemporaryDirectory(prefix='diag-pki-ca-') as parent:
+            directory = Path(parent) / 'pki'
+            self.assertEqual(run(sys.executable, PKI_PATH, 'init', directory, check=False).returncode, 0)
+            (directory / 'ca.key').chmod(0o640)
             self.assertNotEqual(run(sys.executable, PKI_PATH, 'check', directory, check=False).returncode, 0)
 
 

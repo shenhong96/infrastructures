@@ -3,6 +3,9 @@ diag_transport_pki_dir: ""
 # CT 121 has no package-network egress. Supply the stunnel4 .deb and any
 # missing dependencies for its exact Debian release/amd64, downloaded offline.
 diag_transport_deb_files: []
+# basename -> SHA256 from Debian's signed Packages index. Local-file apt installs skip apt's
+# signature checks, so this is the only integrity check for the offline bundle.
+diag_transport_deb_sha256: {}
 diag_transport_nodes:
   proxmox: {ip: 192.168.9.152, peers: [diag]}
   diag: {ip: 192.168.9.158, peers: [proxmox, vpn, media]}
@@ -12,7 +15,9 @@ diag_transport_nodes:
 # Published Docker ports resolve via CT 118 loopback, never via its physical LAN IP.
 diag_transport_services:
   proxmox:
-    - {name: diag-client, client: true, accept: '127.0.0.1:28796', connect: '192.168.9.158:18796', peer: diag}
+    # Unix socket, not loopback TCP: only root and the diag-tls group (the wake proxy) may use
+    # the host's mTLS identity. Any host process could reach a 127.0.0.1 port.
+    - {name: diag-client, client: true, accept: /run/diag-tls/diag.sock, connect: '192.168.9.158:18796', peer: diag}
   diag:
     - {name: diag-server, client: false, accept: '192.168.9.158:18796', connect: '127.0.0.1:8796', peer: proxmox}
     - {name: qbit, client: true, accept: '127.0.0.1:8080', connect: '192.168.9.156:18080', peer: vpn}

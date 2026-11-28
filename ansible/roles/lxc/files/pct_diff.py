@@ -9,18 +9,6 @@ import sys
 vmid = sys.argv[1]
 want = json.load(sys.stdin)
 path = f"/etc/pve/lxc/{vmid}.conf"
-# Enrollment owns this security bit, even when an older inventory omits it.
-# Rollback restores/removes the managed firewall marker before normal adoption.
-# Do this for existing guests AND an explicit rebuild under the same guarded ID.
-fw_path = f"/etc/pve/firewall/{vmid}.fw"
-if os.path.exists(fw_path):
-    with open(fw_path) as firewall:
-        enrolled = firewall.readline().strip() == '# managed by proxmox lan_guard'
-    if enrolled:
-        for key, value in list(want.items()):
-            if re.fullmatch(r'net\d+', key):
-                want[key] = (re.sub(r'(^|,)firewall=[^,]*', r'\1firewall=1', value)
-                             if re.search(r'(^|,)firewall=', value) else value + ',firewall=1')
 binds = [v.split(",")[0] for k, v in want.items() if re.fullmatch(r"mp\d+", k) and v.startswith("/")]
 
 if not os.path.exists(path):

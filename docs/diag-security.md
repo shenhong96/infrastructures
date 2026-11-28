@@ -2,7 +2,7 @@
 
 Status: implementation PR; **not deployed or live-accepted**. Apply from the owner's
 laptop only, with a console available. A merge does not run `diag-security.yml`.
-The ordinary `diag` and `host` roles now refuse unapproved legacy/partial updates.
+The ordinary `diag` role refuses unapproved updates; host runs skip diag-only steps.
 No host firewall, backend, sysctl or guest change was made while building this PR.
 
 ## What is fixed, and how
@@ -12,7 +12,7 @@ Two authenticated network paths replace source-IP trust and plaintext LAN HTTP:
 ```mermaid
 flowchart LR
   U[Host Unix wake socket] --> P[socket-proxyd]
-  P --> HC[Host stunnel client<br/>127.0.0.1:28796]
+  P --> HC[Host stunnel client<br/>/run/diag-tls/diag.sock]
   HC == pinned mutual TLS ==> DS[CT121 TLS listener<br/>192.168.9.158:18796]
   DS --> D[diag HTTP<br/>127.0.0.1:8796]
   D --> DC[CT121 loopback stunnel clients]
@@ -33,7 +33,7 @@ The authoritative wiring is
 
 | Caller | Remote TLS listener | Local plaintext backend |
 |---|---|---|
-| host loopback 28796 | CT121 .158:18796 | CT121 127.0.0.1:8796 |
+| host Unix socket /run/diag-tls/diag.sock | CT121 .158:18796 | CT121 127.0.0.1:8796 |
 | diag loopback 8080 | CT118 .156:18080 | CT118 127.0.0.1:8080 (qbit) |
 | diag loopback 8090 | CT118 .156:18090 | CT118 127.0.0.1:8090 (qbit-ubits) |
 | diag loopback 8081 | CT118 .156:18081 | CT118 127.0.0.1:8081 (qui published 7476) |
@@ -44,8 +44,20 @@ The authoritative wiring is
 
 On CT118 the backend ports are published on that CT by its existing Docker stack;
 the TLS terminator never connects to `.156` over vmbr0. Validate those loopback
-mappings on the deployed Docker version. Other existing app clients/listeners are
-not migrated by this PR; their own plaintext traffic remains their own risk. The
+mappings on the deployed Docker version.
+
+**Residual: the apps themselves stay plaintext on 0.0.0.0.** CT118's published
+Docker ports and CT110's Jellyfin still listen on all addresses in plaintext for
+their other clients. This PR only protects diag's own hops; any LAN host can still
+reach those app ports directly. Binding them to loopback or migrating their other
+clients is separate work. Other existing app clients/listeners are not migrated
+by this PR; their own plaintext traffic remains their own risk.
+
+The host client listens on a Unix socket in `/run/diag-tls` (0750 dir, 0770 socket,
+group `diag-tls`), so only root and the wake proxy (`SupplementaryGroups=diag-tls`)
+can use the host's mTLS identity. A loopback TCP port would let any host process
+bypass the `diag-wake` group check on the entry socket. Verify live that Debian 13's
+stunnel4 creates the socket with that mode and that socket-proxyd can connect. The
 app processes, CT root/network namespace, Proxmox root and private-key storage
 are trusted endpoints, not adversaries this scheme can contain.
 
@@ -82,7 +94,14 @@ physical-ingress spoofing remain reasons to retain cryptographic transport.
 * `stunnel4` must be available on all four endpoints. CT121 has no internet
   egress: download the Debian 13 **amd64** stunnel4 package and missing dependency
   `.deb`s using a trusted matching Debian environment, then supply local laptop
-  paths in `diag_transport_deb_files`. The role copies them and runs
+  paths in `diag_transport_deb_files`, and each file's SHA256 in
+  `diag_transport_deb_sha256` (basename -> hash). Installing local `.deb`s skips
+  apt's signature checks, so take the hashes from Debian's **signed** index, not
+  from the downloaded files: on a trusted Debian 13 amd64 box with
+  `deb.debian.org` and verified InRelease, run `apt-get update`, then
+  `apt-get download stunnel4 <deps>` and
+  `apt-cache show --no-all-versions <pkg> | grep SHA256` for each package. The
+  role checks every file against that map on the laptop before copying. It runs
   `apt-get --no-download install` on those files; it never opens egress. Missing
   dependencies abort the preparation, leaving the wake socket disabled. Test the
   bundle on the same CT template beforehand; do not use the ARM sandbox packages.
@@ -115,8 +134,13 @@ with it. No overlapping trust or automatic fallback is added. Replace a stolen
 leaf/key by replacing its identity and all peer bundles that pin it; a full new
 PKI cutover is the simple supported rotation. Session resumption is disabled and
 services restart on identity/trust changes, terminating old connections. Keep the
-entry point disabled during partial rotation. Schedule a local expiry check; this
-PR does not install a credential-renewal daemon or claim renewal is automatic.
+entry point disabled during partial rotation. Each node gets a daily
+`diag-tls-expiry.timer` that fails `diag-tls-expiry.service` (visible in
+`systemctl --failed` and the journal) when its identity or any certificate in its
+peer bundles expires within 30 days. CT121 is usually stopped, so its check only
+runs while awake; the host's check covers the diag leaf it pins. There is no
+node_exporter textfile collector in this repo to feed, so this is not alerting,
+and nothing renews automatically.
 
 ## Stage 1: prepare; diag stays offline
 
@@ -128,13 +152,17 @@ diag_transport_pki_dir: /absolute/path/to/diag-transport-pki
 diag_transport_deb_files:
   - /absolute/path/to/stunnel4_DEBIAN13_AMD64.deb
   # add each missing dependency .deb from the matching Debian release
+diag_transport_deb_sha256:
+  stunnel4_DEBIAN13_AMD64.deb: SHA256_FROM_SIGNED_DEBIAN_PACKAGES_INDEX
+# Only if the live 121.fw differs from the previous repo version (files/121.fw.previous):
 proxmox_host_diag_firewall_sha256: REPLACE_WITH_SHA256_OF_REVIEWED_EXISTING_121_FW
 ```
 
-Obtain the firewall hash on the trusted Proxmox console with
-`sha256sum /etc/pve/firewall/121.fw` after reviewing the file. This hash is not a
-secret. The activation writer refuses an unreviewed existing firewall. Do not
-copy an arbitrary old hash or bypass this check.
+If the live `121.fw` equals the previous repo version (`121.fw.previous`, compared
+trimmed) or already the secure one, no hash is needed. Otherwise obtain it on the
+trusted Proxmox console with `sha256sum /etc/pve/firewall/121.fw` after reviewing
+the file. This hash is not a secret. The activation writer refuses an unreviewed
+existing firewall. Do not copy an arbitrary old hash or bypass this check.
 
 Run from `ansible/` so existing inventory, pinned SSH and SOPS configuration load:
 
@@ -161,6 +189,10 @@ old plaintext diag service. If availability requires legacy rollback, the owner
 must explicitly accept that risk and restore the known prior role revision and
 all its saved config while retaining console access.
 
+Prepare and activate shut CT121 down again at the end if they started it
+(`pct shutdown 121 --timeout 30`, then a forced stop), so the wake socket's
+on-demand lifecycle owns it. A CT that was already running is left running.
+
 ## Stage 2: activate secure-only diag
 
 After confirming preparation on every endpoint:
@@ -169,6 +201,25 @@ After confirming preparation on every endpoint:
 ansible-playbook diag-security.yml -e @/absolute/path/to/private-vars.yml \
   -e diag_security_action=activate
 ```
+
+### qBittorrent login bypass (check before activate)
+
+diag's config reads both qBittorrents without login. Through the tunnel, qbit
+(behind gluetun in the `vpn` container) no longer sees `192.168.9.158` but the
+Docker gateway (172.x via docker-proxy), because CT118's stunnel connects to the
+published port on loopback. A `WebUI\AuthSubnetWhitelist` entry for `.158` would
+then return 403. Activation therefore requests
+`http://127.0.0.1:8080/api/v2/app/version` and `:8090` on CT118, the exact path
+stunnel uses, and fails before any firewall/wake cutover unless both return 200.
+
+If it fails, check each qBittorrent's `WebUI\AuthSubnetWhitelistEnabled`,
+`WebUI\AuthSubnetWhitelist` and `WebUI\LocalHostAuth`. Do **not** whitelist the
+whole Docker subnet as the fix: every container on that bridge, and anything
+reaching a published port through docker-proxy, would get unauthenticated
+admin access. Whitelist only the specific gateway address, accepting that any
+process on CT118 reaching the published port gets the same bypass; or give diag
+real qBittorrent credentials instead (stored with the other diag secrets),
+which keeps login on but adds a credential diag must redact.
 
 Activation quiesces again, verifies/reapplies pinned tunnels, installs the
 loopback-only diag config/program and service, changes only 121's network rules
@@ -182,7 +233,7 @@ are not silently rewritten based on assumed defaults.
 The host startup script now requires a successful HTTP response **through** mTLS,
 not merely an open remote TCP port. The existing 15-minute no-open-connection
 idle stop and max-16 wake proxy connections are retained. The host proxy's
-IPAddressAllow changes to loopback. Direct LAN HTTP to diag is no longer served.
+IPAddressAllow is removed: it speaks only AF_UNIX to the host client socket. Direct LAN HTTP to diag is no longer served.
 Initial upstream harvest can retry while PVE reconciles changed port rules; wait
 for readiness and the complete app checks before calling cutover accepted.
 
@@ -194,9 +245,11 @@ restoring firewall ports, keep diag disabled until transport is coherent. Run
 `systemctl daemon-reload` for restored units on the relevant machine. Do not
 flush firewall tables, restart Docker or change bridge sysctls for a transport
 failure. Ordinary later `--tags diag` needs the PKI/offline package inputs and
-`diag_security_activation_ack=true`; `--tags host` additionally needs
-`proxmox_host_diag_security_activation_ack=true`. Neither command may reset
-cluster ebtables or reintroduce plaintext bases.
+`diag_security_activation_ack=true`. A normal host run (`site.yml --tags proxmox`)
+needs no ack: it writes `121.fw`/`cluster.fw` only when absent (first install) and
+skips the wake units and the 121.fw narrowing, which only activation (or an
+explicit `proxmox_host_diag_security_activation_ack=true` after prepare) applies.
+Neither command may reset cluster ebtables or reintroduce plaintext bases.
 
 ## Stage 3: optional complete guest source enforcement
 

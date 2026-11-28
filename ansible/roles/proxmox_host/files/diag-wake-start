@@ -7,8 +7,8 @@ running() { /usr/sbin/pct status 121 | grep -qx 'status: running'; }
 running || /usr/sbin/pct start 121 || running || exit 1
 deadline=$((SECONDS + 30))
 while (( SECONDS < deadline )); do
-  curl --noproxy '*' --connect-timeout 1 --max-time 2 --fail --silent --output /dev/null \
-    http://127.0.0.1:28796/diag/ && exit 0
+  curl --unix-socket /run/diag-tls/diag.sock --connect-timeout 1 --max-time 2 --fail --silent \
+    --output /dev/null http://diag/diag/ && exit 0
   sleep 0.5
 done
 echo "diag did not answer through pinned mTLS within the startup budget" >&2
