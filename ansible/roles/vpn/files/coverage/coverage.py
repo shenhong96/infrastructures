@@ -75,10 +75,12 @@ def db(ro=False):
     create table if not exists grabs(
         id text primary key, show_id integer, site_id integer, guid text, pick text,
         eps text, n_eps integer, size integer, status text,
-        created real, decided real, msg_id integer, note text);
+        created real, decided real, msg_id integer, note text, client text default 'main');
     create index if not exists grabs_created on grabs(created);
     create table if not exists kv(k text primary key, v text);
     """)
+    if "client" not in [r[1] for r in c.execute("pragma table_info(grabs)")]:   # DBs from before the column
+        c.execute("alter table grabs add column client text default 'main'")
     return c
 
 # ---------- episode layout & title parsing ----------
@@ -410,7 +412,7 @@ def subs(title):
     return "-".join(x for x in (kind, lang) if x) or "?"
 
 # ---------- grab: Hermes asks, the owner approves in Telegram ----------
-GRAB_DEFAULTS = {"grab_enabled": False, "grab_category": "tv-sonarr",
+GRAB_DEFAULTS = {"grab_enabled": False, "grab_category": "tv-sonarr", "grab_alt_client": "",
                  "grab_max_eps_day": 30, "grab_max_bytes_day": 200 * 10**9}
 
 def grab_cfg():
@@ -561,7 +563,7 @@ def grab_check(c, show, pick, ignore_id=None):
                       f"{grab_cfg()['grab_max_bytes_day'] / 1e9:.0f} GB")
     return sh, rel, fills
 
-def grab_request(c, show, pick):
+def grab_request(c, show, pick, client=None):
     """Hermes (or the owner CLI) asks; the owner approves in Telegram. Nothing is fetched here."""
     cfg = grab_cfg()
     if not cfg["grab_enabled"]:
@@ -570,14 +572,17 @@ def grab_request(c, show, pick):
     if c.execute("select count(*) from grabs where status='pending'").fetchone()[0] >= GRAB_PENDING_MAX:
         raise Refused(f"{GRAB_PENDING_MAX} requests are already waiting for the owner")
     _budget(c, "grab_req", GRAB_REQ_DAY)
+    client = client or default_client()
+    grab_client(client)                                 # refuse a bad or unset choice now, not at approval
     sh, rel, fills = grab_check(c, show, pick)
     gid = secrets.token_urlsafe(12)
-    c.execute("insert into grabs values(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    c.execute("insert into grabs(id,show_id,site_id,guid,pick,eps,n_eps,size,status,created,decided,msg_id,note,client) "
+              "values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
               (gid, sh["id"], rel["site_id"], rel["guid"], pick, json.dumps(fills), len(fills),
-               rel["size"] or 0, "pending", time.time(), None, None, ""))
+               rel["size"] or 0, "pending", time.time(), None, None, "", client))
     c.execute("insert into actions values(?,?,?)", (time.time(), "grab_req", f"{sh['id']} {rel['site_id']}:{rel['guid']} {rng(fills)}"))
     c.commit()
-    return (f"request {gid[:6]} for {sh['title']} episodes {rng(fills)} is waiting for the owner to approve "
+    return (f"request {gid[:6]} for {sh['title']} episodes {rng(fills)} (client {client}) is waiting for the owner to approve "
             f"in Telegram (30 min); no need to poll, check GET /coverage/grabs once later if asked")
 
 def grab_list(c):
@@ -644,8 +649,22 @@ def docker_curl(ctr, args, stdin=None, timeout=90):
         return 124, b""
     return r.returncode, r.stdout
 
-def qb_port():
-    return subprocess.check_output(["docker", "exec", "qbittorrent", "sh", "-c", "echo ${WEBUI_PORT:-8080}"], text=True).strip()
+def grab_client(choice):
+    """Container for a grab: "main" = qbittorrent, "alt" = config `grab_alt_client` (a name only, never a path or flag)."""
+    if choice == "main":
+        return "qbittorrent"
+    if choice != "alt":
+        raise Refused('client must be "main" or "alt"')
+    name = str(grab_cfg()["grab_alt_client"])
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", name):
+        raise Refused("the alt client is not set up in config")
+    return name
+
+def default_client():
+    return "alt" if grab_cfg()["grab_alt_client"] else "main"
+
+def qb_port(qb="qbittorrent"):
+    return subprocess.check_output(["docker", "exec", qb, "sh", "-c", "echo ${WEBUI_PORT:-8080}"], text=True).strip()
 
 def dispatch(c, g):
     """Fetch the release through Prowlarr, hand the file (or magnet) to qBittorrent. -> (status, note).
@@ -656,6 +675,10 @@ def dispatch(c, g):
     cat = grab_cfg()["grab_category"]
     if not CATEGORY_RX.match(str(cat)):
         return "failed", "bad grab_category in config"
+    try:
+        qb = grab_client(g["client"] or "main")     # g is a sqlite3.Row on the real path: no .get()
+    except Refused as e:
+        return "failed", str(e)
     try:
         url = check_download_url(rel["download_url"])
     except Refused as e:
@@ -668,7 +691,7 @@ def dispatch(c, g):
     code, _, loc = tail.decode(errors="replace").partition(" ")
     if rc != 0:
         return "failed", "could not fetch the link from Prowlarr"
-    port = qb_port()
+    port = qb_port(qb)
     base = ["-s", "-m", "30", "-w", "\n%{http_code}", "--form-string", "category=" + cat]
     if code == "200" and body.startswith(b"d") and b"4:info" in body:
         try:
@@ -679,10 +702,10 @@ def dispatch(c, g):
         if not isinstance(total, int) or total <= 0 or total > grab_cfg()["grab_max_bytes_day"] or total > listed * 1.25 + 50 * 2**20:
             return "failed", f"the file declares {total / 1e9:.1f} GB, bigger than the listing ({listed / 1e9:.1f} GB) or the daily cap" \
                 if isinstance(total, int) and total > 0 else "the file declares no size"
-        rc, res = docker_curl("qbittorrent", base + ["-F", "torrents=@-;filename=x.torrent", f"localhost:{port}/api/v2/torrents/add"],
+        rc, res = docker_curl(qb, base + ["-F", "torrents=@-;filename=x.torrent", f"localhost:{port}/api/v2/torrents/add"],
                               stdin=body, timeout=60)
     elif code in ("301", "302", "303", "307", "308") and MAGNET_RX.match(loc.strip()):
-        rc, res = docker_curl("qbittorrent", base + ["--form-string", "urls=" + loc.strip(), f"localhost:{port}/api/v2/torrents/add"],
+        rc, res = docker_curl(qb, base + ["--form-string", "urls=" + loc.strip(), f"localhost:{port}/api/v2/torrents/add"],
                               timeout=60)
     else:
         return "failed", f"link returned HTTP {code or 'none'}, not a torrent file or magnet"
@@ -690,7 +713,7 @@ def dispatch(c, g):
         return "failed", "qBittorrent did not accept it"
     try:
         qs = urllib.parse.urlencode({"category": cat, "sort": "added_on", "reverse": "true", "limit": 5})
-        for t in api("qbittorrent", port, "/api/v2/torrents/info?" + qs, auth=False) or []:
+        for t in api(qb, port, "/api/v2/torrents/info?" + qs, auth=False) or []:
             if t.get("added_on", 0) > time.time() - 60:
                 return "queued", "queued: " + re.sub(r"[\x00-\x1f\x7f-\x9f]", " ", str(t.get("name")))[:80]
     except Exception:
@@ -740,7 +763,7 @@ def grab_message(c, g):
     show = c.execute("select title from shows where id=?", (g["show_id"],)).fetchone()
     eps, size = grab_usage(c)
     cfg = grab_cfg()
-    lines = ["Grab request from Hermes",
+    lines = [f"Grab request from Hermes \u2192 {'second' if g['client'] == 'alt' else 'main'} qBittorrent",
              f"{clean((show or {'title': g['show_id']})['title'], 80)} \u2014 fills {rng(json.loads(g['eps']))} ({g['n_eps']} eps)"]
     if rel:
         lines += [f"{clean(rel['site'], 40)}: {clean(rel['title'])}",
@@ -926,9 +949,9 @@ def api_write(path, body):
                    "60 searches per run), so new data arrives over the next minutes")
             kind = "refresh"
         elif path == "/coverage/grab":
-            if set(body) != {"show", "pick"}:
-                raise Refused("body must be exactly {\"show\": ..., \"pick\": ...}")
-            return grab_request(c, show, body["pick"])      # writes its own actions row
+            if not {"show", "pick"} <= set(body) <= {"show", "pick", "client"}:
+                raise Refused("body must be {\"show\": ..., \"pick\": ..., optional \"client\": \"main\"|\"alt\"}")
+            return grab_request(c, show, body["pick"], body.get("client"))      # writes its own actions row
         else:
             raise Refused("unknown path")
         c.execute("insert into actions values(?,?,?)", (time.time(), kind, f"{path} {show}"))
@@ -1060,6 +1083,19 @@ def _selftest_grab_basics():
         assert f"pick {pid}" in fmt_rel(r, False)
         cfg = grab_cfg()
         assert cfg["grab_enabled"] is False and cfg["grab_category"] == "tv-sonarr"
+        assert grab_client("main") == "qbittorrent" and default_client() == "main"
+        for bad in ({}, {"grab_alt_client": "-x /etc"}):            # alt unset or not a plain name
+            g["config"] = lambda bad=bad: bad
+            try:
+                grab_client("alt"); raise AssertionError("bad alt client accepted")
+            except Refused:
+                pass
+        g["config"] = lambda: {"grab_alt_client": "qb-alt"}
+        assert grab_client("alt") == "qb-alt" and default_client() == "alt"
+        try:
+            grab_client("other"); raise AssertionError("unknown client accepted")
+        except Refused:
+            pass
         assert cfg["grab_max_eps_day"] == 30 and cfg["grab_max_bytes_day"] == 200_000_000_000
         g["config"] = lambda: {"grab_enabled": True, "grab_max_eps_day": 5}
         assert grab_cfg()["grab_enabled"] is True and grab_cfg()["grab_max_eps_day"] == 5 and grab_cfg()["grab_max_bytes_day"] == 200_000_000_000
@@ -1098,7 +1134,7 @@ def _selftest_grab_request():
                 return pick_id(c.execute("select * from releases where guid=?", (guid,)).fetchone())
         def filler(i, n, size, status, created=None):
             with closing(db()) as c:
-                c.execute("insert into grabs values(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                c.execute("insert into grabs(id,show_id,site_id,guid,pick,eps,n_eps,size,status,created,decided,msg_id,note) values(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                           (i, 7, 9, "f" + i, "0" * 10, "[]", n, size, status, created or now, None, None, ""))
                 c.commit()
         def refused(body):
@@ -1213,7 +1249,7 @@ def _selftest_grab_dispatch():
         g["DB"] = Path(tempfile.mkdtemp()) / "d.db"
         g["config"] = lambda: {"grab_enabled": True, "grab_bot_token": "BOTTOKEN123"}
         g["_key"] = lambda ctr: "PROWLARRKEY"
-        g["qb_port"] = lambda: "8080"
+        g["qb_port"] = lambda qb="qbittorrent": "8080"
         calls, replies, listing = [], [], []
         def fake(ctr, args, stdin=None, timeout=90):
             calls.append((ctr, list(args), stdin))
@@ -1236,13 +1272,13 @@ def _selftest_grab_dispatch():
                 c.commit()
             torrent = b"d8:announce3:abc4:infod6:lengthi1eee\n\x00\xffbinary"
             magnet = "magnet:?xt=urn:btih:" + "a" * 40 + "&dn=Example"
-            def run(guid, prowlarr, qb=None, url=good):
+            def run(guid, prowlarr, qb=None, url=good, client="main"):
                 seed(guid, url)
                 calls.clear(); replies.clear()
                 replies.append(prowlarr)
                 if qb is not None:
                     replies.append(qb)
-                return dispatch(c, {"site_id": 1, "guid": guid})
+                return dispatch(c, {"site_id": 1, "guid": guid, "client": client})
             # .torrent body -> uploaded from stdin, fixed fields, no savepath
             listing[:] = [{"name": "Example.S01E05", "added_on": now}]
             st, note = run("T1", (0, torrent + b"\n200 "), (0, b"Ok.\n200"))
@@ -1251,6 +1287,12 @@ def _selftest_grab_dispatch():
             assert "PROWLARRKEY" in " ".join(calls[0][1]) and "--max-redirs" in calls[0][1] and "--max-filesize" in calls[0][1]
             q = calls[1][1]
             assert calls[1][2] == torrent and "torrents=@-;filename=x.torrent" in q and "category=tv-sonarr" in q
+            # client "alt" goes to the configured second container; unset alt fails before Prowlarr
+            g["config"] = lambda: {"grab_enabled": True, "grab_bot_token": "BOTTOKEN123", "grab_alt_client": "qb-alt"}
+            run("T1alt", (0, torrent + b"\n200 "), (0, b"Ok.\n200"), client="alt")
+            assert calls[1][0] == "qb-alt", calls
+            g["config"] = lambda: {"grab_enabled": True, "grab_bot_token": "BOTTOKEN123"}
+            assert run("T1unset", (0, b""), client="alt")[0] == "failed" and calls == []
             assert not any("savepath" in a for a in q) and "PROWLARRKEY" not in " ".join(q) and "PROWLARRKEY" not in note
             # magnet redirect -> urls=, no stdin
             st, note = run("T2", (0, b"\n302 " + magnet.encode()), (0, b"Ok.\n200"))
@@ -1388,7 +1430,7 @@ def _selftest_grab_bot():
                 elif what == "changed":
                     c.execute("update releases set title=title||' v2'")
                 elif what == "cap":
-                    c.execute("insert into grabs values('big',7,9,'z','0000000000','[]',29,0,'queued',?,NULL,NULL,'')", (now,))
+                    c.execute("insert into grabs values('big',7,9,'z','0000000000','[]',29,0,'queued',?,NULL,NULL,'','main')", (now,))
                 c.commit()
             if what == "disabled":
                 cfgd["grab_enabled"] = False
@@ -1565,7 +1607,7 @@ def main():
     q.add_argument("--download-links", action="store_true", help="also print Prowlarr download links (LAN only, embed a key)")
     sp.add_parser("seeding"); sp.add_parser("selftest")
     gr = sp.add_parser("grab", help="ask for a release to be fetched; the owner approves in Telegram")
-    gr.add_argument("show"); gr.add_argument("pick")
+    gr.add_argument("show"); gr.add_argument("pick"); gr.add_argument("--client", choices=["main", "alt"])
     sp.add_parser("bot", help="Telegram approval bot for grab requests (long-running)")
     sv = sp.add_parser("serve", help="HTTP API for Hermes, behind the read-only proxy")
     sv.add_argument("--bind"); sv.add_argument("--port", type=int)
@@ -1587,7 +1629,7 @@ def main():
     if a.cmd == "grab":
         try:
             with closing(db()) as c:
-                print(grab_request(c, a.show, a.pick))
+                print(grab_request(c, a.show, a.pick, a.client))
         except Refused as e:
             sys.exit(f"refused: {e}")
         return
