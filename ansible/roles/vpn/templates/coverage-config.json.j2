@@ -1,1 +1,1 @@
-{{ coverage_config | to_nice_json }}
+{{ coverage_config | combine({'grab_alt_client': vpn_alt_client}) | to_nice_json }}
